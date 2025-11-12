@@ -20,37 +20,33 @@ func main() {
 }
 
 type model struct {
-	width         int
-	height        int
-	cursorX       int
-	cursorY       int
-	canvas        *Canvas
-	mode          Mode
-	help          bool
-	helpScroll    int
-	selectedBox   int
-	editText      string
+	width          int
+	height         int
+	cursorX        int
+	cursorY        int
+	canvas         *Canvas
+	mode           Mode
+	help           bool
+	helpScroll     int
+	selectedBox    int
+	editText       string
 	connectionFrom int
-	filename      string
-	fileOp        FileOperation
-	confirmAction ConfirmAction
-	confirmBoxID  int
-	confirmTextID int
-	undoStack     []Action
-	redoStack     []Action
-	// Track original state for move/resize operations
+	filename       string
+	fileOp         FileOperation
+	confirmAction  ConfirmAction
+	confirmBoxID   int
+	confirmTextID  int
+	undoStack      []Action
+	redoStack      []Action
 	originalMoveX  int
 	originalMoveY  int
 	originalWidth  int
 	originalHeight int
-	// Text input state
-	textInputX    int
-	textInputY    int
-	textInputText string
-	// Error message state
-	errorMessage string
-	// Track if we came from startup mode
-	fromStartup bool
+	textInputX     int
+	textInputY     int
+	textInputText  string
+	errorMessage   string
+	fromStartup    bool
 }
 
 type Mode int
@@ -86,7 +82,7 @@ const (
 type Action struct {
 	Type    ActionType
 	Data    interface{}
-	Inverse interface{} // Data needed to reverse the action
+	Inverse interface{}
 }
 
 type ActionType int
@@ -107,9 +103,9 @@ type AddBoxData struct {
 }
 
 type DeleteBoxData struct {
-	Box    Box
-	ID     int
-	Connections []Connection // Connections that were connected to this box
+	Box         Box
+	ID          int
+	Connections []Connection
 }
 
 type EditBoxData struct {
@@ -139,8 +135,8 @@ type OriginalBoxState struct {
 }
 
 type AddConnectionData struct {
-	FromID int
-	ToID   int
+	FromID     int
+	ToID       int
 	Connection Connection
 }
 
@@ -151,7 +147,6 @@ func (m *model) recordAction(actionType ActionType, data, inverse interface{}) {
 		Inverse: inverse,
 	}
 	m.undoStack = append(m.undoStack, action)
-	// Clear redo stack when new action is performed
 	m.redoStack = m.redoStack[:0]
 }
 
@@ -160,12 +155,10 @@ func (m *model) undo() {
 		return
 	}
 
-	// Pop the last action
 	lastIndex := len(m.undoStack) - 1
 	action := m.undoStack[lastIndex]
 	m.undoStack = m.undoStack[:lastIndex]
 
-	// Perform the inverse action
 	switch action.Type {
 	case ActionAddBox:
 		data := action.Inverse.(DeleteBoxData)
@@ -173,7 +166,6 @@ func (m *model) undo() {
 	case ActionDeleteBox:
 		data := action.Inverse.(AddBoxData)
 		m.canvas.AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-		// Restore connections that were connected to this box
 		inverse := action.Data.(DeleteBoxData)
 		for _, connection := range inverse.Connections {
 			m.canvas.RestoreConnection(connection)
@@ -192,7 +184,6 @@ func (m *model) undo() {
 		m.canvas.RemoveConnection(data.FromID, data.ToID)
 	}
 
-	// Move action to redo stack
 	m.redoStack = append(m.redoStack, action)
 }
 
@@ -201,12 +192,10 @@ func (m *model) redo() {
 		return
 	}
 
-	// Pop the last action from redo stack
 	lastIndex := len(m.redoStack) - 1
 	action := m.redoStack[lastIndex]
 	m.redoStack = m.redoStack[:lastIndex]
 
-	// Perform the action again
 	switch action.Type {
 	case ActionAddBox:
 		data := action.Data.(AddBoxData)
@@ -228,19 +217,17 @@ func (m *model) redo() {
 		m.canvas.RestoreConnection(data.Connection)
 	}
 
-	// Move action back to undo stack
 	m.undoStack = append(m.undoStack, action)
 }
 
 func initialModel() model {
 	canvas := NewCanvas()
-	// Add welcome box to top-left corner with 1 row/column padding
-	canvas.AddBox(1, 1, "Welcome to Flerm!\n\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
+	canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
 
 	return model{
-		canvas:      canvas,
-		mode:        ModeStartup,
-		selectedBox: -1,
+		canvas:         canvas,
+		mode:           ModeStartup,
+		selectedBox:    -1,
 		connectionFrom: -1,
 	}
 }
@@ -269,7 +256,6 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
-// forceRefresh is a command that forces a screen refresh
 func forceRefresh() tea.Msg {
 	return nil
 }
@@ -283,7 +269,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Handle help screen with scrolling (but not in startup mode)
 		if m.help && m.mode != ModeStartup {
 			switch msg.String() {
 			case "escape", "q", "?":
@@ -291,8 +276,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpScroll = 0
 				return m, nil
 			case "j", "down":
-				// Calculate max scroll to prevent scrolling past end
-				totalLines := 54 // Total lines in help text (approximate)
+				totalLines := 54
 				maxScroll := totalLines - (m.height - 1)
 				if maxScroll < 0 {
 					maxScroll = 0
@@ -307,7 +291,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// Any other key closes help for compatibility
 				m.help = false
 				m.helpScroll = 0
 				return m, nil
@@ -318,31 +301,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ModeStartup:
 			switch msg.String() {
 			case "n":
-				// New flowchart - clear canvas and switch to normal mode
 				m.canvas = NewCanvas()
 				m.mode = ModeNormal
 				m.cursorX = 0
 				m.cursorY = 0
-				m.errorMessage = "" // Clear any previous error
+				m.errorMessage = ""
 				return m, nil
 			case "o":
-				// Open existing chart - switch to file input mode
 				m.mode = ModeFileInput
 				m.fileOp = FileOpOpen
 				m.filename = "flowchart"
-				m.errorMessage = ""  // Clear any previous error
-				m.fromStartup = true // Track that we came from startup
+				m.errorMessage = ""
+				m.fromStartup = true
 				return m, nil
 			case "q", "ctrl+c":
-				// Quit application
 				return m, tea.Quit
 			default:
-				// Ignore other keys in startup mode
 				return m, nil
 			}
 
 		case ModeNormal:
-			// Handle Escape key specifically for connection cancellation
 			if msg.Type == tea.KeyEscape {
 				m.connectionFrom = -1
 				m.selectedBox = -1
@@ -390,16 +368,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ensureCursorInBounds()
 				return m, nil
 			case "b":
-				boxID := len(m.canvas.boxes) // Get ID before adding
+				boxID := len(m.canvas.boxes)
 				m.canvas.AddBox(m.cursorX, m.cursorY, "Box")
-				// Record the action for undo
 				addData := AddBoxData{X: m.cursorX, Y: m.cursorY, Text: "Box", ID: boxID}
-				deleteData := DeleteBoxData{ID: boxID, Connections: nil} // No connections initially
+				deleteData := DeleteBoxData{ID: boxID, Connections: nil}
 				m.recordAction(ActionAddBox, addData, deleteData)
 				m.ensureCursorInBounds()
 				return m, nil
 			case "t":
-				// Enter text input mode at cursor position
 				m.mode = ModeTextInput
 				m.textInputX = m.cursorX
 				m.textInputY = m.cursorY
@@ -409,7 +385,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
 				if boxID != -1 {
 					m.selectedBox = boxID
-					// Store original size for undo
 					if boxID < len(m.canvas.boxes) {
 						m.originalWidth = m.canvas.boxes[boxID].Width
 						m.originalHeight = m.canvas.boxes[boxID].Height
@@ -421,7 +396,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
 				if boxID != -1 {
 					m.selectedBox = boxID
-					// Store original position for undo
 					if boxID < len(m.canvas.boxes) {
 						m.originalMoveX = m.canvas.boxes[boxID].X
 						m.originalMoveY = m.canvas.boxes[boxID].Y
@@ -443,12 +417,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.connectionFrom == -1 {
 						m.connectionFrom = boxID
 					} else {
-						// Get the connection that will be created
 						fromBox := m.canvas.boxes[m.connectionFrom]
 						toBox := m.canvas.boxes[boxID]
 						var fromX, fromY, toX, toY int
 
-						// Calculate connection points (same logic as AddArrow)
 						fromCenterX := fromBox.X + fromBox.Width/2
 						fromCenterY := fromBox.Y + fromBox.Height/2
 						toCenterX := toBox.X + toBox.Width/2
@@ -490,7 +462,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 
 						m.canvas.AddConnection(m.connectionFrom, boxID)
-						// Record the action for undo
 						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
@@ -516,22 +487,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeFileInput
 				m.fileOp = FileOpSave
 				m.filename = "flowchart"
-				m.errorMessage = ""   // Clear any previous error
-				m.fromStartup = false // Clear startup flag
+				m.errorMessage = ""
+				m.fromStartup = false
 				return m, nil
 			case "o":
 				m.mode = ModeFileInput
 				m.fileOp = FileOpOpen
 				m.filename = "flowchart"
-				m.errorMessage = ""   // Clear any previous error
-				m.fromStartup = false // Clear startup flag
+				m.errorMessage = ""
+				m.fromStartup = false
 				return m, nil
 			case "x":
 				m.mode = ModeFileInput
 				m.fileOp = FileOpSavePNG
 				m.filename = "flowchart"
-				m.errorMessage = ""   // Clear any previous error
-				m.fromStartup = false // Clear startup flag
+				m.errorMessage = ""
+				m.fromStartup = false
 				return m, nil
 			case "u":
 				m.undo()
@@ -553,11 +524,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedBox = -1
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
-				// Ctrl+S - save and exit
 				if m.selectedBox != -1 {
 					oldText := m.canvas.GetBoxText(m.selectedBox)
 					m.canvas.SetBoxText(m.selectedBox, m.editText)
-					// Record the edit for undo
 					editData := EditBoxData{ID: m.selectedBox, NewText: m.editText, OldText: oldText}
 					inverseData := EditBoxData{ID: m.selectedBox, NewText: oldText, OldText: m.editText}
 					m.recordAction(ActionEditBox, editData, inverseData)
@@ -567,7 +536,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedBox = -1
 				return m, nil
 			case msg.Type == tea.KeyEnter:
-				// Enter - add newline
 				m.editText += "\n"
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
@@ -576,7 +544,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// Handle regular character input
 				keyStr := msg.String()
 				if len(keyStr) == 1 {
 					m.editText += keyStr
@@ -591,16 +558,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInputText = ""
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
-				// Ctrl+S - save and create text
 				if m.textInputText != "" {
 					m.canvas.AddText(m.textInputX, m.textInputY, m.textInputText)
-					// TODO: Add undo support for text creation
 				}
 				m.mode = ModeNormal
 				m.textInputText = ""
 				return m, nil
 			case msg.Type == tea.KeyEnter:
-				// Enter - add newline
 				m.textInputText += "\n"
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
@@ -609,7 +573,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// Handle regular character input
 				keyStr := msg.String()
 				if len(keyStr) == 1 {
 					m.textInputText += keyStr
