@@ -1,15 +1,6 @@
 # Flerm - Terminal Flowchart Editor
 
-A clean, terminal-based flowchart editor built in Go using Bubble Tea TUI framework.
-
-## Features
-
-- **Interactive TUI**: Clean terminal interface with cursor-based navigation
-- **Box Creation**: Create and edit text boxes anywhere on the canvas
-- **Box Connections**: Connect boxes with arrows to show flow
-- **File I/O**: Save/load flowcharts as text files
-- **Image Export**: Export flowcharts as PNG images
-- **Intuitive Controls**: Vi-like navigation with simple keybindings
+A simple, terminal-based flowchart editor.
 
 ## Installation
 
