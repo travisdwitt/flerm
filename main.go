@@ -47,6 +47,7 @@ type model struct {
 	textInputText  string
 	errorMessage   string
 	fromStartup    bool
+	clipboard      *Box
 }
 
 type Mode int
@@ -509,6 +510,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "U":
 				m.redo()
+				return m, nil
+			case "c":
+				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
+				if boxID != -1 && boxID < len(m.canvas.boxes) {
+					// Copy the box
+					box := m.canvas.boxes[boxID]
+					// Create a deep copy
+					copiedBox := Box{
+						X:      box.X,
+						Y:      box.Y,
+						Width:  box.Width,
+						Height: box.Height,
+						ID:     box.ID,
+						Lines:  make([]string, len(box.Lines)),
+					}
+					copy(copiedBox.Lines, box.Lines)
+					m.clipboard = &copiedBox
+				}
+				return m, nil
+			case "p":
+				if m.clipboard != nil {
+					// Paste the box at cursor position
+					boxID := len(m.canvas.boxes)
+					text := m.clipboard.GetText()
+					m.canvas.AddBox(m.cursorX, m.cursorY, text)
+					// Set the size to match the copied box (in case it was manually resized)
+					if boxID < len(m.canvas.boxes) {
+						m.canvas.SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
+					}
+					addData := AddBoxData{X: m.cursorX, Y: m.cursorY, Text: text, ID: boxID}
+					deleteData := DeleteBoxData{ID: boxID, Connections: nil}
+					m.recordAction(ActionAddBox, addData, deleteData)
+					m.ensureCursorInBounds()
+				}
 				return m, nil
 			case "escape":
 				m.connectionFrom = -1
@@ -1003,6 +1038,8 @@ func (m model) helpView() string {
 		"  r                Resize box under cursor (enters resize mode)",
 		"  m                Move box under cursor (enters move mode)",
 		"  d                Delete box under cursor (shows confirmation)",
+		"  c                Copy box under cursor",
+		"  p                Paste copied box at cursor position",
 		"",
 		"Text Operations:",
 		"  t                Enter text mode at cursor position (plain text, no borders)",
