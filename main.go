@@ -354,16 +354,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursorX--
 				m.ensureCursorInBounds()
 				return m, nil
+			case "H", "shift+left":
+				m.cursorX -= 2
+				m.ensureCursorInBounds()
+				return m, nil
 			case "l", "right":
 				m.cursorX++
+				m.ensureCursorInBounds()
+				return m, nil
+			case "L", "shift+right":
+				m.cursorX += 2
 				m.ensureCursorInBounds()
 				return m, nil
 			case "k", "up":
 				m.cursorY--
 				m.ensureCursorInBounds()
 				return m, nil
+			case "K", "shift+up":
+				m.cursorY -= 2
+				m.ensureCursorInBounds()
+				return m, nil
 			case "j", "down":
 				m.cursorY++
+				m.ensureCursorInBounds()
+				return m, nil
+			case "J", "shift+down":
+				m.cursorY += 2
 				m.ensureCursorInBounds()
 				return m, nil
 			case "b":
@@ -606,9 +622,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorInBounds()
 				}
 				return m, nil
+			case "H", "shift+left":
+				if m.selectedBox != -1 {
+					m.canvas.ResizeBox(m.selectedBox, -2, 0)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
 			case "l", "right":
 				if m.selectedBox != -1 {
 					m.canvas.ResizeBox(m.selectedBox, 1, 0)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
+			case "L", "shift+right":
+				if m.selectedBox != -1 {
+					m.canvas.ResizeBox(m.selectedBox, 2, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -618,9 +646,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorInBounds()
 				}
 				return m, nil
+			case "K", "shift+up":
+				if m.selectedBox != -1 {
+					m.canvas.ResizeBox(m.selectedBox, 0, -2)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
 			case "j", "down":
 				if m.selectedBox != -1 {
 					m.canvas.ResizeBox(m.selectedBox, 0, 1)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
+			case "J", "shift+down":
+				if m.selectedBox != -1 {
+					m.canvas.ResizeBox(m.selectedBox, 0, 2)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -656,9 +696,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorInBounds()
 				}
 				return m, nil
+			case "H", "shift+left":
+				if m.selectedBox != -1 {
+					m.canvas.MoveBox(m.selectedBox, -2, 0)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
 			case "l", "right":
 				if m.selectedBox != -1 {
 					m.canvas.MoveBox(m.selectedBox, 1, 0)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
+			case "L", "shift+right":
+				if m.selectedBox != -1 {
+					m.canvas.MoveBox(m.selectedBox, 2, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -668,9 +720,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorInBounds()
 				}
 				return m, nil
+			case "K", "shift+up":
+				if m.selectedBox != -1 {
+					m.canvas.MoveBox(m.selectedBox, 0, -2)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
 			case "j", "down":
 				if m.selectedBox != -1 {
 					m.canvas.MoveBox(m.selectedBox, 0, 1)
+					m.ensureCursorInBounds()
+				}
+				return m, nil
+			case "J", "shift+down":
+				if m.selectedBox != -1 {
+					m.canvas.MoveBox(m.selectedBox, 0, 2)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -961,6 +1025,7 @@ func (m model) helpView() string {
 		"",
 		"Navigation:",
 		"  h/←/j/↓/k/↑/l/→  Move cursor around the screen",
+		"  Shift+h/j/k/l    Move cursor 2x faster (hold Shift with direction keys)",
 		"",
 		"Box Operations:",
 		"  b                Create new box at cursor position",
@@ -975,11 +1040,13 @@ func (m model) helpView() string {
 		"",
 		"Resize Mode (after pressing 'r' on a box):",
 		"  h/←/j/↓/k/↑/l/→  Resize box (shrink/expand width/height)",
+		"  Shift+h/j/k/l    Resize box 2x faster",
 		"  Enter            Finish resizing and return to normal mode",
 		"  Escape           Cancel resize and return to normal mode",
 		"",
 		"Move Mode (after pressing 'm' on a box):",
 		"  h/←/j/↓/k/↑/l/→  Move box around the screen",
+		"  Shift+h/j/k/l    Move box 2x faster",
 		"  Enter            Finish moving and return to normal mode",
 		"  Escape           Cancel move and return to normal mode",
 		"",
