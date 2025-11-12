@@ -20,24 +20,24 @@ func main() {
 }
 
 type model struct {
-	width        int
-	height       int
-	cursorX      int
-	cursorY      int
-	canvas       *Canvas
-	mode         Mode
-	help         bool
-	helpScroll   int
-	selectedBox  int
-	editText     string
-	arrowFrom    int
-	filename     string
-	fileOp       FileOperation
+	width         int
+	height        int
+	cursorX       int
+	cursorY       int
+	canvas        *Canvas
+	mode          Mode
+	help          bool
+	helpScroll    int
+	selectedBox   int
+	editText      string
+	connectionFrom int
+	filename      string
+	fileOp        FileOperation
 	confirmAction ConfirmAction
-	confirmBoxID int
+	confirmBoxID  int
 	confirmTextID int
-	undoStack    []Action
-	redoStack    []Action
+	undoStack     []Action
+	redoStack     []Action
 	// Track original state for move/resize operations
 	originalMoveX  int
 	originalMoveY  int
@@ -97,7 +97,7 @@ const (
 	ActionEditBox
 	ActionResizeBox
 	ActionMoveBox
-	ActionAddArrow
+	ActionAddConnection
 )
 
 type AddBoxData struct {
@@ -107,9 +107,9 @@ type AddBoxData struct {
 }
 
 type DeleteBoxData struct {
-	Box   Box
-	ID    int
-	Arrows []Arrow // Arrows that were connected to this box
+	Box    Box
+	ID     int
+	Connections []Connection // Connections that were connected to this box
 }
 
 type EditBoxData struct {
@@ -119,9 +119,9 @@ type EditBoxData struct {
 }
 
 type ResizeBoxData struct {
-	ID           int
-	DeltaWidth   int
-	DeltaHeight  int
+	ID          int
+	DeltaWidth  int
+	DeltaHeight int
 }
 
 type MoveBoxData struct {
@@ -138,10 +138,10 @@ type OriginalBoxState struct {
 	Height int
 }
 
-type AddArrowData struct {
+type AddConnectionData struct {
 	FromID int
 	ToID   int
-	Arrow  Arrow
+	Connection Connection
 }
 
 func (m *model) recordAction(actionType ActionType, data, inverse interface{}) {
@@ -173,10 +173,10 @@ func (m *model) undo() {
 	case ActionDeleteBox:
 		data := action.Inverse.(AddBoxData)
 		m.canvas.AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-		// Restore arrows that were connected to this box
+		// Restore connections that were connected to this box
 		inverse := action.Data.(DeleteBoxData)
-		for _, arrow := range inverse.Arrows {
-			m.canvas.RestoreArrow(arrow)
+		for _, connection := range inverse.Connections {
+			m.canvas.RestoreConnection(connection)
 		}
 	case ActionEditBox:
 		data := action.Inverse.(EditBoxData)
@@ -187,9 +187,9 @@ func (m *model) undo() {
 	case ActionMoveBox:
 		data := action.Inverse.(OriginalBoxState)
 		m.canvas.SetBoxPosition(data.ID, data.X, data.Y)
-	case ActionAddArrow:
-		data := action.Inverse.(AddArrowData)
-		m.canvas.RemoveArrow(data.FromID, data.ToID)
+	case ActionAddConnection:
+		data := action.Inverse.(AddConnectionData)
+		m.canvas.RemoveConnection(data.FromID, data.ToID)
 	}
 
 	// Move action to redo stack
@@ -223,9 +223,9 @@ func (m *model) redo() {
 	case ActionMoveBox:
 		data := action.Data.(MoveBoxData)
 		m.canvas.MoveBox(data.ID, data.DeltaX, data.DeltaY)
-	case ActionAddArrow:
-		data := action.Data.(AddArrowData)
-		m.canvas.RestoreArrow(data.Arrow)
+	case ActionAddConnection:
+		data := action.Data.(AddConnectionData)
+		m.canvas.RestoreConnection(data.Connection)
 	}
 
 	// Move action back to undo stack
@@ -241,7 +241,7 @@ func initialModel() model {
 		canvas:      canvas,
 		mode:        ModeStartup,
 		selectedBox: -1,
-		arrowFrom:   -1,
+		connectionFrom: -1,
 	}
 }
 
@@ -330,7 +330,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeFileInput
 				m.fileOp = FileOpOpen
 				m.filename = "flowchart"
-				m.errorMessage = "" // Clear any previous error
+				m.errorMessage = ""  // Clear any previous error
 				m.fromStartup = true // Track that we came from startup
 				return m, nil
 			case "q", "ctrl+c":
@@ -342,6 +342,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case ModeNormal:
+			// Handle Escape key specifically for connection cancellation
+			if msg.Type == tea.KeyEscape {
+				m.connectionFrom = -1
+				m.selectedBox = -1
+				return m, nil
+			}
+
 			switch msg.String() {
 			case "ctrl+c", "q":
 				m.mode = ModeConfirm
@@ -387,7 +394,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.canvas.AddBox(m.cursorX, m.cursorY, "Box")
 				// Record the action for undo
 				addData := AddBoxData{X: m.cursorX, Y: m.cursorY, Text: "Box", ID: boxID}
-				deleteData := DeleteBoxData{ID: boxID, Arrows: nil} // No arrows initially
+				deleteData := DeleteBoxData{ID: boxID, Connections: nil} // No connections initially
 				m.recordAction(ActionAddBox, addData, deleteData)
 				m.ensureCursorInBounds()
 				return m, nil
@@ -433,11 +440,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "a":
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
 				if boxID != -1 {
-					if m.arrowFrom == -1 {
-						m.arrowFrom = boxID
+					if m.connectionFrom == -1 {
+						m.connectionFrom = boxID
 					} else {
-						// Get the arrow that will be created
-						fromBox := m.canvas.boxes[m.arrowFrom]
+						// Get the connection that will be created
+						fromBox := m.canvas.boxes[m.connectionFrom]
 						toBox := m.canvas.boxes[boxID]
 						var fromX, fromY, toX, toY int
 
@@ -449,32 +456,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						if abs(fromCenterX-toCenterX) > abs(fromCenterY-toCenterY) {
 							if fromCenterX < toCenterX {
-								fromX = fromBox.X + fromBox.Width
+								fromX = fromBox.X + fromBox.Width - 1
 								fromY = fromCenterY
-								toX = toBox.X - 1
+								toX = toBox.X
 								toY = toCenterY
 							} else {
-								fromX = fromBox.X - 1
+								fromX = fromBox.X
 								fromY = fromCenterY
-								toX = toBox.X + toBox.Width
+								toX = toBox.X + toBox.Width - 1
 								toY = toCenterY
 							}
 						} else {
 							if fromCenterY < toCenterY {
 								fromX = fromCenterX
-								fromY = fromBox.Y + fromBox.Height
+								fromY = fromBox.Y + fromBox.Height - 1
 								toX = toCenterX
-								toY = toBox.Y - 1
+								toY = toBox.Y
 							} else {
 								fromX = fromCenterX
-								fromY = fromBox.Y - 1
+								fromY = fromBox.Y
 								toX = toCenterX
-								toY = toBox.Y + toBox.Height
+								toY = toBox.Y + toBox.Height - 1
 							}
 						}
 
-						arrow := Arrow{
-							FromID: m.arrowFrom,
+						connection := Connection{
+							FromID: m.connectionFrom,
 							ToID:   boxID,
 							FromX:  fromX,
 							FromY:  fromY,
@@ -482,12 +489,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							ToY:    toY,
 						}
 
-						m.canvas.AddArrow(m.arrowFrom, boxID)
+						m.canvas.AddConnection(m.connectionFrom, boxID)
 						// Record the action for undo
-						addArrowData := AddArrowData{FromID: m.arrowFrom, ToID: boxID, Arrow: arrow}
-						inverseArrowData := AddArrowData{FromID: m.arrowFrom, ToID: boxID, Arrow: arrow}
-						m.recordAction(ActionAddArrow, addArrowData, inverseArrowData)
-						m.arrowFrom = -1
+						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
+						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
+						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
+						m.connectionFrom = -1
 					}
 				}
 				return m, nil
@@ -509,21 +516,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeFileInput
 				m.fileOp = FileOpSave
 				m.filename = "flowchart"
-				m.errorMessage = "" // Clear any previous error
+				m.errorMessage = ""   // Clear any previous error
 				m.fromStartup = false // Clear startup flag
 				return m, nil
 			case "o":
 				m.mode = ModeFileInput
 				m.fileOp = FileOpOpen
 				m.filename = "flowchart"
-				m.errorMessage = "" // Clear any previous error
+				m.errorMessage = ""   // Clear any previous error
 				m.fromStartup = false // Clear startup flag
 				return m, nil
 			case "x":
 				m.mode = ModeFileInput
 				m.fileOp = FileOpSavePNG
 				m.filename = "flowchart"
-				m.errorMessage = "" // Clear any previous error
+				m.errorMessage = ""   // Clear any previous error
 				m.fromStartup = false // Clear startup flag
 				return m, nil
 			case "u":
@@ -533,7 +540,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.redo()
 				return m, nil
 			case "escape":
-				m.arrowFrom = -1
+				m.connectionFrom = -1
 				m.selectedBox = -1
 				return m, nil
 			}
@@ -791,7 +798,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Stay in file input mode so user can try again or cancel
 							return m, nil
 						} else {
-							m.errorMessage = "" // Clear any previous error
+							m.errorMessage = ""   // Clear any previous error
 							m.fromStartup = false // Clear startup flag on successful load
 						}
 					}
@@ -830,14 +837,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Record the deletion for undo before actually deleting
 					if m.confirmBoxID >= 0 && m.confirmBoxID < len(m.canvas.boxes) {
 						box := m.canvas.boxes[m.confirmBoxID]
-						// Find arrows connected to this box
-						connectedArrows := make([]Arrow, 0)
-						for _, arrow := range m.canvas.arrows {
-							if arrow.FromID == m.confirmBoxID || arrow.ToID == m.confirmBoxID {
-								connectedArrows = append(connectedArrows, arrow)
+						// Find connections connected to this box
+						connectedConnections := make([]Connection, 0)
+						for _, connection := range m.canvas.connections {
+							if connection.FromID == m.confirmBoxID || connection.ToID == m.confirmBoxID {
+								connectedConnections = append(connectedConnections, connection)
 							}
 						}
-						deleteData := DeleteBoxData{Box: box, ID: m.confirmBoxID, Arrows: connectedArrows}
+						deleteData := DeleteBoxData{Box: box, ID: m.confirmBoxID, Connections: connectedConnections}
 						addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
 						m.recordAction(ActionDeleteBox, deleteData, addData)
 					}
@@ -972,8 +979,8 @@ func (m model) View() string {
 		statusLine = fmt.Sprintf("Mode: CONFIRM | %s", message)
 	default:
 		status := fmt.Sprintf("Mode: %s | Cursor: (%d,%d)", m.modeString(), m.cursorX, m.cursorY)
-		if m.arrowFrom != -1 {
-			status += fmt.Sprintf(" | Arrow from Box %d (select target)", m.arrowFrom)
+		if m.connectionFrom != -1 {
+			status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
 		}
 		if m.selectedBox != -1 {
 			status += fmt.Sprintf(" | Selected: Box %d", m.selectedBox)
@@ -1052,9 +1059,10 @@ func (m model) helpView() string {
 		"",
 		"Note: Active boxes (being resized/moved) are highlighted with # borders",
 		"",
-		"Arrow Operations:",
-		"  a                Start/finish arrow creation between boxes",
+		"Connection Operations:",
+		"  a                Start/finish connection creation between boxes",
 		"                   (press 'a' on source box, then 'a' on target box)",
+		"  Escape           Cancel connection (if started but not finished)",
 		"",
 		"File Operations:",
 		"  s                Save flowchart (prompts for filename, adds .txt if missing)",

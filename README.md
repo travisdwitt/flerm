@@ -6,7 +6,7 @@ A clean, terminal-based flowchart editor built in Go using Bubble Tea TUI framew
 
 - **Interactive TUI**: Clean terminal interface with cursor-based navigation
 - **Box Creation**: Create and edit text boxes anywhere on the canvas
-- **Arrow Connections**: Connect boxes with arrows to show flow
+- **Box Connections**: Connect boxes with arrows to show flow
 - **File I/O**: Save/load flowcharts as text files
 - **Image Export**: Export flowcharts as PNG images
 - **Intuitive Controls**: Vi-like navigation with simple keybindings
@@ -34,8 +34,8 @@ go build -o flerm
 - `e` - Edit text in box under cursor
 - `d` - Delete box under cursor
 
-### Arrow Operations
-- `a` - Start/finish arrow creation between boxes
+### Connection Operations
+- `a` - Start/finish connection creation between boxes
   - Press 'a' on source box, then 'a' on target box
 
 ### File Operations
@@ -62,7 +62,7 @@ FLOWCHART
 BOXES:2
 10,5,10,3,Start
 25,10,12,3,Process
-ARROWS:1
+CONNECTIONS:1
 0,1
 ```
 

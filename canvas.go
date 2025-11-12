@@ -13,9 +13,9 @@ import (
 )
 
 type Canvas struct {
-	boxes  []Box
-	arrows []Arrow
-	texts  []Text
+	boxes       []Box
+	connections []Connection
+	texts       []Text
 }
 
 type Text struct {
@@ -69,7 +69,7 @@ func (b *Box) updateSize() {
 	b.Height = len(b.Lines) + 2
 }
 
-type Arrow struct {
+type Connection struct {
 	FromID int
 	ToID   int
 	FromX  int
@@ -80,9 +80,9 @@ type Arrow struct {
 
 func NewCanvas() *Canvas {
 	return &Canvas{
-		boxes:  make([]Box, 0),
-		arrows: make([]Arrow, 0),
-		texts:  make([]Text, 0),
+		boxes:       make([]Box, 0),
+		connections: make([]Connection, 0),
+		texts:       make([]Text, 0),
 	}
 }
 
@@ -133,7 +133,7 @@ func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
 	}
 }
 
-func (c *Canvas) AddArrow(fromID, toID int) {
+func (c *Canvas) AddConnection(fromID, toID int) {
 	if fromID >= len(c.boxes) || toID >= len(c.boxes) {
 		return
 	}
@@ -155,15 +155,15 @@ func (c *Canvas) AddArrow(fromID, toID int) {
 		// Horizontal connection is preferred
 		if fromCenterX < toCenterX {
 			// Connect from right side of fromBox to left side of toBox
-			fromX = fromBox.X + fromBox.Width
+			fromX = fromBox.X + fromBox.Width - 1
 			fromY = fromCenterY
-			toX = toBox.X - 1
+			toX = toBox.X
 			toY = toCenterY
 		} else {
 			// Connect from left side of fromBox to right side of toBox
-			fromX = fromBox.X - 1
+			fromX = fromBox.X
 			fromY = fromCenterY
-			toX = toBox.X + toBox.Width
+			toX = toBox.X + toBox.Width - 1
 			toY = toCenterY
 		}
 	} else {
@@ -171,19 +171,19 @@ func (c *Canvas) AddArrow(fromID, toID int) {
 		if fromCenterY < toCenterY {
 			// Connect from bottom of fromBox to top of toBox
 			fromX = fromCenterX
-			fromY = fromBox.Y + fromBox.Height
+			fromY = fromBox.Y + fromBox.Height - 1
 			toX = toCenterX
-			toY = toBox.Y - 1
+			toY = toBox.Y
 		} else {
 			// Connect from top of fromBox to bottom of toBox
 			fromX = fromCenterX
-			fromY = fromBox.Y - 1
+			fromY = fromBox.Y
 			toX = toCenterX
-			toY = toBox.Y + toBox.Height
+			toY = toBox.Y + toBox.Height - 1
 		}
 	}
 
-	arrow := Arrow{
+	connection := Connection{
 		FromID: fromID,
 		ToID:   toID,
 		FromX:  fromX,
@@ -191,21 +191,21 @@ func (c *Canvas) AddArrow(fromID, toID int) {
 		ToX:    toX,
 		ToY:    toY,
 	}
-	c.arrows = append(c.arrows, arrow)
+	c.connections = append(c.connections, connection)
 }
 
-func (c *Canvas) RemoveArrow(fromID, toID int) {
-	newArrows := make([]Arrow, 0)
-	for _, arrow := range c.arrows {
-		if arrow.FromID != fromID || arrow.ToID != toID {
-			newArrows = append(newArrows, arrow)
+func (c *Canvas) RemoveConnection(fromID, toID int) {
+	newConnections := make([]Connection, 0)
+	for _, connection := range c.connections {
+		if connection.FromID != fromID || connection.ToID != toID {
+			newConnections = append(newConnections, connection)
 		}
 	}
-	c.arrows = newArrows
+	c.connections = newConnections
 }
 
-func (c *Canvas) RestoreArrow(arrow Arrow) {
-	c.arrows = append(c.arrows, arrow)
+func (c *Canvas) RestoreConnection(connection Connection) {
+	c.connections = append(c.connections, connection)
 }
 
 func (c *Canvas) GetBoxAt(x, y int) int {
@@ -266,21 +266,21 @@ func (c *Canvas) DeleteBox(id int) {
 			c.boxes[i].ID = i
 		}
 
-		// Remove arrows connected to this box and update arrow IDs
-		newArrows := make([]Arrow, 0)
-		for _, arrow := range c.arrows {
-			if arrow.FromID != id && arrow.ToID != id {
+		// Remove connections connected to this box and update connection IDs
+		newConnections := make([]Connection, 0)
+		for _, connection := range c.connections {
+			if connection.FromID != id && connection.ToID != id {
 				// Update IDs if they're greater than the deleted box ID
-				if arrow.FromID > id {
-					arrow.FromID--
+				if connection.FromID > id {
+					connection.FromID--
 				}
-				if arrow.ToID > id {
-					arrow.ToID--
+				if connection.ToID > id {
+					connection.ToID--
 				}
-				newArrows = append(newArrows, arrow)
+				newConnections = append(newConnections, connection)
 			}
 		}
-		c.arrows = newArrows
+		c.connections = newConnections
 	}
 }
 
@@ -381,9 +381,9 @@ func (c *Canvas) Render(width, height int, selectedBox int) []string {
 		}
 	}
 
-	// Draw arrows first (so they appear behind boxes)
-	for _, arrow := range c.arrows {
-		c.drawArrow(canvas, arrow)
+	// Draw connections first (so they appear behind boxes)
+	for _, connection := range c.connections {
+		c.drawConnection(canvas, connection)
 	}
 
 	// Draw texts first (plain text without borders)
@@ -487,17 +487,64 @@ func (c *Canvas) drawText(canvas [][]rune, text Text) {
 	}
 }
 
-func (c *Canvas) drawArrow(canvas [][]rune, arrow Arrow) {
-	// Draw L-shaped arrow with line drawing characters
-	fromX, fromY := arrow.FromX, arrow.FromY
-	toX, toY := arrow.ToX, arrow.ToY
+func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
+	fromX, fromY := connection.FromX, connection.FromY
+	toX, toY := connection.ToX, connection.ToY
 
-	// Create an L-shaped path: horizontal first, then vertical
-	cornerX := toX
-	cornerY := fromY
+	if fromX == toX {
+		// Straight vertical line
+		startY := fromY
+		endY := toY
+		if startY > endY {
+			startY, endY = endY, startY
+		}
 
-	// Draw horizontal line from start to corner (but not over the arrow head)
-	if fromX != cornerX {
+		// Draw vertical line
+		for y := startY; y <= endY; y++ {
+			if c.isValidPos(canvas, fromX, y) && canvas[y][fromX] == ' ' {
+				canvas[y][fromX] = '│'
+			}
+		}
+
+		// Draw connection head
+		if c.isValidPos(canvas, toX, toY) {
+			if fromY < toY {
+				canvas[toY][toX] = '▼' // pointing down
+			} else {
+				canvas[toY][toX] = '▲' // pointing up
+			}
+		}
+
+	} else if fromY == toY {
+		// Straight horizontal line
+		startX := fromX
+		endX := toX
+		if startX > endX {
+			startX, endX = endX, startX
+		}
+
+		// Draw horizontal line
+		for x := startX; x <= endX; x++ {
+			if c.isValidPos(canvas, x, fromY) && canvas[fromY][x] == ' ' {
+				canvas[fromY][x] = '─'
+			}
+		}
+
+		// Draw connection head
+		if c.isValidPos(canvas, toX, toY) {
+			if fromX < toX {
+				canvas[toY][toX] = '▶' // pointing right
+			} else {
+				canvas[toY][toX] = '◀' // pointing left
+			}
+		}
+
+	} else {
+		// L-shaped line: horizontal first, then vertical
+		cornerX := toX
+		cornerY := fromY
+
+		// Draw horizontal segment
 		startX := fromX
 		endX := cornerX
 		if startX > endX {
@@ -506,17 +553,11 @@ func (c *Canvas) drawArrow(canvas [][]rune, arrow Arrow) {
 
 		for x := startX; x <= endX; x++ {
 			if c.isValidPos(canvas, x, fromY) && canvas[fromY][x] == ' ' {
-				// Don't draw over the final arrow position if this is a straight horizontal line
-				if fromY == toY && x == toX {
-					continue // Skip drawing here, arrow head will be placed
-				}
-				canvas[fromY][x] = '─' // horizontal line
+				canvas[fromY][x] = '─'
 			}
 		}
-	}
 
-	// Draw vertical line from corner to end (but not over the arrow head)
-	if cornerY != toY {
+		// Draw vertical segment
 		startY := cornerY
 		endY := toY
 		if startY > endY {
@@ -525,68 +566,34 @@ func (c *Canvas) drawArrow(canvas [][]rune, arrow Arrow) {
 
 		for y := startY; y <= endY; y++ {
 			if c.isValidPos(canvas, cornerX, y) && canvas[y][cornerX] == ' ' {
-				// Don't draw over the final arrow position if this is a straight vertical line
-				if fromX == toX && y == toY {
-					continue // Skip drawing here, arrow head will be placed
-				}
-				canvas[y][cornerX] = '│' // vertical line
+				canvas[y][cornerX] = '│'
 			}
 		}
-	}
 
-	// Draw corner if needed
-	if fromX != toX && fromY != toY {
+		// Draw corner piece
 		if c.isValidPos(canvas, cornerX, cornerY) {
-			// Corner is at (toX, fromY) - determine character based on the direction of turn
-			// We're coming horizontally into the corner and leaving vertically
+			// Determine corner character based on direction of turn
 			if fromX < toX && fromY < toY {
-				// Coming from left, going down
-				canvas[cornerY][cornerX] = '┐' // top-right corner
+				// Going right then down
+				canvas[cornerY][cornerX] = '┐'
 			} else if fromX < toX && fromY > toY {
-				// Coming from left, going up
-				canvas[cornerY][cornerX] = '┘' // bottom-right corner
+				// Going right then up
+				canvas[cornerY][cornerX] = '┘'
 			} else if fromX > toX && fromY < toY {
-				// Coming from right, going down
-				canvas[cornerY][cornerX] = '┌' // top-left corner
-			} else {
-				// Coming from right, going up
-				canvas[cornerY][cornerX] = '└' // bottom-left corner
+				// Going left then down
+				canvas[cornerY][cornerX] = '┌'
+			} else if fromX > toX && fromY > toY {
+				// Going left then up
+				canvas[cornerY][cornerX] = '└'
 			}
 		}
-	}
 
-	// Always draw arrow head at the destination
-	if c.isValidPos(canvas, toX, toY) {
-		// Determine arrow direction based on how we approach the target
-		if fromX != toX && fromY == toY {
-			// Straight horizontal line - arrow points toward the target box
-			if fromX < toX {
-				canvas[toY][toX] = '▶' // pointing right (into box from left)
-			} else {
-				canvas[toY][toX] = '◀' // pointing left (into box from right)
-			}
-		} else if fromX == toX && fromY != toY {
-			// Straight vertical line - arrow points toward the target box
+		// Draw connection head at target
+		if c.isValidPos(canvas, toX, toY) {
 			if fromY < toY {
-				canvas[toY][toX] = '▼' // pointing down (into box from top)
+				canvas[toY][toX] = '▼' // pointing down into box
 			} else {
-				canvas[toY][toX] = '▲' // pointing up (into box from bottom)
-			}
-		} else if fromX != toX && fromY != toY {
-			// L-shaped line - arrow direction is based on the final segment into the target
-			// The final segment is always vertical (from cornerY to toY)
-			if cornerY < toY {
-				canvas[toY][toX] = '▼' // pointing down (into box from top)
-			} else if cornerY > toY {
-				canvas[toY][toX] = '▲' // pointing up (into box from bottom)
-			} else {
-				// This case shouldn't happen with our L-shaped routing, but handle it
-				// Fall back to horizontal direction
-				if fromX < toX {
-					canvas[toY][toX] = '▶' // pointing right
-				} else {
-					canvas[toY][toX] = '◀' // pointing left
-				}
+				canvas[toY][toX] = '▲' // pointing up into box
 			}
 		}
 	}
@@ -618,9 +625,9 @@ func (c *Canvas) SaveToFile(filename string) error {
 		fmt.Fprintf(file, "%d,%d,%s\n", box.X, box.Y, encodedText)
 	}
 
-	fmt.Fprintf(file, "ARROWS:%d\n", len(c.arrows))
-	for _, arrow := range c.arrows {
-		fmt.Fprintf(file, "%d,%d\n", arrow.FromID, arrow.ToID)
+	fmt.Fprintf(file, "CONNECTIONS:%d\n", len(c.connections))
+	for _, connection := range c.connections {
+		fmt.Fprintf(file, "%d,%d\n", connection.FromID, connection.ToID)
 	}
 
 	return nil
@@ -634,7 +641,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 	defer file.Close()
 
 	c.boxes = c.boxes[:0]
-	c.arrows = c.arrows[:0]
+	c.connections = c.connections[:0]
 
 	scanner := bufio.NewScanner(file)
 
@@ -676,29 +683,29 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		c.boxes = append(c.boxes, box)
 	}
 
-	// Read arrows
+	// Read connections
 	if !scanner.Scan() {
-		return fmt.Errorf("missing arrows header")
+		return fmt.Errorf("missing connections header")
 	}
-	arrowCountStr := strings.TrimPrefix(scanner.Text(), "ARROWS:")
-	arrowCount, err := strconv.Atoi(arrowCountStr)
+	connectionCountStr := strings.TrimPrefix(scanner.Text(), "CONNECTIONS:")
+	connectionCount, err := strconv.Atoi(connectionCountStr)
 	if err != nil {
-		return fmt.Errorf("invalid arrow count: %v", err)
+		return fmt.Errorf("invalid connection count: %v", err)
 	}
 
-	for i := 0; i < arrowCount; i++ {
+	for i := 0; i < connectionCount; i++ {
 		if !scanner.Scan() {
-			return fmt.Errorf("missing arrow data")
+			return fmt.Errorf("missing connection data")
 		}
 		parts := strings.Split(scanner.Text(), ",")
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid arrow format")
+			return fmt.Errorf("invalid connection format")
 		}
 
 		fromID, _ := strconv.Atoi(parts[0])
 		toID, _ := strconv.Atoi(parts[1])
 
-		c.AddArrow(fromID, toID)
+		c.AddConnection(fromID, toID)
 	}
 
 	return scanner.Err()
@@ -728,17 +735,17 @@ func (c *Canvas) ExportToPNG(filename string, width, height int) error {
 		}
 	}
 
-	// Draw arrows
-	for _, arrow := range c.arrows {
-		fromX := float64(arrow.FromX * 10)
-		fromY := float64(arrow.FromY * 10)
-		toX := float64(arrow.ToX * 10)
-		toY := float64(arrow.ToY * 10)
+	// Draw connections
+	for _, connection := range c.connections {
+		fromX := float64(connection.FromX * 10)
+		fromY := float64(connection.FromY * 10)
+		toX := float64(connection.ToX * 10)
+		toY := float64(connection.ToY * 10)
 
 		dc.DrawLine(fromX, fromY, toX, toY)
 		dc.Stroke()
 
-		// Draw arrow head
+		// Draw connection head
 		angle := math.Atan2(toY-fromY, toX-fromX)
 		arrowLength := 10.0
 		arrowAngle := 0.5
