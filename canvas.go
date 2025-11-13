@@ -253,55 +253,95 @@ func (c *Canvas) findNearestEdgePoint(box Box, cursorX, cursorY int) (int, int) 
 	return edgeX, edgeY
 }
 
-func (c *Canvas) AddConnection(fromID, toID int) {
-	if fromID >= len(c.boxes) || toID >= len(c.boxes) {
-		return
+func (c *Canvas) calculateConnectionPoints(fromID, toID int) (fromX, fromY, toX, toY int) {
+	if fromID < 0 || fromID >= len(c.boxes) || toID < 0 || toID >= len(c.boxes) {
+		return 0, 0, 0, 0
 	}
 
 	fromBox := c.boxes[fromID]
 	toBox := c.boxes[toID]
 
-	// Calculate the best connection points based on box positions
-	var fromX, fromY, toX, toY int
-
-	// Determine connection points based on relative positions
 	fromCenterX := fromBox.X + fromBox.Width/2
 	fromCenterY := fromBox.Y + fromBox.Height/2
 	toCenterX := toBox.X + toBox.Width/2
 	toCenterY := toBox.Y + toBox.Height/2
-
-	// Choose connection points based on relative positions
 	if abs(fromCenterX-toCenterX) > abs(fromCenterY-toCenterY) {
-		// Horizontal connection is preferred
 		if fromCenterX < toCenterX {
-			// Connect from right side of fromBox to left side of toBox
 			fromX = fromBox.X + fromBox.Width - 1
 			fromY = fromCenterY
 			toX = toBox.X
 			toY = toCenterY
 		} else {
-			// Connect from left side of fromBox to right side of toBox
 			fromX = fromBox.X
 			fromY = fromCenterY
 			toX = toBox.X + toBox.Width - 1
 			toY = toCenterY
 		}
 	} else {
-		// Vertical connection is preferred
 		if fromCenterY < toCenterY {
-			// Connect from bottom of fromBox to top of toBox
 			fromX = fromCenterX
 			fromY = fromBox.Y + fromBox.Height - 1
 			toX = toCenterX
 			toY = toBox.Y
 		} else {
-			// Connect from top of fromBox to bottom of toBox
 			fromX = fromCenterX
 			fromY = fromBox.Y
 			toX = toCenterX
 			toY = toBox.Y + toBox.Height - 1
 		}
 	}
+
+	return fromX, fromY, toX, toY
+}
+
+func (c *Canvas) calculateConnectionPointsPreservingOrientation(fromID, toID int, preferHorizontal bool) (fromX, fromY, toX, toY int) {
+	if fromID < 0 || fromID >= len(c.boxes) || toID < 0 || toID >= len(c.boxes) {
+		return 0, 0, 0, 0
+	}
+
+	fromBox := c.boxes[fromID]
+	toBox := c.boxes[toID]
+
+	fromCenterX := fromBox.X + fromBox.Width/2
+	fromCenterY := fromBox.Y + fromBox.Height/2
+	toCenterX := toBox.X + toBox.Width/2
+	toCenterY := toBox.Y + toBox.Height/2
+
+	if preferHorizontal {
+		if fromCenterX < toCenterX {
+			fromX = fromBox.X + fromBox.Width - 1
+			fromY = fromCenterY
+			toX = toBox.X
+			toY = toCenterY
+		} else {
+			fromX = fromBox.X
+			fromY = fromCenterY
+			toX = toBox.X + toBox.Width - 1
+			toY = toCenterY
+		}
+	} else {
+		if fromCenterY < toCenterY {
+			fromX = fromCenterX
+			fromY = fromBox.Y + fromBox.Height - 1
+			toX = toCenterX
+			toY = toBox.Y
+		} else {
+			fromX = fromCenterX
+			fromY = fromBox.Y
+			toX = toCenterX
+			toY = toBox.Y + toBox.Height - 1
+		}
+	}
+
+	return fromX, fromY, toX, toY
+}
+
+func (c *Canvas) AddConnection(fromID, toID int) {
+	if fromID >= len(c.boxes) || toID >= len(c.boxes) {
+		return
+	}
+
+	fromX, fromY, toX, toY := c.calculateConnectionPoints(fromID, toID)
 
 	connection := Connection{
 		FromID: fromID,
@@ -476,9 +516,65 @@ func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 			newHeight = minHeight
 		}
 
-		// Update box size
+		oldBoxX := box.X
+		oldBoxWidth := box.Width
+
 		box.Width = newWidth
 		box.Height = newHeight
+
+		for i := range c.connections {
+			conn := &c.connections[i]
+			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+				wasHorizontal := (conn.FromY == conn.ToY)
+				oldFromX := conn.FromX
+				oldToX := conn.ToX
+				newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(id, conn.ToID, wasHorizontal)
+				if wasHorizontal {
+					oldToBox := c.boxes[conn.ToID]
+					wasOnLeft := (oldToX == oldToBox.X || (oldToX < oldToBox.X+oldToBox.Width/2))
+					if wasOnLeft {
+						newToX = oldToBox.X
+					} else {
+						newToX = oldToBox.X + oldToBox.Width - 1
+					}
+					wasFromRight := (oldFromX == oldBoxX+oldBoxWidth-1 || (oldFromX > oldBoxX+oldBoxWidth/2))
+					if wasFromRight {
+						newFromX = box.X + box.Width - 1
+					} else {
+						newFromX = box.X
+					}
+				}
+				conn.FromX = newFromX
+				conn.FromY = newFromY
+				conn.ToX = newToX
+				conn.ToY = newToY
+			}
+			if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+				wasHorizontal := (conn.FromY == conn.ToY)
+				oldToX := conn.ToX
+				oldFromX := conn.FromX
+				newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(conn.FromID, id, wasHorizontal)
+				if wasHorizontal {
+					wasOnLeft := (oldToX == oldBoxX || (oldToX < oldBoxX+oldBoxWidth/2))
+					if wasOnLeft {
+						newToX = box.X
+					} else {
+						newToX = box.X + box.Width - 1
+					}
+					oldFromBox := c.boxes[conn.FromID]
+					wasFromRight := (oldFromX == oldFromBox.X+oldFromBox.Width-1 || (oldFromX > oldFromBox.X+oldFromBox.Width/2))
+					if wasFromRight {
+						newFromX = oldFromBox.X + oldFromBox.Width - 1
+					} else {
+						newFromX = oldFromBox.X
+					}
+				}
+				conn.FromX = newFromX
+				conn.FromY = newFromY
+				conn.ToX = newToX
+				conn.ToY = newToY
+			}
+		}
 	}
 }
 
@@ -494,6 +590,24 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 		}
 		if box.Y < 0 {
 			box.Y = 0
+		}
+
+		for i := range c.connections {
+			conn := &c.connections[i]
+			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
+				conn.FromX = newFromX
+				conn.FromY = newFromY
+				conn.ToX = newToX
+				conn.ToY = newToY
+			}
+			if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
+				conn.FromX = newFromX
+				conn.FromY = newFromY
+				conn.ToX = newToX
+				conn.ToY = newToY
+			}
 		}
 	}
 }
@@ -676,10 +790,13 @@ func (c *Canvas) drawText(canvas [][]rune, text Text) {
 func (c *Canvas) isPointInBox(x, y int, excludeFromID, excludeToID int) bool {
 	for i, box := range c.boxes {
 		if i == excludeFromID || i == excludeToID {
-			continue
-		}
-		if x >= box.X && x < box.X+box.Width && y >= box.Y && y < box.Y+box.Height {
-			return true
+			if x > box.X && x < box.X+box.Width-1 && y > box.Y && y < box.Y+box.Height-1 {
+				return true
+			}
+		} else {
+			if x > box.X && x < box.X+box.Width-1 && y > box.Y && y < box.Y+box.Height-1 {
+				return true
+			}
 		}
 	}
 	return false
@@ -722,16 +839,52 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 		var arrowX int
 		var arrowChar rune
 
-		if fromX < toX {
-			lineStartX = fromX + 1
-			lineEndX = toX - 1
+		var onLeftEdge, onRightEdge bool
+		if excludeToID >= 0 && excludeToID < len(c.boxes) {
+			toBox := c.boxes[excludeToID]
+			onLeftEdge = (toX == toBox.X)
+			onRightEdge = (toX == toBox.X+toBox.Width-1)
+			if !onLeftEdge && !onRightEdge {
+				if abs(toX-toBox.X) < abs(toX-(toBox.X+toBox.Width-1)) {
+					onLeftEdge = true
+				} else {
+					onRightEdge = true
+				}
+			}
+		}
+
+		if onLeftEdge {
 			arrowX = toX - 1
 			arrowChar = '▶'
-		} else {
-			lineStartX = toX + 1
-			lineEndX = fromX - 1
+			if fromX < toX {
+				lineStartX = fromX + 1
+				lineEndX = toX - 1
+			} else {
+				lineStartX = toX - 1
+				lineEndX = fromX - 1
+			}
+		} else if onRightEdge {
 			arrowX = toX + 1
 			arrowChar = '◀'
+			if fromX < toX {
+				lineStartX = fromX + 1
+				lineEndX = toX + 1
+			} else {
+				lineStartX = toX + 1
+				lineEndX = fromX - 1
+			}
+		} else {
+			if fromX < toX {
+				lineStartX = fromX + 1
+				lineEndX = toX - 1
+				arrowX = toX - 1
+				arrowChar = '▶'
+			} else {
+				lineStartX = toX + 1
+				lineEndX = fromX - 1
+				arrowX = toX + 1
+				arrowChar = '◀'
+			}
 		}
 
 		for x := lineStartX; x <= lineEndX; x++ {
@@ -740,8 +893,22 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			}
 		}
 
-		if drawArrow && c.isValidPos(canvas, arrowX, toY) {
-			canvas[toY][arrowX] = arrowChar
+		if drawArrow {
+			if excludeToID >= 0 && excludeToID < len(c.boxes) {
+				toBox := c.boxes[excludeToID]
+				if arrowX >= toBox.X && arrowX < toBox.X+toBox.Width {
+					if onLeftEdge {
+						arrowX = toBox.X - 1
+					} else if onRightEdge {
+						arrowX = toBox.X + toBox.Width
+					}
+				}
+			}
+			if c.isValidPos(canvas, arrowX, toY) {
+				if !c.isPointInBox(arrowX, toY, excludeFromID, excludeToID) {
+					canvas[toY][arrowX] = arrowChar
+				}
+			}
 		}
 
 	} else {
@@ -794,13 +961,22 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			var arrowX, arrowY int
 			var arrowChar rune
 
+			var onLeftEdge, onRightEdge, onTopEdge, onBottomEdge bool
+			if excludeToID >= 0 && excludeToID < len(c.boxes) {
+				toBox := c.boxes[excludeToID]
+				onLeftEdge = (toX == toBox.X)
+				onRightEdge = (toX == toBox.X+toBox.Width-1)
+				onTopEdge = (toY == toBox.Y)
+				onBottomEdge = (toY == toBox.Y+toBox.Height-1)
+			}
+
 			if cornerY < toY {
-				if toX < cornerX {
-					arrowX = toX + 1
+				if onLeftEdge {
+					arrowX = toX - 1
 					arrowY = toY
 					arrowChar = '◀'
-				} else if toX > cornerX {
-					arrowX = toX - 1
+				} else if onRightEdge {
+					arrowX = toX + 1
 					arrowY = toY
 					arrowChar = '▶'
 				} else {
@@ -808,19 +984,57 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 					arrowY = toY - 1
 					arrowChar = '▼'
 				}
-			} else {
-				if toX < cornerX {
-					arrowX = toX + 1
+			} else if cornerY > toY {
+				if onLeftEdge {
+					arrowX = toX - 1
 					arrowY = toY
 					arrowChar = '◀'
-				} else if toX > cornerX {
-					arrowX = toX - 1
+				} else if onRightEdge {
+					arrowX = toX + 1
 					arrowY = toY
 					arrowChar = '▶'
 				} else {
 					arrowX = toX
 					arrowY = toY + 1
 					arrowChar = '▲'
+				}
+			} else {
+				if onTopEdge {
+					arrowX = toX
+					arrowY = toY - 1
+					arrowChar = '▼'
+				} else if onBottomEdge {
+					arrowX = toX
+					arrowY = toY + 1
+					arrowChar = '▲'
+				} else if onLeftEdge {
+					arrowX = toX - 1
+					arrowY = toY
+					arrowChar = '◀'
+				} else if onRightEdge {
+					arrowX = toX + 1
+					arrowY = toY
+					arrowChar = '▶'
+				} else {
+					arrowX = toX
+					arrowY = toY - 1
+					arrowChar = '▼'
+				}
+			}
+
+			if excludeToID >= 0 && excludeToID < len(c.boxes) {
+				toBox := c.boxes[excludeToID]
+				if arrowX >= toBox.X && arrowX < toBox.X+toBox.Width &&
+					arrowY >= toBox.Y && arrowY < toBox.Y+toBox.Height {
+					if onLeftEdge {
+						arrowX = toBox.X - 1
+					} else if onRightEdge {
+						arrowX = toBox.X + toBox.Width
+					} else if onTopEdge {
+						arrowY = toBox.Y - 1
+					} else if onBottomEdge {
+						arrowY = toBox.Y + toBox.Height
+					}
 				}
 			}
 
@@ -841,7 +1055,7 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 				}
 			}
 
-			if c.isValidPos(canvas, arrowX, arrowY) {
+			if c.isValidPos(canvas, arrowX, arrowY) && !c.isPointInBox(arrowX, arrowY, excludeFromID, excludeToID) {
 				canvas[arrowY][arrowX] = arrowChar
 			}
 		}
