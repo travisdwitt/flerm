@@ -95,7 +95,7 @@ confirmations=true
 - `x` - Close current buffer (shows confirmation, warns about unsaved changes)
 <br>
 <img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/d609f834-5048-46e3-a3ad-e0c5d10003d1" />
-<br>
+
 ### General
 - `u` - Undo last action
 - `U` - Redo last undone action
