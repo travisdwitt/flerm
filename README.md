@@ -31,6 +31,8 @@ go build -o flerm
 
 ### Text Operations
 - `t` - Enter text mode at cursor position (plain text, no borders)
+- `e` - Edit text object under cursor
+- `m` - Move text object under cursor (enters move mode)
 - `d` - Delete text under cursor (shows confirmation)
 
 ### Connection Operations
@@ -39,6 +41,8 @@ go build -o flerm
   - Press 'a' on empty space to add waypoint (custom routing)
   - Press 'a' on a box or line to finish
   - Connections can start/end at boxes or existing lines
+- `A` - Toggle arrow state on connection line under cursor
+  - Cycles through: no arrows → to arrow → from arrow → both arrows
 - `Escape` - Cancel connection (if started but not finished)
 
 ### Resize Mode (after pressing 'r')
@@ -47,20 +51,23 @@ go build -o flerm
 - `Enter` - Finish resizing and return to normal mode
 - `Escape` - Cancel resize and return to normal mode
 
-### Move Mode (after pressing 'm')
-- `h/←/j/↓/k/↑/l/→` - Move box around the screen
-- `Shift+h/j/k/l` - Move box 2x faster
+### Move Mode (after pressing 'm' on a box or text)
+- `h/←/j/↓/k/↑/l/→` - Move object around the screen
+- `Shift+h/j/k/l` - Move object 2x faster
 - `Enter` - Finish moving and return to normal mode
 - `Escape` - Cancel move and return to normal mode
 
 ### File Operations
 - `s` - Save flowchart (prompts for filename, adds .txt if missing)
-- `o` - Open flowchart (prompts for filename, adds .txt if missing)
-- `x` - Export as PNG image (prompts for filename, adds .png if missing)
+- `o` - Open flowchart in current buffer (replaces current chart, shows file list)
+- `O` - Open flowchart in new buffer (creates new buffer, shows file list)
+- `S` - Export as PNG image (prompts for filename, adds .png if missing)
 
-### Editing Mode (after pressing 'e')
-- `Type` - Add text to box
-- `Enter` - Add new line to box text
+**Note:** When opening files (o/O), a list of available .txt files is shown. Use ↑/↓ or k/j to navigate, or type a filename manually.
+
+### Editing Mode (after pressing 'e' on a box or text)
+- `Type` - Add text to box or text object
+- `Enter` - Add new line
 - `Backspace` - Delete last character
 - `Ctrl+S` - Save changes and return to normal mode
 - `Escape` - Cancel changes and return to normal mode
@@ -71,6 +78,13 @@ go build -o flerm
 - `Backspace` - Delete last character
 - `Ctrl+S` - Save text and return to normal mode
 - `Escape` - Cancel and return to normal mode
+
+### Buffer Operations
+- `{` - Switch to previous buffer
+- `}` - Switch to next buffer
+- `n` - Create new chart in current buffer (replaces current chart, shows confirmation)
+- `N` - Create new chart in new buffer (creates new buffer, no confirmation)
+- `x` - Close current buffer (shows confirmation, warns about unsaved changes)
 
 ### General
 - `u` - Undo last action

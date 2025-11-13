@@ -491,6 +491,19 @@ func (c *Canvas) SetBoxText(id int, text string) {
 	}
 }
 
+func (c *Canvas) GetTextText(id int) string {
+	if id >= 0 && id < len(c.texts) {
+		return c.texts[id].GetText()
+	}
+	return ""
+}
+
+func (c *Canvas) SetTextText(id int, text string) {
+	if id >= 0 && id < len(c.texts) {
+		c.texts[id].SetText(text)
+	}
+}
+
 func (c *Canvas) DeleteBox(id int) {
 	if id >= 0 && id < len(c.boxes) {
 		// Remove the box
@@ -675,6 +688,38 @@ func (c *Canvas) SetBoxPosition(id int, x, y int) {
 	}
 }
 
+func (c *Canvas) MoveText(id int, deltaX, deltaY int) {
+	if id >= 0 && id < len(c.texts) {
+		text := &c.texts[id]
+		text.X += deltaX
+		text.Y += deltaY
+
+		// Ensure text doesn't go negative
+		if text.X < 0 {
+			text.X = 0
+		}
+		if text.Y < 0 {
+			text.Y = 0
+		}
+	}
+}
+
+func (c *Canvas) SetTextPosition(id int, x, y int) {
+	if id >= 0 && id < len(c.texts) {
+		text := &c.texts[id]
+		text.X = x
+		text.Y = y
+
+		// Ensure text doesn't go negative
+		if text.X < 0 {
+			text.X = 0
+		}
+		if text.Y < 0 {
+			text.Y = 0
+		}
+	}
+}
+
 func (c *Canvas) SetBoxSize(id int, width, height int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
@@ -758,7 +803,7 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []struct{ X, Y int }, previewToX, previewToY int) []string {
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []struct{ X, Y int }, previewToX, previewToY int, panX, panY int) []string {
 	// Ensure minimum dimensions
 	if height < 1 {
 		height = 1
@@ -768,16 +813,19 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	}
 
 	canvas := make([][]rune, height)
+	colorMap := make([][]int, height) // Track color for each cell (-1 = default)
 	for i := range canvas {
 		canvas[i] = make([]rune, width)
+		colorMap[i] = make([]int, width)
 		for j := range canvas[i] {
 			canvas[i][j] = ' '
+			colorMap[i][j] = -1
 		}
 	}
 
 	// Draw connections first (so they appear behind boxes)
 	for _, connection := range c.connections {
-		c.drawConnection(canvas, connection)
+		c.drawConnectionWithPan(canvas, connection, panX, panY)
 	}
 
 	// Draw preview connection if in progress
@@ -785,24 +833,27 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		previewConnection := Connection{
 			FromID:    -1,
 			ToID:      -1,
-			FromX:     previewFromX,
-			FromY:     previewFromY,
-			ToX:       previewToX,
-			ToY:       previewToY,
-			Waypoints: previewWaypoints,
+			FromX:     previewFromX - panX,
+			FromY:     previewFromY - panY,
+			ToX:       previewToX - panX,
+			ToY:       previewToY - panY,
+			Waypoints: make([]struct{ X, Y int }, len(previewWaypoints)),
 		}
-		c.drawConnection(canvas, previewConnection)
+		for i, wp := range previewWaypoints {
+			previewConnection.Waypoints[i] = struct{ X, Y int }{X: wp.X - panX, Y: wp.Y - panY}
+		}
+		c.drawConnectionWithPan(canvas, previewConnection, panX, panY)
 	}
 
-	// Draw texts first (plain text without borders)
+	// Draw texts (plain text without borders)
 	for _, text := range c.texts {
-		c.drawText(canvas, text)
+		c.drawTextWithPan(canvas, text, panX, panY)
 	}
 
-	// Draw boxes
+	// Draw boxes last (so they appear on top)
 	for i, box := range c.boxes {
 		isSelected := (i == selectedBox)
-		c.drawBox(canvas, box, isSelected)
+		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
 	}
 
 	// Convert to strings with consistent line lengths
@@ -820,7 +871,18 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	return result
 }
 
+func (c *Canvas) drawBoxWithPan(canvas [][]rune, box Box, isSelected bool, panX, panY int) {
+	// Apply pan offset to box coordinates
+	boxX := box.X - panX
+	boxY := box.Y - panY
+	c.drawBoxAt(canvas, box, isSelected, boxX, boxY)
+}
+
 func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
+	c.drawBoxAt(canvas, box, isSelected, box.X, box.Y)
+}
+
+func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY int) {
 	// Choose border characters based on selection state
 	var corner, horizontal, vertical rune
 	if isSelected {
@@ -834,20 +896,20 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 	}
 
 	// Draw box borders with bounds checking
-	for y := box.Y; y < box.Y+box.Height && y < len(canvas) && y >= 0; y++ {
+	for y := boxY; y < boxY+box.Height && y < len(canvas) && y >= 0; y++ {
 		if y >= len(canvas) {
 			break
 		}
-		for x := box.X; x < box.X+box.Width && x < len(canvas[y]) && x >= 0; x++ {
-			if y == box.Y || y == box.Y+box.Height-1 {
+		for x := boxX; x < boxX+box.Width && x < len(canvas[y]) && x >= 0; x++ {
+			if y == boxY || y == boxY+box.Height-1 {
 				// Top and bottom borders
-				if x == box.X || x == box.X+box.Width-1 {
+				if x == boxX || x == boxX+box.Width-1 {
 					// Corners
 					canvas[y][x] = corner
 				} else {
 					canvas[y][x] = horizontal
 				}
-			} else if x == box.X || x == box.X+box.Width-1 {
+			} else if x == boxX || x == boxX+box.Width-1 {
 				// Left and right borders
 				canvas[y][x] = vertical
 			}
@@ -856,10 +918,10 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 
 	// Draw multi-line text inside box with bounds checking
 	for lineIdx, line := range box.Lines {
-		textY := box.Y + 1 + lineIdx
-		textX := box.X + 1
+		textY := boxY + 1 + lineIdx
+		textX := boxX + 1
 
-		if textY >= 0 && textY < len(canvas) && textY < box.Y+box.Height-1 && textX >= 0 {
+		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 && textX >= 0 {
 			// Truncate line if it's too long for the box
 			displayText := line
 			maxWidth := box.Width - 2
@@ -871,7 +933,7 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 			}
 
 			for i, char := range displayText {
-				if textX+i >= 0 && textX+i < len(canvas[textY]) && textX+i < box.X+box.Width-1 {
+				if textX+i >= 0 && textX+i < len(canvas[textY]) && textX+i < boxX+box.Width-1 {
 					canvas[textY][textX+i] = char
 				}
 			}
@@ -879,16 +941,27 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 	}
 }
 
+func (c *Canvas) drawTextWithPan(canvas [][]rune, text Text, panX, panY int) {
+	// Apply pan offset to text coordinates
+	textX := text.X - panX
+	textY := text.Y - panY
+	c.drawTextAt(canvas, text, textX, textY)
+}
+
 func (c *Canvas) drawText(canvas [][]rune, text Text) {
+	c.drawTextAt(canvas, text, text.X, text.Y)
+}
+
+func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
 	// Draw multi-line text directly without borders
 	for lineIdx, line := range text.Lines {
-		textY := text.Y + lineIdx
-		textX := text.X
+		lineY := textY + lineIdx
+		lineX := textX
 
-		if textY >= 0 && textY < len(canvas) && textX >= 0 {
+		if lineY >= 0 && lineY < len(canvas) && lineX >= 0 {
 			for i, char := range line {
-				if textX+i >= 0 && textX+i < len(canvas[textY]) {
-					canvas[textY][textX+i] = char
+				if lineX+i >= 0 && lineX+i < len(canvas[lineY]) {
+					canvas[lineY][lineX+i] = char
 				}
 			}
 		}
@@ -910,7 +983,7 @@ func (c *Canvas) isPointInBox(x, y int, excludeFromID, excludeToID int) bool {
 	return false
 }
 
-func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, excludeFromID, excludeToID int, drawArrowFrom, drawArrowTo bool, skipCorner bool) {
+func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, excludeFromID, excludeToID int, drawArrowFrom, drawArrowTo bool, skipCorner bool, originalConnection Connection, panX, panY int) {
 	if fromX == toX && fromY == toY {
 		return
 	}
@@ -1158,20 +1231,23 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 		if drawArrowTo {
 			var arrowX, arrowY int
 			var arrowChar rune
+			// Use original world coordinates for calculations
+			origToX := originalConnection.ToX
+			origToY := originalConnection.ToY
 
 			if excludeToID >= 0 && excludeToID < len(c.boxes) {
 				toBox := c.boxes[excludeToID]
-				onLeftEdge := (toX == toBox.X)
-				onRightEdge := (toX == toBox.X+toBox.Width-1)
-				onTopEdge := (toY == toBox.Y)
-				onBottomEdge := (toY == toBox.Y+toBox.Height-1)
+				onLeftEdge := (origToX == toBox.X)
+				onRightEdge := (origToX == toBox.X+toBox.Width-1)
+				onTopEdge := (origToY == toBox.Y)
+				onBottomEdge := (origToY == toBox.Y+toBox.Height-1)
 
 				if !onLeftEdge && !onRightEdge && !onTopEdge && !onBottomEdge {
-					if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+					if abs(origToX-toBox.X) <= abs(origToX-(toBox.X+toBox.Width-1)) && abs(origToX-toBox.X) <= abs(origToY-toBox.Y) && abs(origToX-toBox.X) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
 						onLeftEdge = true
-					} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+					} else if abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-toBox.Y) && abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
 						onRightEdge = true
-					} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+					} else if abs(origToY-toBox.Y) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
 						onTopEdge = true
 					} else {
 						onBottomEdge = true
@@ -1179,20 +1255,20 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 				}
 
 				if onLeftEdge {
-					arrowX = toBox.X - 1
-					arrowY = toY
+					arrowX = (toBox.X - 1) - panX
+					arrowY = origToY - panY
 					arrowChar = '▶'
 				} else if onRightEdge {
-					arrowX = toBox.X + toBox.Width
-					arrowY = toY
+					arrowX = (toBox.X + toBox.Width) - panX
+					arrowY = origToY - panY
 					arrowChar = '◀'
 				} else if onTopEdge {
-					arrowX = toX
-					arrowY = toBox.Y - 1
+					arrowX = origToX - panX
+					arrowY = (toBox.Y - 1) - panY
 					arrowChar = '▲'
 				} else if onBottomEdge {
-					arrowX = toX
-					arrowY = toBox.Y + toBox.Height
+					arrowX = origToX - panX
+					arrowY = (toBox.Y + toBox.Height) - panY
 					arrowChar = '▼'
 				} else {
 					if cornerY < toY {
@@ -1204,13 +1280,13 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 						arrowY = toY + 1
 						arrowChar = '▲'
 					} else {
-						if toX < toBox.X+toBox.Width/2 {
-							arrowX = toBox.X - 1
-							arrowY = toY
+						if origToX < toBox.X+toBox.Width/2 {
+							arrowX = (toBox.X - 1) - panX
+							arrowY = origToY - panY
 							arrowChar = '▶'
 						} else {
-							arrowX = toBox.X + toBox.Width
-							arrowY = toY
+							arrowX = (toBox.X + toBox.Width) - panX
+							arrowY = origToY - panY
 							arrowChar = '◀'
 						}
 					}
@@ -1261,45 +1337,48 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 		if drawArrowFrom {
 			var fromArrowX, fromArrowY int
 			var fromArrowChar rune
+			// Use original world coordinates for calculations
+			origFromX := originalConnection.FromX
+			origFromY := originalConnection.FromY
 			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
 				fromBox := c.boxes[excludeFromID]
-				fromOnLeftEdge := (fromX == fromBox.X)
-				fromOnRightEdge := (fromX == fromBox.X+fromBox.Width-1)
-				fromOnTopEdge := (fromY == fromBox.Y)
-				fromOnBottomEdge := (fromY == fromBox.Y+fromBox.Height-1)
+				fromOnLeftEdge := (origFromX == fromBox.X)
+				fromOnRightEdge := (origFromX == fromBox.X+fromBox.Width-1)
+				fromOnTopEdge := (origFromY == fromBox.Y)
+				fromOnBottomEdge := (origFromY == fromBox.Y+fromBox.Height-1)
 				if !fromOnLeftEdge && !fromOnRightEdge {
-					if abs(fromX-fromBox.X) < abs(fromX-(fromBox.X+fromBox.Width-1)) {
+					if abs(origFromX-fromBox.X) < abs(origFromX-(fromBox.X+fromBox.Width-1)) {
 						fromOnLeftEdge = true
 					} else {
 						fromOnRightEdge = true
 					}
 				}
 				if !fromOnTopEdge && !fromOnBottomEdge {
-					if abs(fromY-fromBox.Y) < abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+					if abs(origFromY-fromBox.Y) < abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
 						fromOnTopEdge = true
 					} else {
 						fromOnBottomEdge = true
 					}
 				}
 				if fromOnTopEdge {
-					fromArrowX = fromX
-					fromArrowY = fromBox.Y - 1
+					fromArrowX = origFromX - panX
+					fromArrowY = (fromBox.Y - 1) - panY
 					fromArrowChar = '▼'
 				} else if fromOnBottomEdge {
-					fromArrowX = fromX
-					fromArrowY = fromBox.Y + fromBox.Height
+					fromArrowX = origFromX - panX
+					fromArrowY = (fromBox.Y + fromBox.Height) - panY
 					fromArrowChar = '▲'
 				} else if fromOnLeftEdge {
-					fromArrowX = fromBox.X - 1
-					fromArrowY = fromY
+					fromArrowX = (fromBox.X - 1) - panX
+					fromArrowY = origFromY - panY
 					fromArrowChar = '▶'
 				} else if fromOnRightEdge {
-					fromArrowX = fromBox.X + fromBox.Width
-					fromArrowY = fromY
+					fromArrowX = (fromBox.X + fromBox.Width) - panX
+					fromArrowY = origFromY - panY
 					fromArrowChar = '◀'
 				} else {
-					if fromX == cornerX {
-						if fromY < cornerY {
+					if origFromX == cornerX+panX {
+						if origFromY < cornerY+panY {
 							fromArrowX = fromX
 							fromArrowY = fromY - 1
 							fromArrowChar = '▼'
@@ -1308,8 +1387,8 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 							fromArrowY = fromY + 1
 							fromArrowChar = '▲'
 						}
-					} else if fromY == cornerY {
-						if fromX < cornerX {
+					} else if origFromY == cornerY+panY {
+						if origFromX < cornerX+panX {
 							fromArrowX = fromX - 1
 							fromArrowY = fromY
 							fromArrowChar = '▶'
@@ -1387,9 +1466,33 @@ func (c *Canvas) drawCorner(canvas [][]rune, cornerX, cornerY int, prevX, prevY,
 	canvas[cornerY][cornerX] = cornerChar
 }
 
-func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
+func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, panX, panY int) {
+	// Apply pan offset to connection coordinates for drawing
+	fromX := connection.FromX - panX
+	fromY := connection.FromY - panY
+	toX := connection.ToX - panX
+	toY := connection.ToY - panY
+	
+	// Create a copy of connection with adjusted screen coordinates for drawing
+	adjustedConnection := connection
+	adjustedConnection.FromX = fromX
+	adjustedConnection.FromY = fromY
+	adjustedConnection.ToX = toX
+	adjustedConnection.ToY = toY
+	adjustedConnection.Waypoints = make([]struct{ X, Y int }, len(connection.Waypoints))
+	for i, wp := range connection.Waypoints {
+		adjustedConnection.Waypoints[i] = struct{ X, Y int }{X: wp.X - panX, Y: wp.Y - panY}
+	}
+	// Pass original connection for arrow calculations (uses world coordinates)
+	c.drawConnection(canvas, adjustedConnection, connection, panX, panY)
+}
+
+func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, originalConnection Connection, panX, panY int) {
 	fromX, fromY := connection.FromX, connection.FromY
 	toX, toY := connection.ToX, connection.ToY
+	// Use original world coordinates for arrow calculations
+	origFromX, origFromY := originalConnection.FromX, originalConnection.FromY
+	origToX, origToY := originalConnection.ToX, originalConnection.ToY
 
 	if len(connection.Waypoints) > 0 {
 		points := make([]struct{ X, Y int }, 0, len(connection.Waypoints)+2)
@@ -1441,22 +1544,22 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 					var fromArrowChar rune
 					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
 						fromBox := c.boxes[connection.FromID]
-						fromX, fromY := connection.FromX, connection.FromY
-						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X - 1
-							fromArrowY = fromY
+						// Use original world coordinates for calculations
+						if abs(origFromX-fromBox.X) <= abs(origFromX-(fromBox.X+fromBox.Width-1)) && abs(origFromX-fromBox.X) <= abs(origFromY-fromBox.Y) && abs(origFromX-fromBox.X) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = (fromBox.X - 1) - panX
+							fromArrowY = origFromY - panY
 							fromArrowChar = '▶'
-						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X + fromBox.Width
-							fromArrowY = fromY
+						} else if abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-fromBox.Y) && abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = (fromBox.X + fromBox.Width) - panX
+							fromArrowY = origFromY - panY
 							fromArrowChar = '◀'
-						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y - 1
+						} else if abs(origFromY-fromBox.Y) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = origFromX - panX
+							fromArrowY = (fromBox.Y - 1) - panY
 							fromArrowChar = '▼'
 						} else {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y + fromBox.Height
+							fromArrowX = origFromX - panX
+							fromArrowY = (fromBox.Y + fromBox.Height) - panY
 							fromArrowChar = '▲'
 						}
 					}
@@ -1469,22 +1572,22 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 					var toArrowChar rune
 					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
 						toBox := c.boxes[connection.ToID]
-						toX, toY := connection.ToX, connection.ToY
-						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X - 1
-							toArrowY = toY
+						// Use original world coordinates for calculations
+						if abs(origToX-toBox.X) <= abs(origToX-(toBox.X+toBox.Width-1)) && abs(origToX-toBox.X) <= abs(origToY-toBox.Y) && abs(origToX-toBox.X) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = (toBox.X - 1) - panX
+							toArrowY = origToY - panY
 							toArrowChar = '▶'
-						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X + toBox.Width
-							toArrowY = toY
+						} else if abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-toBox.Y) && abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = (toBox.X + toBox.Width) - panX
+							toArrowY = origToY - panY
 							toArrowChar = '◀'
-						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toX
-							toArrowY = toBox.Y - 1
+						} else if abs(origToY-toBox.Y) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = origToX - panX
+							toArrowY = (toBox.Y - 1) - panY
 							toArrowChar = '▼'
 						} else {
-							toArrowX = toX
-							toArrowY = toBox.Y + toBox.Height
+							toArrowX = origToX - panX
+							toArrowY = (toBox.Y + toBox.Height) - panY
 							toArrowChar = '▲'
 						}
 					}
@@ -1529,22 +1632,22 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 					var fromArrowChar rune
 					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
 						fromBox := c.boxes[connection.FromID]
-						fromX, fromY := connection.FromX, connection.FromY
-						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X - 1
-							fromArrowY = fromY
+						// Use original world coordinates for calculations
+						if abs(origFromX-fromBox.X) <= abs(origFromX-(fromBox.X+fromBox.Width-1)) && abs(origFromX-fromBox.X) <= abs(origFromY-fromBox.Y) && abs(origFromX-fromBox.X) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = (fromBox.X - 1) - panX
+							fromArrowY = origFromY - panY
 							fromArrowChar = '▶'
-						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X + fromBox.Width
-							fromArrowY = fromY
+						} else if abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-fromBox.Y) && abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = (fromBox.X + fromBox.Width) - panX
+							fromArrowY = origFromY - panY
 							fromArrowChar = '◀'
-						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y - 1
+						} else if abs(origFromY-fromBox.Y) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = origFromX - panX
+							fromArrowY = (fromBox.Y - 1) - panY
 							fromArrowChar = '▼'
 						} else {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y + fromBox.Height
+							fromArrowX = origFromX - panX
+							fromArrowY = (fromBox.Y + fromBox.Height) - panY
 							fromArrowChar = '▲'
 						}
 					}
@@ -1557,22 +1660,22 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 					var toArrowChar rune
 					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
 						toBox := c.boxes[connection.ToID]
-						toX, toY := connection.ToX, connection.ToY
-						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X - 1
-							toArrowY = toY
+						// Use original world coordinates for calculations
+						if abs(origToX-toBox.X) <= abs(origToX-(toBox.X+toBox.Width-1)) && abs(origToX-toBox.X) <= abs(origToY-toBox.Y) && abs(origToX-toBox.X) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = (toBox.X - 1) - panX
+							toArrowY = origToY - panY
 							toArrowChar = '▶'
-						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X + toBox.Width
-							toArrowY = toY
+						} else if abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-toBox.Y) && abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = (toBox.X + toBox.Width) - panX
+							toArrowY = origToY - panY
 							toArrowChar = '◀'
-						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toX
-							toArrowY = toBox.Y - 1
+						} else if abs(origToY-toBox.Y) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = origToX - panX
+							toArrowY = (toBox.Y - 1) - panY
 							toArrowChar = '▼'
 						} else {
-							toArrowX = toX
-							toArrowY = toBox.Y + toBox.Height
+							toArrowX = origToX - panX
+							toArrowY = (toBox.Y + toBox.Height) - panY
 							toArrowChar = '▲'
 						}
 					}
@@ -1754,7 +1857,7 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 			}
 		}
 	} else {
-		c.drawLineSegment(canvas, fromX, fromY, toX, toY, connection.FromID, connection.ToID, connection.ArrowFrom, connection.ArrowTo, false)
+		c.drawLineSegment(canvas, fromX, fromY, toX, toY, connection.FromID, connection.ToID, connection.ArrowFrom, connection.ArrowTo, false, originalConnection, panX, panY)
 	}
 }
 
@@ -1768,6 +1871,7 @@ func abs(x int) int {
 	}
 	return x
 }
+
 
 func (c *Canvas) SaveToFile(filename string) error {
 	file, err := os.Create(filename)
@@ -1860,11 +1964,20 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		var width, height int
 		var text string
 
-		if len(parts) >= 5 {
+		if len(parts) >= 6 {
+			// Old format with color (backward compatibility): X,Y,Width,Height,Color,Text
+			// Skip the color field
+			width, _ = strconv.Atoi(parts[2])
+			height, _ = strconv.Atoi(parts[3])
+			// Skip parts[4] which is the color
+			text = strings.ReplaceAll(strings.Join(parts[5:], ","), "\\n", "\n")
+		} else if len(parts) >= 5 {
+			// Old format without color: X,Y,Width,Height,Text
 			width, _ = strconv.Atoi(parts[2])
 			height, _ = strconv.Atoi(parts[3])
 			text = strings.ReplaceAll(strings.Join(parts[4:], ","), "\\n", "\n")
 		} else {
+			// Very old format: X,Y,Text
 			text = strings.ReplaceAll(strings.Join(parts[2:], ","), "\\n", "\n")
 			box := Box{
 				X:  x,
@@ -1966,9 +2079,16 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				}
 				parts := strings.Split(scanner.Text(), ",")
 				if len(parts) >= 3 {
+					// Format: X,Y,Text (or X,Y,Color,Text for backward compatibility)
 					x, _ := strconv.Atoi(parts[0])
 					y, _ := strconv.Atoi(parts[1])
-					text := strings.ReplaceAll(strings.Join(parts[2:], ","), "\\n", "\n")
+					// Skip color field if present (parts[2] might be color)
+					textStart := 2
+					if len(parts) >= 4 {
+						// Has color field, skip it
+						textStart = 3
+					}
+					text := strings.ReplaceAll(strings.Join(parts[textStart:], ","), "\\n", "\n")
 					c.AddText(x, y, text)
 				}
 			}
