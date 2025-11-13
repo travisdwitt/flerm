@@ -20,34 +20,38 @@ func main() {
 }
 
 type model struct {
-	width          int
-	height         int
-	cursorX        int
-	cursorY        int
-	canvas         *Canvas
-	mode           Mode
-	help           bool
-	helpScroll     int
-	selectedBox    int
-	editText       string
-	connectionFrom int
-	filename       string
-	fileOp         FileOperation
-	confirmAction  ConfirmAction
-	confirmBoxID   int
-	confirmTextID  int
-	undoStack      []Action
-	redoStack      []Action
-	originalMoveX  int
-	originalMoveY  int
-	originalWidth  int
-	originalHeight int
-	textInputX     int
-	textInputY     int
-	textInputText  string
-	errorMessage   string
-	fromStartup    bool
-	clipboard      *Box
+	width               int
+	height              int
+	cursorX             int
+	cursorY             int
+	canvas              *Canvas
+	mode                Mode
+	help                bool
+	helpScroll          int
+	selectedBox         int
+	editText            string
+	connectionFrom      int
+	connectionFromX     int
+	connectionFromY     int
+	connectionFromLine  int
+	connectionWaypoints []struct{ X, Y int }
+	filename            string
+	fileOp              FileOperation
+	confirmAction       ConfirmAction
+	confirmBoxID        int
+	confirmTextID       int
+	undoStack           []Action
+	redoStack           []Action
+	originalMoveX       int
+	originalMoveY       int
+	originalWidth       int
+	originalHeight      int
+	textInputX          int
+	textInputY          int
+	textInputText       string
+	errorMessage        string
+	fromStartup         bool
+	clipboard           *Box
 }
 
 type Mode int
@@ -182,7 +186,7 @@ func (m *model) undo() {
 		m.canvas.SetBoxPosition(data.ID, data.X, data.Y)
 	case ActionAddConnection:
 		data := action.Inverse.(AddConnectionData)
-		m.canvas.RemoveConnection(data.FromID, data.ToID)
+		m.canvas.RemoveSpecificConnection(data.Connection)
 	}
 
 	m.redoStack = append(m.redoStack, action)
@@ -226,10 +230,11 @@ func initialModel() model {
 	canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
 
 	return model{
-		canvas:         canvas,
-		mode:           ModeStartup,
-		selectedBox:    -1,
-		connectionFrom: -1,
+		canvas:             canvas,
+		mode:               ModeStartup,
+		selectedBox:        -1,
+		connectionFrom:     -1,
+		connectionFromLine: -1,
 	}
 }
 
@@ -324,6 +329,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ModeNormal:
 			if msg.Type == tea.KeyEscape {
 				m.connectionFrom = -1
+				m.connectionFromLine = -1
+				m.connectionFromX = 0
+				m.connectionFromY = 0
 				m.selectedBox = -1
 				return m, nil
 			}
@@ -414,59 +422,69 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "a":
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
-				if boxID != -1 {
-					if m.connectionFrom == -1 {
+				lineConnIdx, lineX, lineY := m.canvas.findNearestPointOnConnection(m.cursorX, m.cursorY)
+
+				if m.connectionFrom == -1 && m.connectionFromLine == -1 {
+					if boxID != -1 {
+						fromBox := m.canvas.boxes[boxID]
 						m.connectionFrom = boxID
-					} else {
-						fromBox := m.canvas.boxes[m.connectionFrom]
+						m.connectionFromLine = -1
+						m.connectionFromX, m.connectionFromY = m.canvas.findNearestEdgePoint(fromBox, m.cursorX, m.cursorY)
+						m.connectionWaypoints = nil
+					} else if lineConnIdx != -1 {
+						m.connectionFrom = -1
+						m.connectionFromLine = lineConnIdx
+						m.connectionFromX, m.connectionFromY = lineX, lineY
+						m.connectionWaypoints = nil
+					}
+				} else {
+					if boxID != -1 {
 						toBox := m.canvas.boxes[boxID]
-						var fromX, fromY, toX, toY int
-
-						fromCenterX := fromBox.X + fromBox.Width/2
-						fromCenterY := fromBox.Y + fromBox.Height/2
-						toCenterX := toBox.X + toBox.Width/2
-						toCenterY := toBox.Y + toBox.Height/2
-
-						if abs(fromCenterX-toCenterX) > abs(fromCenterY-toCenterY) {
-							if fromCenterX < toCenterX {
-								fromX = fromBox.X + fromBox.Width - 1
-								fromY = fromCenterY
-								toX = toBox.X
-								toY = toCenterY
-							} else {
-								fromX = fromBox.X
-								fromY = fromCenterY
-								toX = toBox.X + toBox.Width - 1
-								toY = toCenterY
-							}
-						} else {
-							if fromCenterY < toCenterY {
-								fromX = fromCenterX
-								fromY = fromBox.Y + fromBox.Height - 1
-								toX = toCenterX
-								toY = toBox.Y
-							} else {
-								fromX = fromCenterX
-								fromY = fromBox.Y
-								toX = toCenterX
-								toY = toBox.Y + toBox.Height - 1
-							}
-						}
+						toX, toY := m.canvas.findNearestEdgePoint(toBox, m.cursorX, m.cursorY)
 
 						connection := Connection{
-							FromID: m.connectionFrom,
-							ToID:   boxID,
-							FromX:  fromX,
-							FromY:  fromY,
-							ToX:    toX,
-							ToY:    toY,
+							FromID:    m.connectionFrom,
+							ToID:      boxID,
+							FromX:     m.connectionFromX,
+							FromY:     m.connectionFromY,
+							ToX:       toX,
+							ToY:       toY,
+							Waypoints: m.connectionWaypoints,
 						}
 
-						m.canvas.AddConnection(m.connectionFrom, boxID)
+						m.canvas.AddConnectionWithWaypoints(m.connectionFrom, boxID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
 						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
 						m.connectionFrom = -1
+						m.connectionFromLine = -1
+						m.connectionFromX = 0
+						m.connectionFromY = 0
+						m.connectionWaypoints = nil
+					} else if lineConnIdx != -1 {
+						toX, toY := lineX, lineY
+
+						connection := Connection{
+							FromID:    m.connectionFrom,
+							ToID:      -1,
+							FromX:     m.connectionFromX,
+							FromY:     m.connectionFromY,
+							ToX:       toX,
+							ToY:       toY,
+							Waypoints: m.connectionWaypoints,
+						}
+
+						m.canvas.AddConnectionWithWaypoints(m.connectionFrom, -1, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
+						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
+						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
+						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
+						m.connectionFrom = -1
+						m.connectionFromLine = -1
+						m.connectionFromX = 0
+						m.connectionFromY = 0
+						m.connectionWaypoints = nil
+					} else {
+						m.connectionWaypoints = append(m.connectionWaypoints, struct{ X, Y int }{m.cursorX, m.cursorY})
 					}
 				}
 				return m, nil
@@ -547,6 +565,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "escape":
 				m.connectionFrom = -1
+				m.connectionFromLine = -1
+				m.connectionFromX = 0
+				m.connectionFromY = 0
+				m.connectionWaypoints = nil
 				m.selectedBox = -1
 				return m, nil
 			}
@@ -890,7 +912,18 @@ func (m model) View() string {
 		renderWidth = 1
 	}
 
-	canvas := m.canvas.Render(renderWidth, renderHeight, selectedBox)
+	// Prepare preview connection data if connection is in progress
+	var previewFromX, previewFromY, previewToX, previewToY int = -1, -1, -1, -1
+	var previewWaypoints []struct{ X, Y int }
+	if m.connectionFrom != -1 || m.connectionFromLine != -1 {
+		previewFromX = m.connectionFromX
+		previewFromY = m.connectionFromY
+		previewWaypoints = m.connectionWaypoints
+		previewToX = m.cursorX
+		previewToY = m.cursorY
+	}
+
+	canvas := m.canvas.Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY)
 
 	// Ensure cursor is in bounds before rendering
 	cursorX := m.cursorX
@@ -979,6 +1012,8 @@ func (m model) View() string {
 		status := fmt.Sprintf("Mode: %s | Cursor: (%d,%d)", m.modeString(), m.cursorX, m.cursorY)
 		if m.connectionFrom != -1 {
 			status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
+		} else if m.connectionFromLine != -1 {
+			status += fmt.Sprintf(" | Connection from line (select target)")
 		}
 		if m.selectedBox != -1 {
 			status += fmt.Sprintf(" | Selected: Box %d", m.selectedBox)
@@ -1060,8 +1095,11 @@ func (m model) helpView() string {
 		"Note: Active boxes (being resized/moved) are highlighted with # borders",
 		"",
 		"Connection Operations:",
-		"  a                Start/finish connection creation between boxes",
-		"                   (press 'a' on source box, then 'a' on target box)",
+		"  a                Start/finish connection creation",
+		"                   - Press 'a' on a box or line to start",
+		"                   - Press 'a' on empty space to add waypoint",
+		"                   - Press 'a' on a box or line to finish",
+		"                   - Connections can start/end at boxes or lines",
 		"  Escape           Cancel connection (if started but not finished)",
 		"",
 		"File Operations:",
@@ -1090,6 +1128,7 @@ func (m model) helpView() string {
 		"  Escape           Cancel and return to normal mode",
 		"",
 		"Note: Boxes automatically resize to fit text content",
+		"      Manually resized boxes retain their size when saved",
 		"",
 		"General:",
 		"  u                Undo last action",
