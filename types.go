@@ -53,6 +53,7 @@ type model struct {
 	successMessage      string
 	fromStartup         bool
 	clipboard           *Box
+	config              *Config
 }
 
 type point struct {

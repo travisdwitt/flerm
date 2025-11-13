@@ -76,8 +76,20 @@ func (m *model) renderBufferBar(width int) string {
 
 
 func initialModel() model {
+	// Load configuration
+	config := loadConfig()
+
+	// Determine initial mode based on config
+	initialMode := ModeStartup
+	if !config.StartMenu {
+		// Skip start menu, create new empty canvas
+		initialMode = ModeNormal
+	}
+
 	canvas := NewCanvas()
-	canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
+	if initialMode == ModeStartup {
+		canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
+	}
 
 	buffer := Buffer{
 		canvas:    canvas,
@@ -91,11 +103,12 @@ func initialModel() model {
 	return model{
 		buffers:            []Buffer{buffer},
 		currentBufferIndex: 0,
-		mode:               ModeStartup,
+		mode:               initialMode,
 		selectedBox:        -1,
 		selectedText:       -1,
 		connectionFrom:     -1,
-		connectionFromLine: -1,
+		connectionFromLine:  -1,
+		config:              config,
 	}
 }
 
@@ -122,11 +135,17 @@ func (m *model) ensureCursorInBounds() {
 func (m *model) scanTxtFiles() {
 	m.fileList = []string{}
 
-	// Get current directory
-	dir, err := os.Getwd()
-	if err != nil {
-		m.selectedFileIndex = -1
-		return
+	// Get directory to scan (use save directory if configured, otherwise current directory)
+	var dir string
+	var err error
+	if m.config != nil && m.config.SaveDirectory != "" {
+		dir = m.config.SaveDirectory
+	} else {
+		dir, err = os.Getwd()
+		if err != nil {
+			m.selectedFileIndex = -1
+			return
+		}
 	}
 
 	// Read directory
@@ -260,13 +279,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch msg.String() {
 			case "ctrl+c", "q":
-				m.mode = ModeConfirm
-				m.confirmAction = ConfirmQuit
-				return m, nil
+				if m.config != nil && m.config.Confirmations {
+					m.mode = ModeConfirm
+					m.confirmAction = ConfirmQuit
+					return m, nil
+				}
+				// Confirmations disabled, quit directly
+				return m, tea.Quit
 			case "n":
-				m.mode = ModeConfirm
-				m.confirmAction = ConfirmNewChart
-				m.createNewBuffer = false // Replace current buffer
+				if m.config != nil && m.config.Confirmations {
+					m.mode = ModeConfirm
+					m.confirmAction = ConfirmNewChart
+					m.createNewBuffer = false // Replace current buffer
+					return m, nil
+				}
+				// Confirmations disabled, replace current buffer directly
+				buf := m.getCurrentBuffer()
+				if buf != nil {
+					buf.canvas = NewCanvas()
+					buf.filename = ""
+					buf.undoStack = []Action{}
+					buf.redoStack = []Action{}
+				}
+				m.cursorX = 0
+				m.cursorY = 0
+				m.errorMessage = ""
+				m.successMessage = ""
 				return m, nil
 			case "N":
 				// Create new buffer directly (no confirmation needed)
@@ -513,21 +551,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				worldY := m.cursorY + panY
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 				if lineConnIdx != -1 {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmDeleteConnection
-					m.confirmConnIdx = lineConnIdx
+					if m.config != nil && m.config.Confirmations {
+						m.mode = ModeConfirm
+						m.confirmAction = ConfirmDeleteConnection
+						m.confirmConnIdx = lineConnIdx
+						return m, nil
+					}
+					// Confirmations disabled, delete directly
+					if lineConnIdx >= 0 && lineConnIdx < len(m.getCanvas().connections) {
+						conn := m.getCanvas().connections[lineConnIdx]
+						deleteData := AddConnectionData{FromID: conn.FromID, ToID: conn.ToID, Connection: conn}
+						m.getCanvas().RemoveSpecificConnection(conn)
+						m.recordAction(ActionDeleteConnection, deleteData, deleteData)
+						m.successMessage = ""
+					}
 				} else {
 					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 					textID := m.getCanvas().GetTextAt(worldX, worldY)
 
 					if boxID != -1 {
-						m.mode = ModeConfirm
-						m.confirmAction = ConfirmDeleteBox
-						m.confirmBoxID = boxID
+						if m.config != nil && m.config.Confirmations {
+							m.mode = ModeConfirm
+							m.confirmAction = ConfirmDeleteBox
+							m.confirmBoxID = boxID
+							return m, nil
+						}
+						// Confirmations disabled, delete directly
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							box := m.getCanvas().boxes[boxID]
+							connectedConnections := make([]Connection, 0)
+							for _, connection := range m.getCanvas().connections {
+								if connection.FromID == boxID || connection.ToID == boxID {
+									connectedConnections = append(connectedConnections, connection)
+								}
+							}
+							deleteData := DeleteBoxData{Box: box, ID: boxID, Connections: connectedConnections}
+							addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
+							m.recordAction(ActionDeleteBox, deleteData, addData)
+							m.getCanvas().DeleteBox(boxID)
+							m.ensureCursorInBounds()
+						}
 					} else if textID != -1 {
-						m.mode = ModeConfirm
-						m.confirmAction = ConfirmDeleteText
-						m.confirmTextID = textID
+						if m.config != nil && m.config.Confirmations {
+							m.mode = ModeConfirm
+							m.confirmAction = ConfirmDeleteText
+							m.confirmTextID = textID
+							return m, nil
+						}
+						// Confirmations disabled, delete directly
+						m.getCanvas().DeleteText(textID)
+						m.ensureCursorInBounds()
 					}
 				}
 				return m, nil
@@ -578,10 +651,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.successMessage = ""
 				return m, nil
 			case "x":
-				// Close current buffer (with confirmation)
+				// Close current buffer (with confirmation if enabled)
 				if len(m.buffers) > 0 {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmCloseBuffer
+					if m.config != nil && m.config.Confirmations {
+						m.mode = ModeConfirm
+						m.confirmAction = ConfirmCloseBuffer
+						return m, nil
+					}
+					// Confirmations disabled, close directly
+					if len(m.buffers) > 1 {
+						newIndex := m.currentBufferIndex - 1
+						if newIndex < 0 {
+							newIndex = 0
+						}
+						m.buffers = append(m.buffers[:m.currentBufferIndex], m.buffers[m.currentBufferIndex+1:]...)
+						m.currentBufferIndex = newIndex
+					} else {
+						// Last buffer - return to startup
+						canvas := NewCanvas()
+						canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
+						m.buffers = []Buffer{
+							{
+								canvas:    canvas,
+								undoStack: []Action{},
+								redoStack: []Action{},
+								filename:  "",
+								panX:      0,
+								panY:      0,
+							},
+						}
+						m.currentBufferIndex = 0
+						m.mode = ModeStartup
+					}
+					m.cursorX = 0
+					m.cursorY = 0
+					m.errorMessage = ""
+					m.successMessage = ""
 				}
 				return m, nil
 			case "u":
@@ -1056,17 +1161,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						filename += ".sav"
 					}
 					if m.fileOp == FileOpSave {
-						// Check if file exists and show confirmation if it does
-						if _, err := os.Stat(filename); err == nil {
-							// File exists, show confirmation
-							m.mode = ModeConfirm
-							m.confirmAction = ConfirmOverwriteFile
-							// Store filename for confirmation handler
-							m.filename = filename
-							return m, nil
+						// Apply save directory from config
+						savePath := filename
+						if m.config != nil {
+							savePath = m.config.GetSavePath(filename)
 						}
-						// File doesn't exist, save directly
-						err := m.getCanvas().SaveToFile(filename)
+						// Check if file exists and show confirmation if it does (and confirmations are enabled)
+						if _, err := os.Stat(savePath); err == nil {
+							if m.config != nil && m.config.Confirmations {
+								// File exists, show confirmation
+								m.mode = ModeConfirm
+								m.confirmAction = ConfirmOverwriteFile
+								// Store filename for confirmation handler
+								m.filename = savePath
+								return m, nil
+							}
+							// Confirmations disabled, overwrite directly
+						}
+						// File doesn't exist or confirmations disabled, save directly
+						err := m.getCanvas().SaveToFile(savePath)
 						if err != nil {
 							m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
 							return m, nil
@@ -1074,32 +1187,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Update buffer filename
 							buf := m.getCurrentBuffer()
 							if buf != nil {
-								buf.filename = filename
+								buf.filename = savePath
 							}
-							absPath, _ := filepath.Abs(filename)
+							absPath, _ := filepath.Abs(savePath)
 							m.successMessage = fmt.Sprintf("Saved to %s", absPath)
 							m.errorMessage = ""
 						}
 					} else {
 						// Load file into a buffer
-						// Check if file exists first
-						if _, err := os.Stat(filename); os.IsNotExist(err) {
+						// Check save directory first, then current directory
+						loadPath := filename
+						if m.config != nil && m.config.SaveDirectory != "" {
+							saveDirPath := m.config.GetSavePath(filename)
+							if _, err := os.Stat(saveDirPath); err == nil {
+								loadPath = saveDirPath
+							}
+						}
+						// Check if file exists
+						if _, err := os.Stat(loadPath); os.IsNotExist(err) {
 							m.errorMessage = fmt.Sprintf("File not found: %s", filename)
 							return m, nil
 						}
 						newCanvas := NewCanvas()
-						err := newCanvas.LoadFromFile(filename)
+						err := newCanvas.LoadFromFile(loadPath)
 						if err != nil {
 							m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
 							return m, nil
 						} else {
+							// Update buffer filename with the actual path used
 							if m.fromStartup {
 								// Replace startup buffer
 								m.buffers[0] = Buffer{
 									canvas:    newCanvas,
 									undoStack: []Action{},
 									redoStack: []Action{},
-									filename:  filename,
+									filename:  loadPath,
 									panX:      0,
 									panY:      0,
 								}
@@ -1107,14 +1229,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.fromStartup = false
 							} else if m.openInNewBuffer {
 								// Add new buffer (capital O)
-								m.addNewBuffer(newCanvas, filename)
+								m.addNewBuffer(newCanvas, loadPath)
 								m.openInNewBuffer = false
 							} else {
 								// Replace current buffer (lowercase o)
 								buf := m.getCurrentBuffer()
 								if buf != nil {
 									buf.canvas = newCanvas
-									buf.filename = filename
+									buf.filename = loadPath
 									buf.undoStack = []Action{}
 									buf.redoStack = []Action{}
 								}
@@ -1123,8 +1245,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				case FileOpSavePNG:
-					if !strings.HasSuffix(strings.ToLower(filename), ".png") {
-						filename += ".png"
+					// Extract just the base filename (in case user typed a path)
+					baseFilename := filepath.Base(filename)
+					if !strings.HasSuffix(strings.ToLower(baseFilename), ".png") {
+						baseFilename += ".png"
+					}
+					// Apply save directory from config
+					savePath := baseFilename
+					if m.config != nil {
+						savePath = m.config.GetSavePath(baseFilename)
 					}
 					// Get current buffer for pan offset and calculate render dimensions
 					buf := m.getCurrentBuffer()
@@ -1147,25 +1276,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if renderHeight < 1 {
 						renderHeight = 24 // Default minimum height
 					}
-					err := m.getCanvas().ExportToPNG(filename, renderWidth, renderHeight, panX, panY)
+					err := m.getCanvas().ExportToPNG(savePath, renderWidth, renderHeight, panX, panY)
 					if err != nil {
 						m.errorMessage = fmt.Sprintf("Error exporting PNG: %s", err.Error())
 						return m, nil
 					} else {
-						absPath, _ := filepath.Abs(filename)
+						absPath, _ := filepath.Abs(savePath)
 						m.successMessage = fmt.Sprintf("Exported to %s", absPath)
 						m.errorMessage = ""
 					}
 				case FileOpSaveVisualTXT:
-					if !strings.HasSuffix(strings.ToLower(filename), ".txt") {
-						filename += ".txt"
+					// Extract just the base filename (in case user typed a path)
+					baseFilename := filepath.Base(filename)
+					if !strings.HasSuffix(strings.ToLower(baseFilename), ".txt") {
+						baseFilename += ".txt"
 					}
-					err := m.exportVisualTXT(filename)
+					// Apply save directory from config
+					savePath := baseFilename
+					if m.config != nil {
+						savePath = m.config.GetSavePath(baseFilename)
+					}
+					err := m.exportVisualTXT(savePath)
 					if err != nil {
 						m.errorMessage = fmt.Sprintf("Error exporting Visual TXT: %s", err.Error())
 						return m, nil
 					} else {
-						absPath, _ := filepath.Abs(filename)
+						absPath, _ := filepath.Abs(savePath)
 						m.successMessage = fmt.Sprintf("Exported to %s", absPath)
 						m.errorMessage = ""
 					}
@@ -1290,6 +1426,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case ConfirmOverwriteFile:
 					// Overwrite existing file
 					filename := m.filename
+					// Apply save directory from config (already applied when setting filename, but ensure it's correct)
+					if m.config != nil && m.config.SaveDirectory != "" {
+						// Extract just the filename part if it's already a full path
+						baseName := filepath.Base(filename)
+						filename = m.config.GetSavePath(baseName)
+					}
 					err := m.getCanvas().SaveToFile(filename)
 					if err != nil {
 						m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
@@ -1320,12 +1462,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Auto-fill filename from buffer if it exists
 					buf := m.getCurrentBuffer()
 					if buf != nil && buf.filename != "" {
-						// Remove .sav extension for display
-						filename := buf.filename
-						if strings.HasSuffix(strings.ToLower(filename), ".sav") {
-							filename = filename[:len(filename)-4]
+						// Extract just the base filename (without directory path)
+						baseName := filepath.Base(buf.filename)
+						// Remove .sav extension if present
+						if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
+							baseName = baseName[:len(baseName)-4]
 						}
-						m.filename = filename
+						m.filename = baseName
 					} else {
 						m.filename = "flowchart"
 					}
@@ -1343,12 +1486,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Auto-fill filename from buffer if it exists
 					buf := m.getCurrentBuffer()
 					if buf != nil && buf.filename != "" {
-						// Remove .sav extension for display
-						filename := buf.filename
-						if strings.HasSuffix(strings.ToLower(filename), ".sav") {
-							filename = filename[:len(filename)-4]
+						// Extract just the base filename (without directory path)
+						baseName := filepath.Base(buf.filename)
+						// Remove .sav extension if present
+						if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
+							baseName = baseName[:len(baseName)-4]
 						}
-						m.filename = filename
+						m.filename = baseName
 					} else {
 						m.filename = "flowchart"
 					}
