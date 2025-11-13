@@ -17,8 +17,7 @@ You can create a `.flermrc` configuration file in your home directory to customi
 
 ### Example Configuration File
 ```bash
-# Flerm Configuration File
-# Comments start with #
+# Flerm Config
 
 # Save all files to ~/Documents/flerm
 savedirectory=~/Documents/flerm
