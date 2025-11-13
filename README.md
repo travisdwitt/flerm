@@ -82,11 +82,6 @@ confirmations=true
 - `O` - Open flowchart in new buffer (creates new buffer, shows file list)
   - Press `p` to export as PNG image
   - Press `t` to export as Visual TXT file
-<br>
-<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/057f9a04-3e7d-48dd-b2da-19aaa964047c" />
-<br>
-<img width="261" height="349" alt="image" src="https://github.com/user-attachments/assets/3ac9cfe5-5d05-4c13-879f-adaf3978971d" />
-<img width="683" height="441" alt="image" src="https://github.com/user-attachments/assets/f23d1632-d3b9-4622-8f31-a48669b97030" />
 
 **Note:** 
 - When opening files (o/O), a list of available .sav files is shown. Use ↑/↓ or k/j to navigate, or type a filename manually.
