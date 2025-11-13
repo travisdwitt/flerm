@@ -1,6 +1,7 @@
 # Fl(ow)(T)erm
 A super basic flowchart editor for your terminal.
-
+<br>
+<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/62cbfad3-f27e-471e-b219-2c3ed56d381d" />
 ## Installation
 ```bash
 go build -o flerm
@@ -56,8 +57,10 @@ confirmations=true
   - Press 'a' on empty space to add waypoint (custom routing)
   - Press 'a' on a box or line to finish
   - Connections can start/end at boxes or existing lines
+  - If a corner character gets messed up, redrawing the line helps.
 - `A` - Toggle arrow state on connection line under cursor
   - Cycles through: no arrows → to arrow → from arrow → both arrows
+  - Sometimes the arrows get wonky. When in doubt, just redraw the line.
 - `Escape` - Cancel connection (if started but not finished)
 
 ### Resize Mode (after pressing 'r')
@@ -79,9 +82,15 @@ confirmations=true
 - `O` - Open flowchart in new buffer (creates new buffer, shows file list)
   - Press `p` to export as PNG image
   - Press `t` to export as Visual TXT file
+<br>
+<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/057f9a04-3e7d-48dd-b2da-19aaa964047c" />
+<br>
+<img width="261" height="349" alt="image" src="https://github.com/user-attachments/assets/3ac9cfe5-5d05-4c13-879f-adaf3978971d" />
+<img width="683" height="441" alt="image" src="https://github.com/user-attachments/assets/f23d1632-d3b9-4622-8f31-a48669b97030" />
 
 **Note:** 
 - When opening files (o/O), a list of available .sav files is shown. Use ↑/↓ or k/j to navigate, or type a filename manually.
+- .png exports are pretty wonky and terrible, but a fun curiosity. Stick to txt exports for the best results right now.
 - All file operations (save, open, export) respect the `savedirectory` setting in `~/.flermrc` if configured.
 
 ### Buffer Operations
@@ -90,7 +99,9 @@ confirmations=true
 - `n` - Create new chart in current buffer (replaces current chart, shows confirmation)
 - `N` - Create new chart in new buffer (creates new buffer, no confirmation)
 - `x` - Close current buffer (shows confirmation, warns about unsaved changes)
-
+<br>
+<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/d609f834-5048-46e3-a3ad-e0c5d10003d1" />
+<br>
 ### General
 - `u` - Undo last action
 - `U` - Redo last undone action
