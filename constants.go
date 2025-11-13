@@ -1,0 +1,58 @@
+package main
+
+type Mode int
+
+const (
+	ModeStartup Mode = iota
+	ModeNormal
+	ModeCreating
+	ModeEditing
+	ModeTextInput
+	ModeResize
+	ModeMove
+	ModeFileInput
+	ModeConfirm
+)
+
+type FileOperation int
+
+const (
+	FileOpSave FileOperation = iota
+	FileOpSavePNG
+	FileOpSaveVisualTXT
+	FileOpOpen
+)
+
+type ConfirmAction int
+
+const (
+	ConfirmDeleteBox ConfirmAction = iota
+	ConfirmDeleteText
+	ConfirmDeleteConnection
+	ConfirmQuit
+	ConfirmNewChart
+	ConfirmCloseBuffer
+	ConfirmOverwriteFile
+	ConfirmChooseExportType
+)
+
+type ActionType int
+
+const (
+	ActionAddBox ActionType = iota
+	ActionDeleteBox
+	ActionEditBox
+	ActionEditText
+	ActionResizeBox
+	ActionMoveBox
+	ActionMoveText
+	ActionAddConnection
+	ActionDeleteConnection
+	ActionCycleArrow
+)
+
+const (
+	minBoxWidth  = 8
+	minBoxHeight = 3
+)
+

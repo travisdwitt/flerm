@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/fogleman/gg"
+	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gomono"
 )
 
 type Canvas struct {
@@ -57,7 +60,7 @@ func (b *Box) updateSize() {
 	}
 
 	// Calculate width based on longest line
-	maxWidth := 8 // minimum width
+	maxWidth := minBoxWidth
 	for _, line := range b.Lines {
 		if len(line)+2 > maxWidth { // +2 for padding
 			maxWidth = len(line) + 2
@@ -76,7 +79,7 @@ type Connection struct {
 	FromY     int
 	ToX       int
 	ToY       int
-	Waypoints []struct{ X, Y int }
+	Waypoints []point
 	ArrowFrom bool
 	ArrowTo   bool
 }
@@ -142,11 +145,11 @@ func (c *Canvas) findNearestPointOnConnection(cursorX, cursorY int) (int, int, i
 	bestX, bestY := -1, -1
 
 	for i, conn := range c.connections {
-		points := []struct{ X, Y int }{
+		points := []point{
 			{conn.FromX, conn.FromY},
 		}
 		points = append(points, conn.Waypoints...)
-		points = append(points, struct{ X, Y int }{conn.ToX, conn.ToY})
+		points = append(points, point{conn.ToX, conn.ToY})
 
 		for j := 0; j < len(points)-1; j++ {
 			segX, segY := c.findClosestPointOnSegment(points[j].X, points[j].Y, points[j+1].X, points[j+1].Y, cursorX, cursorY)
@@ -360,7 +363,7 @@ func (c *Canvas) AddConnectionWithPoints(fromID, toID, fromX, fromY, toX, toY in
 	c.AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY, nil)
 }
 
-func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY int, waypoints []struct{ X, Y int }) {
+func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY int, waypoints []point) {
 	if fromID != -1 && fromID >= len(c.boxes) {
 		return
 	}
@@ -537,8 +540,8 @@ func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 		box := &c.boxes[id]
 
 		// Set minimum size constraints
-		minWidth := 8
-		minHeight := 3
+		minWidth := minBoxWidth
+		minHeight := minBoxHeight
 
 		// Calculate new size
 		newWidth := box.Width + deltaWidth
@@ -730,8 +733,8 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 		oldHeight := box.Height
 
 		// Set minimum size constraints
-		minWidth := 8
-		minHeight := 3
+		minWidth := minBoxWidth
+		minHeight := minBoxHeight
 
 		// Apply minimum constraints
 		if width < minWidth {
@@ -803,7 +806,7 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []struct{ X, Y int }, previewToX, previewToY int, panX, panY int) []string {
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int) []string {
 	// Ensure minimum dimensions
 	if height < 1 {
 		height = 1
@@ -837,10 +840,10 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 			FromY:     previewFromY - panY,
 			ToX:       previewToX - panX,
 			ToY:       previewToY - panY,
-			Waypoints: make([]struct{ X, Y int }, len(previewWaypoints)),
+			Waypoints: make([]point, len(previewWaypoints)),
 		}
 		for i, wp := range previewWaypoints {
-			previewConnection.Waypoints[i] = struct{ X, Y int }{X: wp.X - panX, Y: wp.Y - panY}
+			previewConnection.Waypoints[i] = point{X: wp.X - panX, Y: wp.Y - panY}
 		}
 		c.drawConnectionWithPan(canvas, previewConnection, panX, panY)
 	}
@@ -1479,9 +1482,9 @@ func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, p
 	adjustedConnection.FromY = fromY
 	adjustedConnection.ToX = toX
 	adjustedConnection.ToY = toY
-	adjustedConnection.Waypoints = make([]struct{ X, Y int }, len(connection.Waypoints))
+	adjustedConnection.Waypoints = make([]point, len(connection.Waypoints))
 	for i, wp := range connection.Waypoints {
-		adjustedConnection.Waypoints[i] = struct{ X, Y int }{X: wp.X - panX, Y: wp.Y - panY}
+		adjustedConnection.Waypoints[i] = point{X: wp.X - panX, Y: wp.Y - panY}
 	}
 	// Pass original connection for arrow calculations (uses world coordinates)
 	c.drawConnection(canvas, adjustedConnection, connection, panX, panY)
@@ -1495,10 +1498,10 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, original
 	origToX, origToY := originalConnection.ToX, originalConnection.ToY
 
 	if len(connection.Waypoints) > 0 {
-		points := make([]struct{ X, Y int }, 0, len(connection.Waypoints)+2)
-		points = append(points, struct{ X, Y int }{fromX, fromY})
+		points := make([]point, 0, len(connection.Waypoints)+2)
+		points = append(points, point{fromX, fromY})
 		points = append(points, connection.Waypoints...)
-		points = append(points, struct{ X, Y int }{toX, toY})
+		points = append(points, point{toX, toY})
 
 		for i := 0; i < len(points)-1; i++ {
 			prevPoint := points[i]
@@ -2039,7 +2042,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				arrowFlags, _ = strconv.Atoi(mainParts[7])
 			}
 
-			var waypoints []struct{ X, Y int }
+			var waypoints []point
 			if len(parts) > 1 && waypointCount > 0 {
 				waypointParts := strings.Split(parts[1], ",")
 				for j := 0; j < waypointCount && j < len(waypointParts); j++ {
@@ -2047,7 +2050,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 					if len(wpParts) == 2 {
 						wpX, _ := strconv.Atoi(wpParts[0])
 						wpY, _ := strconv.Atoi(wpParts[1])
-						waypoints = append(waypoints, struct{ X, Y int }{wpX, wpY})
+						waypoints = append(waypoints, point{wpX, wpY})
 					}
 				}
 			}
@@ -2098,53 +2101,262 @@ func (c *Canvas) LoadFromFile(filename string) error {
 	return scanner.Err()
 }
 
-func (c *Canvas) ExportToPNG(filename string, width, height int) error {
-	dc := gg.NewContext(width, height)
-	dc.SetColor(color.White)
-	dc.Clear()
-	dc.SetColor(color.Black)
-	dc.SetLineWidth(2)
+func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, panX, panY int) error {
+	if len(c.boxes) == 0 && len(c.connections) == 0 && len(c.texts) == 0 {
+		return fmt.Errorf("nothing to export")
+	}
 
-	// Draw boxes
+	// Character cell dimensions (pixels per character)
+	charWidth := 8.0
+	charHeight := 16.0
+
+	// Calculate bounds of all elements
+	minX, minY := 0, 0
+	maxX, maxY := 0, 0
+	hasElements := false
+
+	// Check boxes
 	for _, box := range c.boxes {
-		x := float64(box.X * 10)
-		y := float64(box.Y * 10)
-		w := float64(box.Width * 10)
-		h := float64(box.Height * 10)
-
-		dc.DrawRectangle(x, y, w, h)
-		dc.Stroke()
-
-		// Draw multi-line text
-		for i, line := range box.Lines {
-			lineY := y + 15 + float64(i*15) // 15 pixels per line
-			dc.DrawString(line, x+5, lineY)
+		if !hasElements {
+			minX, minY = box.X, box.Y
+			maxX, maxY = box.X+box.Width, box.Y+box.Height
+			hasElements = true
+		} else {
+			if box.X < minX {
+				minX = box.X
+			}
+			if box.Y < minY {
+				minY = box.Y
+			}
+			if box.X+box.Width > maxX {
+				maxX = box.X + box.Width
+			}
+			if box.Y+box.Height > maxY {
+				maxY = box.Y + box.Height
+			}
 		}
 	}
 
-	// Draw connections
-	for _, connection := range c.connections {
-		fromX := float64(connection.FromX * 10)
-		fromY := float64(connection.FromY * 10)
-		toX := float64(connection.ToX * 10)
-		toY := float64(connection.ToY * 10)
+	// Check connections (including waypoints)
+	for _, conn := range c.connections {
+		points := []point{{conn.FromX, conn.FromY}}
+		points = append(points, conn.Waypoints...)
+		points = append(points, point{conn.ToX, conn.ToY})
 
-		dc.DrawLine(fromX, fromY, toX, toY)
-		dc.Stroke()
+		for _, pt := range points {
+			if !hasElements {
+				minX, minY = pt.X, pt.Y
+				maxX, maxY = pt.X, pt.Y
+				hasElements = true
+			} else {
+				if pt.X < minX {
+					minX = pt.X
+				}
+				if pt.Y < minY {
+					minY = pt.Y
+				}
+				if pt.X > maxX {
+					maxX = pt.X
+				}
+				if pt.Y > maxY {
+					maxY = pt.Y
+				}
+			}
+		}
+	}
 
-		// Draw connection head
-		angle := math.Atan2(toY-fromY, toX-fromX)
-		arrowLength := 10.0
-		arrowAngle := 0.5
+	// Check texts
+	for _, text := range c.texts {
+		if !hasElements {
+			minX, minY = text.X, text.Y
+			maxX, maxY = text.X, text.Y
+			hasElements = true
+		} else {
+			if text.X < minX {
+				minX = text.X
+			}
+			if text.Y < minY {
+				minY = text.Y
+			}
+			// Estimate text bounds (rough)
+			maxTextX := text.X
+			for _, line := range text.Lines {
+				if text.X+len(line) > maxTextX {
+					maxTextX = text.X + len(line)
+				}
+			}
+			if maxTextX > maxX {
+				maxX = maxTextX
+			}
+			if text.Y+len(text.Lines) > maxY {
+				maxY = text.Y + len(text.Lines)
+			}
+		}
+	}
 
-		dc.DrawLine(toX, toY,
-			toX-arrowLength*math.Cos(angle-arrowAngle),
-			toY-arrowLength*math.Sin(angle-arrowAngle))
-		dc.DrawLine(toX, toY,
-			toX-arrowLength*math.Cos(angle+arrowAngle),
-			toY-arrowLength*math.Sin(angle+arrowAngle))
-		dc.Stroke()
+	if !hasElements {
+		return fmt.Errorf("nothing to export")
+	}
+
+	// Add padding
+	padding := 2
+	minX -= padding
+	minY -= padding
+	maxX += padding
+	maxY += padding
+
+	// Calculate image dimensions
+	imageWidth := int(float64(maxX-minX) * charWidth)
+	imageHeight := int(float64(maxY-minY) * charHeight)
+
+	// Create drawing context
+	dc := gg.NewContext(imageWidth, imageHeight)
+	dc.SetColor(color.White)
+	dc.Clear()
+	dc.SetColor(color.Black)
+
+	// Load font for text rendering
+	fontData := gomono.TTF
+	ttfFont, err := truetype.Parse(fontData)
+	if err != nil {
+		return fmt.Errorf("failed to parse font: %v", err)
+	}
+
+	fontSize := 12.0
+	face := truetype.NewFace(ttfFont, &truetype.Options{
+		Size:    fontSize,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	dc.SetFontFace(face)
+
+	// Draw connections first (so they appear behind boxes)
+	for _, conn := range c.connections {
+		c.drawConnectionPNG(dc, conn, minX, minY, charWidth, charHeight)
+	}
+
+	// Draw texts
+	for _, text := range c.texts {
+		c.drawTextPNG(dc, text, minX, minY, charWidth, charHeight)
+	}
+
+	// Draw boxes last (so they appear on top)
+	for _, box := range c.boxes {
+		c.drawBoxPNG(dc, box, minX, minY, charWidth, charHeight)
 	}
 
 	return dc.SavePNG(filename)
+}
+
+func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY int, charWidth, charHeight float64) {
+	// Build path from waypoints
+	points := []point{{conn.FromX, conn.FromY}}
+	points = append(points, conn.Waypoints...)
+	points = append(points, point{conn.ToX, conn.ToY})
+
+	if len(points) < 2 {
+		return
+	}
+
+	// Convert to pixel coordinates
+	dc.SetLineWidth(1.0)
+	dc.SetColor(color.Black)
+
+	// Draw line segments
+	for i := 0; i < len(points)-1; i++ {
+		x1 := float64(points[i].X-minX) * charWidth
+		y1 := float64(points[i].Y-minY) * charHeight
+		x2 := float64(points[i+1].X-minX) * charWidth
+		y2 := float64(points[i+1].Y-minY) * charHeight
+
+		dc.DrawLine(x1, y1, x2, y2)
+		dc.Stroke()
+	}
+
+	// Draw arrows
+	if conn.ArrowFrom && len(points) > 0 {
+		// Arrow at start
+		if len(points) > 1 {
+			c.drawArrowPNG(dc, points[1].X, points[1].Y, points[0].X, points[0].Y, minX, minY, charWidth, charHeight)
+		}
+	}
+	if conn.ArrowTo && len(points) > 1 {
+		// Arrow at end
+		c.drawArrowPNG(dc, points[len(points)-2].X, points[len(points)-2].Y, points[len(points)-1].X, points[len(points)-1].Y, minX, minY, charWidth, charHeight)
+	}
+}
+
+func (c *Canvas) drawArrowPNG(dc *gg.Context, fromX, fromY, toX, toY, minX, minY int, charWidth, charHeight float64) {
+	// Convert to pixel coordinates
+	fx := float64(fromX-minX) * charWidth
+	fy := float64(fromY-minY) * charHeight
+	tx := float64(toX-minX) * charWidth
+	ty := float64(toY-minY) * charHeight
+
+	// Calculate arrow direction
+	dx := tx - fx
+	dy := ty - fy
+	length := math.Sqrt(dx*dx + dy*dy)
+	if length < 0.1 {
+		return
+	}
+
+	// Normalize
+	dx /= length
+	dy /= length
+
+	// Arrow size
+	arrowSize := 6.0
+	arrowAngle := 0.5 // radians
+
+	// Arrow tip
+	tipX := tx
+	tipY := ty
+
+	// Arrow base points
+	baseX1 := tx - arrowSize*dx + arrowSize*dy*arrowAngle
+	baseY1 := ty - arrowSize*dy - arrowSize*dx*arrowAngle
+	baseX2 := tx - arrowSize*dx - arrowSize*dy*arrowAngle
+	baseY2 := ty - arrowSize*dy + arrowSize*dx*arrowAngle
+
+	// Draw arrow
+	dc.MoveTo(tipX, tipY)
+	dc.LineTo(baseX1, baseY1)
+	dc.LineTo(baseX2, baseY2)
+	dc.ClosePath()
+	dc.Fill()
+}
+
+func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, charHeight float64) {
+	// Convert box coordinates to pixel coordinates
+	x := float64(box.X-minX) * charWidth
+	y := float64(box.Y-minY) * charHeight
+	width := float64(box.Width) * charWidth
+	height := float64(box.Height) * charHeight
+
+	// Draw box border
+	dc.SetLineWidth(1.0)
+	dc.SetColor(color.Black)
+	dc.DrawRectangle(x, y, width, height)
+	dc.Stroke()
+
+	// Draw box text
+	dc.SetColor(color.Black)
+	textY := y + charHeight
+	for i, line := range box.Lines {
+		textX := x + charWidth
+		dc.DrawString(line, textX, textY+float64(i)*charHeight)
+	}
+}
+
+func (c *Canvas) drawTextPNG(dc *gg.Context, text Text, minX, minY int, charWidth, charHeight float64) {
+	// Convert text coordinates to pixel coordinates
+	x := float64(text.X-minX) * charWidth
+	y := float64(text.Y-minY) * charHeight
+
+	// Draw text lines
+	dc.SetColor(color.Black)
+	for i, line := range text.Lines {
+		dc.DrawString(line, x, y+float64(i)*charHeight)
+	}
 }

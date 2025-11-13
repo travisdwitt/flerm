@@ -22,205 +22,7 @@ func main() {
 	}
 }
 
-type Buffer struct {
-	canvas    *Canvas
-	undoStack []Action
-	redoStack []Action
-	filename  string
-	panX      int
-	panY      int
-}
 
-type model struct {
-	width               int
-	height              int
-	cursorX             int
-	cursorY             int
-	zPanMode            bool
-	buffers             []Buffer
-	currentBufferIndex  int
-	mode                Mode
-	help                bool
-	helpScroll          int
-	selectedBox         int
-	selectedText        int
-	editText            string
-	editCursorPos       int
-	connectionFrom      int
-	connectionFromX     int
-	connectionFromY     int
-	connectionFromLine  int
-	connectionWaypoints []struct{ X, Y int }
-	filename            string
-	fileList            []string
-	selectedFileIndex   int
-	fileOp              FileOperation
-	openInNewBuffer     bool
-	createNewBuffer     bool
-	confirmAction       ConfirmAction
-	confirmBoxID        int
-	confirmTextID       int
-	confirmConnIdx      int
-	originalMoveX       int
-	originalMoveY       int
-	originalTextMoveX   int
-	originalTextMoveY   int
-	originalWidth       int
-	originalHeight      int
-	textInputX          int
-	textInputY          int
-	textInputText       string
-	textInputCursorPos  int
-	errorMessage        string
-	successMessage      string
-	fromStartup         bool
-	clipboard           *Box
-}
-
-type Mode int
-
-const (
-	ModeStartup Mode = iota
-	ModeNormal
-	ModeCreating
-	ModeEditing
-	ModeTextInput
-	ModeResize
-	ModeMove
-	ModeFileInput
-	ModeConfirm
-)
-
-type FileOperation int
-
-const (
-	FileOpSave FileOperation = iota
-	FileOpSavePNG
-	FileOpOpen
-)
-
-type ConfirmAction int
-
-const (
-	ConfirmDeleteBox ConfirmAction = iota
-	ConfirmDeleteText
-	ConfirmDeleteConnection
-	ConfirmQuit
-	ConfirmNewChart
-	ConfirmCloseBuffer
-	ConfirmOverwriteFile
-)
-
-type Action struct {
-	Type    ActionType
-	Data    interface{}
-	Inverse interface{}
-}
-
-type ActionType int
-
-const (
-	ActionAddBox ActionType = iota
-	ActionDeleteBox
-	ActionEditBox
-	ActionEditText
-	ActionResizeBox
-	ActionMoveBox
-	ActionMoveText
-	ActionAddConnection
-	ActionDeleteConnection
-	ActionCycleArrow
-)
-
-type AddBoxData struct {
-	X, Y int
-	Text string
-	ID   int
-}
-
-type DeleteBoxData struct {
-	Box         Box
-	ID          int
-	Connections []Connection
-}
-
-type EditBoxData struct {
-	ID      int
-	NewText string
-	OldText string
-}
-
-type EditTextData struct {
-	ID      int
-	NewText string
-	OldText string
-}
-
-type ResizeBoxData struct {
-	ID          int
-	DeltaWidth  int
-	DeltaHeight int
-}
-
-type MoveBoxData struct {
-	ID     int
-	DeltaX int
-	DeltaY int
-}
-
-type MoveTextData struct {
-	ID     int
-	DeltaX int
-	DeltaY int
-}
-
-type OriginalBoxState struct {
-	ID     int
-	X      int
-	Y      int
-	Width  int
-	Height int
-}
-
-type OriginalTextState struct {
-	ID int
-	X  int
-	Y  int
-}
-
-type AddConnectionData struct {
-	FromID     int
-	ToID       int
-	Connection Connection
-}
-
-func (m *model) getCurrentBuffer() *Buffer {
-	if len(m.buffers) == 0 {
-		return nil
-	}
-	return &m.buffers[m.currentBufferIndex]
-}
-
-func (m *model) getCanvas() *Canvas {
-	buf := m.getCurrentBuffer()
-	if buf == nil {
-		return nil
-	}
-	return buf.canvas
-}
-
-func (m *model) addNewBuffer(canvas *Canvas, filename string) {
-	buffer := Buffer{
-		canvas:    canvas,
-		undoStack: []Action{},
-		redoStack: []Action{},
-		filename:  filename,
-		panX:      0,
-		panY:      0,
-	}
-	m.buffers = append(m.buffers, buffer)
-	m.currentBufferIndex = len(m.buffers) - 1
-}
 
 func (m *model) renderBufferBar(width int) string {
 	// Only show buffer bar when there is more than one buffer
@@ -241,7 +43,7 @@ func (m *model) renderBufferBar(width int) string {
 		if buf.filename != "" {
 			// Show filename without extension
 			name := buf.filename
-			if strings.HasSuffix(strings.ToLower(name), ".txt") {
+			if strings.HasSuffix(strings.ToLower(name), ".sav") {
 				name = name[:len(name)-4]
 			}
 			bufName = name
@@ -271,127 +73,7 @@ func (m *model) renderBufferBar(width int) string {
 	return bar.String()
 }
 
-func (m *model) recordAction(actionType ActionType, data, inverse interface{}) {
-	buf := m.getCurrentBuffer()
-	if buf == nil {
-		return
-	}
-	action := Action{
-		Type:    actionType,
-		Data:    data,
-		Inverse: inverse,
-	}
-	buf.undoStack = append(buf.undoStack, action)
-	buf.redoStack = buf.redoStack[:0]
-}
 
-func (m *model) undo() {
-	buf := m.getCurrentBuffer()
-	if buf == nil || len(buf.undoStack) == 0 {
-		return
-	}
-
-	lastIndex := len(buf.undoStack) - 1
-	action := buf.undoStack[lastIndex]
-	buf.undoStack = buf.undoStack[:lastIndex]
-
-	switch action.Type {
-	case ActionAddBox:
-		data := action.Inverse.(DeleteBoxData)
-		m.getCanvas().DeleteBox(data.ID)
-	case ActionDeleteBox:
-		data := action.Inverse.(AddBoxData)
-		m.getCanvas().AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-		inverse := action.Data.(DeleteBoxData)
-		for _, connection := range inverse.Connections {
-			m.getCanvas().RestoreConnection(connection)
-		}
-	case ActionEditBox:
-		data := action.Inverse.(EditBoxData)
-		m.getCanvas().SetBoxText(data.ID, data.NewText)
-	case ActionEditText:
-		data := action.Inverse.(EditTextData)
-		m.getCanvas().SetTextText(data.ID, data.NewText)
-	case ActionResizeBox:
-		data := action.Inverse.(OriginalBoxState)
-		m.getCanvas().SetBoxSize(data.ID, data.Width, data.Height)
-	case ActionMoveBox:
-		data := action.Inverse.(OriginalBoxState)
-		m.getCanvas().SetBoxPosition(data.ID, data.X, data.Y)
-	case ActionMoveText:
-		data := action.Inverse.(OriginalTextState)
-		m.getCanvas().SetTextPosition(data.ID, data.X, data.Y)
-	case ActionAddConnection:
-		data := action.Inverse.(AddConnectionData)
-		m.getCanvas().RemoveSpecificConnection(data.Connection)
-	case ActionDeleteConnection:
-		data := action.Inverse.(AddConnectionData)
-		m.getCanvas().RestoreConnection(data.Connection)
-	case ActionCycleArrow:
-		cycleData := action.Inverse.(struct {
-			ConnIdx int
-			OldConn Connection
-			NewConn Connection
-		})
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
-			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.OldConn
-		}
-	}
-
-	buf.redoStack = append(buf.redoStack, action)
-}
-
-func (m *model) redo() {
-	buf := m.getCurrentBuffer()
-	if buf == nil || len(buf.redoStack) == 0 {
-		return
-	}
-
-	lastIndex := len(buf.redoStack) - 1
-	action := buf.redoStack[lastIndex]
-	buf.redoStack = buf.redoStack[:lastIndex]
-
-	switch action.Type {
-	case ActionAddBox:
-		data := action.Data.(AddBoxData)
-		m.getCanvas().AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-	case ActionDeleteBox:
-		data := action.Data.(DeleteBoxData)
-		m.getCanvas().DeleteBox(data.ID)
-	case ActionEditBox:
-		data := action.Data.(EditBoxData)
-		m.getCanvas().SetBoxText(data.ID, data.NewText)
-	case ActionEditText:
-		data := action.Data.(EditTextData)
-		m.getCanvas().SetTextText(data.ID, data.NewText)
-	case ActionResizeBox:
-		data := action.Data.(ResizeBoxData)
-		m.getCanvas().ResizeBox(data.ID, data.DeltaWidth, data.DeltaHeight)
-	case ActionMoveBox:
-		data := action.Data.(MoveBoxData)
-		m.getCanvas().MoveBox(data.ID, data.DeltaX, data.DeltaY)
-	case ActionMoveText:
-		data := action.Data.(MoveTextData)
-		m.getCanvas().MoveText(data.ID, data.DeltaX, data.DeltaY)
-	case ActionAddConnection:
-		data := action.Data.(AddConnectionData)
-		m.getCanvas().RestoreConnection(data.Connection)
-	case ActionDeleteConnection:
-		data := action.Data.(AddConnectionData)
-		m.getCanvas().RemoveSpecificConnection(data.Connection)
-	case ActionCycleArrow:
-		cycleData := action.Data.(struct {
-			ConnIdx int
-			OldConn Connection
-			NewConn Connection
-		})
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
-			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.NewConn
-		}
-	}
-
-	buf.undoStack = append(buf.undoStack, action)
-}
 
 func initialModel() model {
 	canvas := NewCanvas()
@@ -454,9 +136,9 @@ func (m *model) scanTxtFiles() {
 		return
 	}
 
-	// Filter .txt files
+	// Filter .sav files
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".txt") {
+		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".sav") {
 			m.fileList = append(m.fileList, entry.Name())
 		}
 	}
@@ -469,7 +151,7 @@ func (m *model) scanTxtFiles() {
 		m.selectedFileIndex = 0
 		// Set filename to first file (without extension)
 		firstFile := m.fileList[0]
-		if strings.HasSuffix(strings.ToLower(firstFile), ".txt") {
+		if strings.HasSuffix(strings.ToLower(firstFile), ".sav") {
 			m.filename = firstFile[:len(firstFile)-4]
 		} else {
 			m.filename = firstFile
@@ -503,86 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpScroll = 0
 				return m, nil
 			case "j", "down":
-				helpLines := []string{
-					"Fl(ow)(T)erm Help",
-					"=================",
-					"",
-					"",
-					"Navigation:",
-					"-----------",
-					"  h/←/j/↓/k/↑/l/→  Move cursor around the screen",
-					"  Shift+h/j/k/l    Move cursor 2x faster (hold Shift with direction keys)",
-					"",
-					"Box Operations:",
-					"---------------",
-					"  b                Create new box at cursor position",
-					"  e                Edit text in box under cursor",
-					"  r                Resize box under cursor",
-					"  m                Move box under cursor",
-					"  d                Delete box under cursor",
-					"  c                Copy box under cursor",
-					"  p                Paste copied box at cursor position",
-					"",
-					"Text Operations:",
-					"----------------",
-					"  t                Enter text at cursor position",
-					"  e                Edit text under cursor",
-					"  m                Move text under cursor",
-					"  d                Delete text under cursor",
-					"",
-					"Resize Mode:",
-					"------------",
-					"  h/←/j/↓/k/↑/l/→  Resize box",
-					"  Shift+h/j/k/l    Resize box 2x faster",
-					"  Enter            Confirm edit and return to normal mode",
-					"  Esc   	        Canceland return to normal mode",
-					"",
-					"Move Mode:",
-					"----------",
-					"  h/←/j/↓/k/↑/l/→  Move object around the screen",
-					"  Shift+h/j/k/l    Move object 2x faster",
-					"  Enter            Finish moving and return to normal mode",
-					"  Escape           Cancel move and return to normal mode",
-					"",
-					"Note: Selected boxes (being resized/moved) are highlighted with # borders",
-					"Another note: Resizing/moving boxes with connections is a little wonky,",
-					"              when in doubt, delete the lines and re-connect the boxes ¯\\_(ツ)_/¯",
-					"",
-					"Connection Operations:",
-					"---------------------",
-					"  a                Start/finish connection creation",
-					"                   - Press 'a' on a box or line to start",
-					"                   - Press 'a' on empty space to add waypoint",
-					"                   - Press 'a' on a box or line to finish",
-					"                   - Connections can start/end at boxes or lines",
-					"  A                Toggle arrow state on connection line under cursor",
-					"                   - Cycles through: no arrows → to arrow → from arrow → both arrows",
-					"                   Note: Sometimes the arrows flip around. Redrawing the line fixes it.",
-					"",
-					"File Operations:",
-					"----------------",
-					"  s                Save flowchart",
-					"  S                Export as PNG image (experimental and janky)",
-					"  o                Load a saved flowchart in current buffer",
-					"  O                Load a saved flowchart in new buffer",
-					"",
-					"Buffer Operations:",
-					"------------------",
-					"  {                Switch to previous buffer",
-					"  }                Switch to next buffer",
-					"  n                Create new chart in current buffer",
-					"  N                Create new chart in new buffer",
-					"  x                Close current buffer",
-					"",
-					"General:",
-					"  u                Undo last action",
-					"  U                Redo last undone action",
-					"  Esc           	Clear selection/cancel current operation",
-					"  ?                Toggle this help screen",
-					"  q/Ctrl+C         Quit Flerm",
-					"",
-					"========== Thanks for trying Flerm! ==========",
-				}
+				helpLines := helpText
 				totalLines := len(helpLines)
 				visibleHeight := m.height - 1
 				if visibleHeight < 1 {
@@ -694,158 +297,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "?":
 				m.help = !m.help
 				return m, nil
-			case "h", "left":
-				if m.zPanMode {
-					// Pan left (z+arrow or z+h)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX++
-					}
-				} else {
-					m.cursorX--
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "H", "shift+h":
-				// Move cursor 2x faster left
-				if m.zPanMode {
-					// Pan left (z+H)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX++
-					}
-				} else {
-					m.cursorX -= 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "shift+left":
-				// Move cursor 2x faster left
-				if m.zPanMode {
-					// Pan left (z+shift+left)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX++
-					}
-				} else {
-					m.cursorX -= 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "l", "right":
-				if m.zPanMode {
-					// Pan right (z+arrow or z+l)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX--
-					}
-				} else {
-					m.cursorX++
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "L", "shift+l":
-				// Move cursor 2x faster right
-				if m.zPanMode {
-					// Pan right (z+L)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX--
-					}
-				} else {
-					m.cursorX += 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "shift+right":
-				// Move cursor 2x faster right
-				if m.zPanMode {
-					// Pan right (z+shift+right)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panX--
-					}
-				} else {
-					m.cursorX += 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "k", "up":
-				if m.zPanMode {
-					// Pan up (z+arrow or z+k)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY++
-					}
-				} else {
-					m.cursorY--
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "K", "shift+k":
-				// Move cursor 2x faster up
-				if m.zPanMode {
-					// Pan up (z+K)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY++
-					}
-				} else {
-					m.cursorY -= 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "shift+up":
-				// Move cursor 2x faster up
-				if m.zPanMode {
-					// Pan up (z+shift+up)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY++
-					}
-				} else {
-					m.cursorY -= 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "j", "down":
-				if m.zPanMode {
-					// Pan down (z+arrow or z+j)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY--
-					}
-				} else {
-					m.cursorY++
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "J", "shift+j":
-				// Move cursor 2x faster down (same as shift+down)
-				if m.zPanMode {
-					// Pan down (z+J)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY--
-					}
-				} else {
-					m.cursorY += 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
-			case "shift+down":
-				// Move cursor 2x faster down
-				if m.zPanMode {
-					// Pan down (z+shift+down)
-					buf := m.getCurrentBuffer()
-					if buf != nil {
-						buf.panY--
-					}
-				} else {
-					m.cursorY += 2
-					m.ensureCursorInBounds()
-				}
-				return m, nil
+			case "h", "left", "H", "shift+h", "shift+left":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "l", "right", "L", "shift+l", "shift+right":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "k", "up", "K", "shift+k", "shift+up":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "j", "down", "J", "shift+j", "shift+down":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
 			case "z":
 				// Toggle z-pan mode (acts like holding z)
 				m.zPanMode = !m.zPanMode
@@ -962,11 +421,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					oldConn := m.getCanvas().connections[lineConnIdx]
 					m.getCanvas().CycleConnectionArrowState(lineConnIdx)
 					newConn := m.getCanvas().connections[lineConnIdx]
-					cycleData := struct {
-						ConnIdx int
-						OldConn Connection
-						NewConn Connection
-					}{lineConnIdx, oldConn, newConn}
+					cycleData := CycleArrowData{lineConnIdx, oldConn, newConn}
 					m.recordAction(ActionCycleArrow, cycleData, cycleData)
 					m.successMessage = ""
 				}
@@ -1044,7 +499,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.connectionFromY = 0
 						m.connectionWaypoints = nil
 					} else {
-						m.connectionWaypoints = append(m.connectionWaypoints, struct{ X, Y int }{worldX, worldY})
+						m.connectionWaypoints = append(m.connectionWaypoints, point{worldX, worldY})
 					}
 				}
 				return m, nil
@@ -1082,9 +537,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Auto-fill filename from buffer if it exists
 				buf := m.getCurrentBuffer()
 				if buf != nil && buf.filename != "" {
-					// Remove .txt extension for display
+					// Remove .sav extension for display
 					filename := buf.filename
-					if strings.HasSuffix(strings.ToLower(filename), ".txt") {
+					if strings.HasSuffix(strings.ToLower(filename), ".sav") {
 						filename = filename[:len(filename)-4]
 					}
 					m.filename = filename
@@ -1116,12 +571,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scanTxtFiles()
 				return m, nil
 			case "S":
-				m.mode = ModeFileInput
-				m.fileOp = FileOpSavePNG
-				m.filename = "flowchart"
+				m.mode = ModeConfirm
+				m.confirmAction = ConfirmChooseExportType
+				m.filename = ""
 				m.errorMessage = ""
 				m.successMessage = ""
-				m.fromStartup = false
 				return m, nil
 			case "x":
 				// Close current buffer (with confirmation)
@@ -1523,7 +977,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
 						selectedFile := m.fileList[m.selectedFileIndex]
 						fileDisplayName := selectedFile
-						if strings.HasSuffix(strings.ToLower(selectedFile), ".txt") {
+						if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
 							fileDisplayName = selectedFile[:len(selectedFile)-4]
 						}
 						matchesFile = (m.filename == fileDisplayName)
@@ -1536,9 +990,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						} else {
 							m.selectedFileIndex = len(m.fileList) - 1
 						}
-						// Update filename to match selected file (without .txt extension for display)
+						// Update filename to match selected file (without .sav extension for display)
 						selectedFile := m.fileList[m.selectedFileIndex]
-						if strings.HasSuffix(strings.ToLower(selectedFile), ".txt") {
+						if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
 							m.filename = selectedFile[:len(selectedFile)-4]
 						} else {
 							m.filename = selectedFile
@@ -1555,7 +1009,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
 						selectedFile := m.fileList[m.selectedFileIndex]
 						fileDisplayName := selectedFile
-						if strings.HasSuffix(strings.ToLower(selectedFile), ".txt") {
+						if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
 							fileDisplayName = selectedFile[:len(selectedFile)-4]
 						}
 						matchesFile = (m.filename == fileDisplayName)
@@ -1568,9 +1022,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						} else {
 							m.selectedFileIndex = 0
 						}
-						// Update filename to match selected file (without .txt extension for display)
+						// Update filename to match selected file (without .sav extension for display)
 						selectedFile := m.fileList[m.selectedFileIndex]
-						if strings.HasSuffix(strings.ToLower(selectedFile), ".txt") {
+						if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
 							m.filename = selectedFile[:len(selectedFile)-4]
 						} else {
 							m.filename = selectedFile
@@ -1585,7 +1039,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// If we have a selected file and filename is empty or matches, use selected file
 				if m.fileOp == FileOpOpen && len(m.fileList) > 0 && m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
 					selectedFile := m.fileList[m.selectedFileIndex]
-					if filename == "" || (strings.HasSuffix(strings.ToLower(selectedFile), ".txt") && filename == selectedFile[:len(selectedFile)-4]) {
+					if filename == "" || (strings.HasSuffix(strings.ToLower(selectedFile), ".sav") && filename == selectedFile[:len(selectedFile)-4]) {
 						filename = selectedFile
 					}
 				}
@@ -1598,8 +1052,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 					}
-					if !strings.HasSuffix(strings.ToLower(filename), ".txt") {
-						filename += ".txt"
+					if !strings.HasSuffix(strings.ToLower(filename), ".sav") {
+						filename += ".sav"
 					}
 					if m.fileOp == FileOpSave {
 						// Check if file exists and show confirmation if it does
@@ -1628,6 +1082,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					} else {
 						// Load file into a buffer
+						// Check if file exists first
+						if _, err := os.Stat(filename); os.IsNotExist(err) {
+							m.errorMessage = fmt.Sprintf("File not found: %s", filename)
+							return m, nil
+						}
 						newCanvas := NewCanvas()
 						err := newCanvas.LoadFromFile(filename)
 						if err != nil {
@@ -1667,9 +1126,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !strings.HasSuffix(strings.ToLower(filename), ".png") {
 						filename += ".png"
 					}
-					err := m.getCanvas().ExportToPNG(filename, 800, 600)
+					// Get current buffer for pan offset and calculate render dimensions
+					buf := m.getCurrentBuffer()
+					panX, panY := 0, 0
+					if buf != nil {
+						panX, panY = buf.panX, buf.panY
+					}
+					// Calculate render dimensions - use current viewport size
+					showBufferBar := m.mode != ModeStartup && len(m.buffers) > 1
+					renderWidth := m.width
+					if renderWidth < 1 {
+						renderWidth = 80 // Default minimum width
+					}
+					var renderHeight int
+					if showBufferBar {
+						renderHeight = m.height - 2 // Leave room for buffer bar and status line
+					} else {
+						renderHeight = m.height - 1 // Leave room for status line only
+					}
+					if renderHeight < 1 {
+						renderHeight = 24 // Default minimum height
+					}
+					err := m.getCanvas().ExportToPNG(filename, renderWidth, renderHeight, panX, panY)
 					if err != nil {
 						m.errorMessage = fmt.Sprintf("Error exporting PNG: %s", err.Error())
+						return m, nil
+					} else {
+						absPath, _ := filepath.Abs(filename)
+						m.successMessage = fmt.Sprintf("Exported to %s", absPath)
+						m.errorMessage = ""
+					}
+				case FileOpSaveVisualTXT:
+					if !strings.HasSuffix(strings.ToLower(filename), ".txt") {
+						filename += ".txt"
+					}
+					err := m.exportVisualTXT(filename)
+					if err != nil {
+						m.errorMessage = fmt.Sprintf("Error exporting Visual TXT: %s", err.Error())
 						return m, nil
 					} else {
 						absPath, _ := filepath.Abs(filename)
@@ -1812,16 +1305,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.successMessage = fmt.Sprintf("Saved to %s", absPath)
 						m.errorMessage = ""
 					}
+				case ConfirmChooseExportType:
+					// This case is handled by 'p' and 't' keys below
+					return m, nil
 				}
 				m.mode = ModeNormal
 				m.filename = ""
 				return m, nil
+			case "p", "P":
+				// Export as PNG
+				if m.confirmAction == ConfirmChooseExportType {
+					m.mode = ModeFileInput
+					m.fileOp = FileOpSavePNG
+					// Auto-fill filename from buffer if it exists
+					buf := m.getCurrentBuffer()
+					if buf != nil && buf.filename != "" {
+						// Remove .sav extension for display
+						filename := buf.filename
+						if strings.HasSuffix(strings.ToLower(filename), ".sav") {
+							filename = filename[:len(filename)-4]
+						}
+						m.filename = filename
+					} else {
+						m.filename = "flowchart"
+					}
+					m.errorMessage = ""
+					m.successMessage = ""
+					m.fromStartup = false
+					return m, nil
+				}
+				// Fall through for other confirmations
+			case "t", "T":
+				// Export as Visual TXT
+				if m.confirmAction == ConfirmChooseExportType {
+					m.mode = ModeFileInput
+					m.fileOp = FileOpSaveVisualTXT
+					// Auto-fill filename from buffer if it exists
+					buf := m.getCurrentBuffer()
+					if buf != nil && buf.filename != "" {
+						// Remove .sav extension for display
+						filename := buf.filename
+						if strings.HasSuffix(strings.ToLower(filename), ".sav") {
+							filename = filename[:len(filename)-4]
+						}
+						m.filename = filename
+					} else {
+						m.filename = "flowchart"
+					}
+					m.errorMessage = ""
+					m.successMessage = ""
+					m.fromStartup = false
+					return m, nil
+				}
+				// Fall through for other confirmations
 			case "n", "N", "escape":
 				// Cancel the action
 				if m.confirmAction == ConfirmOverwriteFile {
 					// Return to file input mode if canceling overwrite
 					m.mode = ModeFileInput
 					m.fileOp = FileOpSave
+				} else if m.confirmAction == ConfirmChooseExportType {
+					// Return to normal mode if canceling export type selection
+					m.mode = ModeNormal
 				} else {
 					m.mode = ModeNormal
 				}
@@ -1866,7 +1411,7 @@ func (m model) View() string {
 
 	// Prepare preview connection data if connection is in progress
 	var previewFromX, previewFromY, previewToX, previewToY int = -1, -1, -1, -1
-	var previewWaypoints []struct{ X, Y int }
+	var previewWaypoints []point
 	if m.connectionFrom != -1 || m.connectionFromLine != -1 {
 		previewFromX = m.connectionFromX
 		previewFromY = m.connectionFromY
@@ -1936,7 +1481,7 @@ func (m model) View() string {
 		result.WriteString("\n")
 
 		if len(m.fileList) == 0 {
-			result.WriteString("(No .txt files found in current directory)\n")
+			result.WriteString("(No .sav files found in current directory)\n")
 		} else {
 			// Calculate how many files we can show
 			maxFiles := renderHeight - 4 // Leave room for header, separator, input, and status
@@ -1957,9 +1502,9 @@ func (m model) View() string {
 			// Display files
 			for i := startIdx; i < endIdx; i++ {
 				file := m.fileList[i]
-				// Remove .txt extension for display
+				// Remove .sav extension for display
 				displayName := file
-				if strings.HasSuffix(strings.ToLower(file), ".txt") {
+				if strings.HasSuffix(strings.ToLower(file), ".sav") {
 					displayName = file[:len(file)-4]
 				}
 
@@ -2059,6 +1604,8 @@ func (m model) View() string {
 			opStr = "Open"
 		case FileOpSavePNG:
 			opStr = "Export PNG"
+		case FileOpSaveVisualTXT:
+			opStr = "Export Visual TXT"
 		}
 		if m.errorMessage != "" {
 			if m.fileOp == FileOpOpen {
@@ -2090,6 +1637,8 @@ func (m model) View() string {
 			message = "Close current buffer? Unsaved changes will be lost. (y/n)"
 		case ConfirmOverwriteFile:
 			message = fmt.Sprintf("File %s already exists. Overwrite? (y/n)", m.filename)
+		case ConfirmChooseExportType:
+			message = "Export as PNG (p) or Visual TXT (t)? Press Esc to cancel"
 		}
 		statusLine = fmt.Sprintf("Mode: CONFIRM | %s", message)
 	default:
@@ -2151,86 +1700,7 @@ func (m model) modeString() string {
 }
 
 func (m model) helpView() string {
-	helpLines := []string{
-		"Fl(ow)(T)erm Help",
-		"=================",
-		"",
-		"",
-		"Navigation:",
-		"-----------",
-		"  h/←/j/↓/k/↑/l/→  Move cursor around the screen",
-		"  Shift+h/j/k/l    Move cursor 2x faster (hold Shift with direction keys)",
-		"",
-		"Box Operations:",
-		"---------------",
-		"  b                Create new box at cursor position",
-		"  e                Edit text in box under cursor",
-		"  r                Resize box under cursor",
-		"  m                Move box under cursor",
-		"  d                Delete box under cursor",
-		"  c                Copy box under cursor",
-		"  p                Paste copied box at cursor position",
-		"",
-		"Text Operations:",
-		"----------------",
-		"  t                Enter text at cursor position",
-		"  e                Edit text under cursor",
-		"  m                Move text under cursor",
-		"  d                Delete text under cursor",
-		"",
-		"Resize Mode:",
-		"------------",
-		"  h/←/j/↓/k/↑/l/→  Resize box",
-		"  Shift+h/j/k/l    Resize box 2x faster",
-		"  Enter            Confirm edit and return to normal mode",
-		"  Esc   	        Canceland return to normal mode",
-		"",
-		"Move Mode:",
-		"----------",
-		"  h/←/j/↓/k/↑/l/→  Move object around the screen",
-		"  Shift+h/j/k/l    Move object 2x faster",
-		"  Enter            Finish moving and return to normal mode",
-		"  Escape           Cancel move and return to normal mode",
-		"",
-		"Note: Selected boxes (being resized/moved) are highlighted with # borders",
-		"Another note: Resizing/moving boxes with connections is a little wonky,",
-		"              when in doubt, delete the lines and re-connect the boxes ¯\\_(ツ)_/¯",
-		"",
-		"Connection Operations:",
-		"---------------------",
-		"  a                Start/finish connection creation",
-		"                   - Press 'a' on a box or line to start",
-		"                   - Press 'a' on empty space to add waypoint",
-		"                   - Press 'a' on a box or line to finish",
-		"                   - Connections can start/end at boxes or lines",
-		"  A                Toggle arrow state on connection line under cursor",
-		"                   - Cycles through: no arrows → to arrow → from arrow → both arrows",
-		"                   Note: Sometimes the arrows flip around. Redrawing the line fixes it.",
-		"",
-		"File Operations:",
-		"----------------",
-		"  s                Save flowchart",
-		"  S                Export as PNG image (experimental and janky)",
-		"  o                Load a saved flowchart in current buffer",
-		"  O                Load a saved flowchart in new buffer",
-		"",
-		"Buffer Operations:",
-		"------------------",
-		"  {                Switch to previous buffer",
-		"  }                Switch to next buffer",
-		"  n                Create new chart in current buffer",
-		"  N                Create new chart in new buffer",
-		"  x                Close current buffer",
-		"",
-		"General:",
-		"  u                Undo last action",
-		"  U                Redo last undone action",
-		"  Esc           	Clear selection/cancel current operation",
-		"  ?                Toggle this help screen",
-		"  q/Ctrl+C         Quit Flerm",
-		"",
-		"========== Thanks for trying Flerm! ==========",
-	}
+	helpLines := helpText
 
 	// Calculate visible area
 	visibleHeight := m.height - 1 // Leave room for status line
