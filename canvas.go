@@ -77,6 +77,8 @@ type Connection struct {
 	ToX       int
 	ToY       int
 	Waypoints []struct{ X, Y int }
+	ArrowFrom bool
+	ArrowTo   bool
 }
 
 func NewCanvas() *Canvas {
@@ -374,6 +376,8 @@ func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY
 		ToX:       toX,
 		ToY:       toY,
 		Waypoints: waypoints,
+		ArrowFrom: false,
+		ArrowTo:   true,
 	}
 	c.connections = append(c.connections, connection)
 }
@@ -396,6 +400,25 @@ func (c *Canvas) RemoveSpecificConnection(target Connection) {
 		}
 	}
 	c.connections = newConnections
+}
+
+func (c *Canvas) CycleConnectionArrowState(connIdx int) {
+	if connIdx < 0 || connIdx >= len(c.connections) {
+		return
+	}
+	conn := &c.connections[connIdx]
+	if !conn.ArrowFrom && !conn.ArrowTo {
+		conn.ArrowTo = true
+	} else if !conn.ArrowFrom && conn.ArrowTo {
+		conn.ArrowFrom = true
+		conn.ArrowTo = false
+	} else if conn.ArrowFrom && !conn.ArrowTo {
+		conn.ArrowFrom = true
+		conn.ArrowTo = true
+	} else {
+		conn.ArrowFrom = false
+		conn.ArrowTo = false
+	}
 }
 
 func (c *Canvas) connectionsEqual(a, b Connection) bool {
@@ -615,6 +638,8 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 func (c *Canvas) SetBoxPosition(id int, x, y int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
+		oldX := box.X
+		oldY := box.Y
 		box.X = x
 		box.Y = y
 
@@ -625,12 +650,39 @@ func (c *Canvas) SetBoxPosition(id int, x, y int) {
 		if box.Y < 0 {
 			box.Y = 0
 		}
+
+		deltaX := box.X - oldX
+		deltaY := box.Y - oldY
+		if deltaX != 0 || deltaY != 0 {
+			for i := range c.connections {
+				conn := &c.connections[i]
+				if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+					newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
+					conn.FromX = newFromX
+					conn.FromY = newFromY
+					conn.ToX = newToX
+					conn.ToY = newToY
+				}
+				if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+					newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
+					conn.FromX = newFromX
+					conn.FromY = newFromY
+					conn.ToX = newToX
+					conn.ToY = newToY
+				}
+			}
+		}
 	}
 }
 
 func (c *Canvas) SetBoxSize(id int, width, height int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
+
+		oldBoxX := box.X
+		oldBoxWidth := box.Width
+		oldWidth := box.Width
+		oldHeight := box.Height
 
 		// Set minimum size constraints
 		minWidth := 8
@@ -647,6 +699,62 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 		// Update box size
 		box.Width = width
 		box.Height = height
+
+		if box.Width != oldWidth || box.Height != oldHeight {
+			for i := range c.connections {
+				conn := &c.connections[i]
+				if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+					wasHorizontal := (conn.FromY == conn.ToY)
+					oldFromX := conn.FromX
+					oldToX := conn.ToX
+					newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(id, conn.ToID, wasHorizontal)
+					if wasHorizontal {
+						oldToBox := c.boxes[conn.ToID]
+						wasOnLeft := (oldToX == oldToBox.X || (oldToX < oldToBox.X+oldToBox.Width/2))
+						if wasOnLeft {
+							newToX = oldToBox.X
+						} else {
+							newToX = oldToBox.X + oldToBox.Width - 1
+						}
+						wasFromRight := (oldFromX == oldBoxX+oldBoxWidth-1 || (oldFromX > oldBoxX+oldBoxWidth/2))
+						if wasFromRight {
+							newFromX = box.X + box.Width - 1
+						} else {
+							newFromX = box.X
+						}
+					}
+					conn.FromX = newFromX
+					conn.FromY = newFromY
+					conn.ToX = newToX
+					conn.ToY = newToY
+				}
+				if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+					wasHorizontal := (conn.FromY == conn.ToY)
+					oldToX := conn.ToX
+					oldFromX := conn.FromX
+					newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(conn.FromID, id, wasHorizontal)
+					if wasHorizontal {
+						wasOnLeft := (oldToX == oldBoxX || (oldToX < oldBoxX+oldBoxWidth/2))
+						if wasOnLeft {
+							newToX = box.X
+						} else {
+							newToX = box.X + box.Width - 1
+						}
+						oldFromBox := c.boxes[conn.FromID]
+						wasFromRight := (oldFromX == oldFromBox.X+oldFromBox.Width-1 || (oldFromX > oldFromBox.X+oldFromBox.Width/2))
+						if wasFromRight {
+							newFromX = oldFromBox.X + oldFromBox.Width - 1
+						} else {
+							newFromX = oldFromBox.X
+						}
+					}
+					conn.FromX = newFromX
+					conn.FromY = newFromY
+					conn.ToX = newToX
+					conn.ToY = newToY
+				}
+			}
+		}
 	}
 }
 
@@ -802,7 +910,7 @@ func (c *Canvas) isPointInBox(x, y int, excludeFromID, excludeToID int) bool {
 	return false
 }
 
-func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, excludeFromID, excludeToID int, drawArrow bool) {
+func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, excludeFromID, excludeToID int, drawArrowFrom, drawArrowTo bool, skipCorner bool) {
 	if fromX == toX && fromY == toY {
 		return
 	}
@@ -830,8 +938,50 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			}
 		}
 
-		if drawArrow && c.isValidPos(canvas, toX, arrowY) {
+		if drawArrowTo && c.isValidPos(canvas, toX, arrowY) {
 			canvas[arrowY][toX] = arrowChar
+		}
+		if drawArrowFrom {
+			var fromArrowY int
+			var fromArrowChar rune
+			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
+				fromBox := c.boxes[excludeFromID]
+				fromOnTopEdge := (fromY == fromBox.Y)
+				fromOnBottomEdge := (fromY == fromBox.Y+fromBox.Height-1)
+				if !fromOnTopEdge && !fromOnBottomEdge {
+					if abs(fromY-fromBox.Y) < abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+						fromOnTopEdge = true
+					} else {
+						fromOnBottomEdge = true
+					}
+				}
+				if fromOnTopEdge {
+					fromArrowY = fromBox.Y - 1
+					fromArrowChar = '▼'
+				} else if fromOnBottomEdge {
+					fromArrowY = fromBox.Y + fromBox.Height
+					fromArrowChar = '▲'
+				} else {
+					if fromY < toY {
+						fromArrowY = fromY + 1
+						fromArrowChar = '▲'
+					} else {
+						fromArrowY = fromY - 1
+						fromArrowChar = '▼'
+					}
+				}
+			} else {
+				if fromY < toY {
+					fromArrowY = fromY + 1
+					fromArrowChar = '▲'
+				} else {
+					fromArrowY = fromY - 1
+					fromArrowChar = '▼'
+				}
+			}
+			if c.isValidPos(canvas, fromX, fromArrowY) && !c.isPointInBox(fromX, fromArrowY, excludeFromID, excludeToID) {
+				canvas[fromArrowY][fromX] = fromArrowChar
+			}
 		}
 
 	} else if fromY == toY {
@@ -893,7 +1043,7 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			}
 		}
 
-		if drawArrow {
+		if drawArrowTo {
 			if excludeToID >= 0 && excludeToID < len(c.boxes) {
 				toBox := c.boxes[excludeToID]
 				if arrowX >= toBox.X && arrowX < toBox.X+toBox.Width {
@@ -907,6 +1057,50 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			if c.isValidPos(canvas, arrowX, toY) {
 				if !c.isPointInBox(arrowX, toY, excludeFromID, excludeToID) {
 					canvas[toY][arrowX] = arrowChar
+				}
+			}
+		}
+		if drawArrowFrom {
+			var fromArrowX int
+			var fromArrowChar rune
+			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
+				fromBox := c.boxes[excludeFromID]
+				fromOnLeftEdge := (fromX == fromBox.X)
+				fromOnRightEdge := (fromX == fromBox.X+fromBox.Width-1)
+				if !fromOnLeftEdge && !fromOnRightEdge {
+					if abs(fromX-fromBox.X) < abs(fromX-(fromBox.X+fromBox.Width-1)) {
+						fromOnLeftEdge = true
+					} else {
+						fromOnRightEdge = true
+					}
+				}
+				if fromOnLeftEdge {
+					fromArrowX = fromBox.X - 1
+					fromArrowChar = '▶'
+				} else if fromOnRightEdge {
+					fromArrowX = fromBox.X + fromBox.Width
+					fromArrowChar = '◀'
+				} else {
+					if fromX < toX {
+						fromArrowX = fromX - 1
+						fromArrowChar = '▶'
+					} else {
+						fromArrowX = fromX + 1
+						fromArrowChar = '◀'
+					}
+				}
+			} else {
+				if fromX < toX {
+					fromArrowX = fromX - 1
+					fromArrowChar = '▶'
+				} else {
+					fromArrowX = fromX + 1
+					fromArrowChar = '◀'
+				}
+			}
+			if c.isValidPos(canvas, fromArrowX, fromY) {
+				if !c.isPointInBox(fromArrowX, fromY, excludeFromID, excludeToID) {
+					canvas[fromY][fromArrowX] = fromArrowChar
 				}
 			}
 		}
@@ -924,28 +1118,32 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			hEndX = fromX - 1
 		}
 
-		for x := hStartX; x <= hEndX; x++ {
-			if c.isValidPos(canvas, x, fromY) && !c.isPointInBox(x, fromY, excludeFromID, excludeToID) {
-				canvas[fromY][x] = '─'
+		if hStartX <= hEndX {
+			for x := hStartX; x <= hEndX; x++ {
+				if c.isValidPos(canvas, x, fromY) && !c.isPointInBox(x, fromY, excludeFromID, excludeToID) {
+					canvas[fromY][x] = '─'
+				}
 			}
 		}
 
 		var vStartY, vEndY int
 		if cornerY < toY {
 			vStartY = cornerY + 1
-			vEndY = toY
+			vEndY = toY - 1
 		} else {
-			vStartY = toY
+			vStartY = toY + 1
 			vEndY = cornerY - 1
 		}
 
-		for y := vStartY; y <= vEndY; y++ {
-			if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, excludeFromID, excludeToID) {
-				canvas[y][cornerX] = '│'
+		if vStartY <= vEndY {
+			for y := vStartY; y <= vEndY; y++ {
+				if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, excludeFromID, excludeToID) {
+					canvas[y][cornerX] = '│'
+				}
 			}
 		}
 
-		if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBox(cornerX, cornerY, excludeFromID, excludeToID) {
+		if !skipCorner && c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBox(cornerX, cornerY, excludeFromID, excludeToID) {
 			if fromX < toX && fromY < toY {
 				canvas[cornerY][cornerX] = '┐'
 			} else if fromX < toX && fromY > toY {
@@ -957,83 +1155,84 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 			}
 		}
 
-		if drawArrow {
+		if drawArrowTo {
 			var arrowX, arrowY int
 			var arrowChar rune
 
-			var onLeftEdge, onRightEdge, onTopEdge, onBottomEdge bool
 			if excludeToID >= 0 && excludeToID < len(c.boxes) {
 				toBox := c.boxes[excludeToID]
-				onLeftEdge = (toX == toBox.X)
-				onRightEdge = (toX == toBox.X+toBox.Width-1)
-				onTopEdge = (toY == toBox.Y)
-				onBottomEdge = (toY == toBox.Y+toBox.Height-1)
-			}
+				onLeftEdge := (toX == toBox.X)
+				onRightEdge := (toX == toBox.X+toBox.Width-1)
+				onTopEdge := (toY == toBox.Y)
+				onBottomEdge := (toY == toBox.Y+toBox.Height-1)
 
-			if cornerY < toY {
-				if onLeftEdge {
-					arrowX = toX - 1
-					arrowY = toY
-					arrowChar = '◀'
-				} else if onRightEdge {
-					arrowX = toX + 1
-					arrowY = toY
-					arrowChar = '▶'
-				} else {
-					arrowX = toX
-					arrowY = toY - 1
-					arrowChar = '▼'
+				if !onLeftEdge && !onRightEdge && !onTopEdge && !onBottomEdge {
+					if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+						onLeftEdge = true
+					} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+						onRightEdge = true
+					} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+						onTopEdge = true
+					} else {
+						onBottomEdge = true
+					}
 				}
-			} else if cornerY > toY {
+
 				if onLeftEdge {
-					arrowX = toX - 1
-					arrowY = toY
-					arrowChar = '◀'
-				} else if onRightEdge {
-					arrowX = toX + 1
+					arrowX = toBox.X - 1
 					arrowY = toY
 					arrowChar = '▶'
-				} else {
+				} else if onRightEdge {
+					arrowX = toBox.X + toBox.Width
+					arrowY = toY
+					arrowChar = '◀'
+				} else if onTopEdge {
 					arrowX = toX
-					arrowY = toY + 1
+					arrowY = toBox.Y - 1
 					arrowChar = '▲'
-				}
-			} else {
-				if onTopEdge {
-					arrowX = toX
-					arrowY = toY - 1
-					arrowChar = '▼'
 				} else if onBottomEdge {
 					arrowX = toX
-					arrowY = toY + 1
-					arrowChar = '▲'
-				} else if onLeftEdge {
-					arrowX = toX - 1
-					arrowY = toY
-					arrowChar = '◀'
-				} else if onRightEdge {
-					arrowX = toX + 1
-					arrowY = toY
-					arrowChar = '▶'
+					arrowY = toBox.Y + toBox.Height
+					arrowChar = '▼'
 				} else {
+					if cornerY < toY {
+						arrowX = toX
+						arrowY = toY - 1
+						arrowChar = '▼'
+					} else if cornerY > toY {
+						arrowX = toX
+						arrowY = toY + 1
+						arrowChar = '▲'
+					} else {
+						if toX < toBox.X+toBox.Width/2 {
+							arrowX = toBox.X - 1
+							arrowY = toY
+							arrowChar = '▶'
+						} else {
+							arrowX = toBox.X + toBox.Width
+							arrowY = toY
+							arrowChar = '◀'
+						}
+					}
+				}
+			} else {
+				if cornerY < toY {
 					arrowX = toX
 					arrowY = toY - 1
 					arrowChar = '▼'
-				}
-			}
-
-			if excludeToID >= 0 && excludeToID < len(c.boxes) {
-				toBox := c.boxes[excludeToID]
-				if arrowX >= toBox.X && arrowX < toBox.X+toBox.Width &&
-					arrowY >= toBox.Y && arrowY < toBox.Y+toBox.Height {
-					if onLeftEdge {
-						arrowX = toBox.X - 1
-					} else if onRightEdge {
-						arrowX = toBox.X + toBox.Width
-					} else if onTopEdge {
-						arrowY = toBox.Y - 1
-					} else if onBottomEdge {
-						arrowY = toBox.Y + toBox.Height
+				} else if cornerY > toY {
+					arrowX = toX
+					arrowY = toY + 1
+					arrowChar = '▲'
+				} else {
+					if fromX < toX {
+						arrowX = toX - 1
+						arrowY = toY
+						arrowChar = '▶'
+					} else {
+						arrowX = toX + 1
+						arrowY = toY
+						arrowChar = '◀'
 					}
 				}
 			}
@@ -1057,6 +1256,95 @@ func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, ex
 
 			if c.isValidPos(canvas, arrowX, arrowY) && !c.isPointInBox(arrowX, arrowY, excludeFromID, excludeToID) {
 				canvas[arrowY][arrowX] = arrowChar
+			}
+		}
+		if drawArrowFrom {
+			var fromArrowX, fromArrowY int
+			var fromArrowChar rune
+			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
+				fromBox := c.boxes[excludeFromID]
+				fromOnLeftEdge := (fromX == fromBox.X)
+				fromOnRightEdge := (fromX == fromBox.X+fromBox.Width-1)
+				fromOnTopEdge := (fromY == fromBox.Y)
+				fromOnBottomEdge := (fromY == fromBox.Y+fromBox.Height-1)
+				if !fromOnLeftEdge && !fromOnRightEdge {
+					if abs(fromX-fromBox.X) < abs(fromX-(fromBox.X+fromBox.Width-1)) {
+						fromOnLeftEdge = true
+					} else {
+						fromOnRightEdge = true
+					}
+				}
+				if !fromOnTopEdge && !fromOnBottomEdge {
+					if abs(fromY-fromBox.Y) < abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+						fromOnTopEdge = true
+					} else {
+						fromOnBottomEdge = true
+					}
+				}
+				if fromOnTopEdge {
+					fromArrowX = fromX
+					fromArrowY = fromBox.Y - 1
+					fromArrowChar = '▼'
+				} else if fromOnBottomEdge {
+					fromArrowX = fromX
+					fromArrowY = fromBox.Y + fromBox.Height
+					fromArrowChar = '▲'
+				} else if fromOnLeftEdge {
+					fromArrowX = fromBox.X - 1
+					fromArrowY = fromY
+					fromArrowChar = '▶'
+				} else if fromOnRightEdge {
+					fromArrowX = fromBox.X + fromBox.Width
+					fromArrowY = fromY
+					fromArrowChar = '◀'
+				} else {
+					if fromX == cornerX {
+						if fromY < cornerY {
+							fromArrowX = fromX
+							fromArrowY = fromY - 1
+							fromArrowChar = '▼'
+						} else {
+							fromArrowX = fromX
+							fromArrowY = fromY + 1
+							fromArrowChar = '▲'
+						}
+					} else if fromY == cornerY {
+						if fromX < cornerX {
+							fromArrowX = fromX - 1
+							fromArrowY = fromY
+							fromArrowChar = '▶'
+						} else {
+							fromArrowX = fromX + 1
+							fromArrowY = fromY
+							fromArrowChar = '◀'
+						}
+					}
+				}
+			} else {
+				if fromX == cornerX {
+					if fromY < cornerY {
+						fromArrowX = fromX
+						fromArrowY = fromY - 1
+						fromArrowChar = '▼'
+					} else {
+						fromArrowX = fromX
+						fromArrowY = fromY + 1
+						fromArrowChar = '▲'
+					}
+				} else if fromY == cornerY {
+					if fromX < cornerX {
+						fromArrowX = fromX - 1
+						fromArrowY = fromY
+						fromArrowChar = '▶'
+					} else {
+						fromArrowX = fromX + 1
+						fromArrowY = fromY
+						fromArrowChar = '◀'
+					}
+				}
+			}
+			if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBox(fromArrowX, fromArrowY, excludeFromID, excludeToID) {
+				canvas[fromArrowY][fromArrowX] = fromArrowChar
 			}
 		}
 	}
@@ -1104,40 +1392,369 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection) {
 	toX, toY := connection.ToX, connection.ToY
 
 	if len(connection.Waypoints) > 0 {
-		prevX, prevY := fromX, fromY
-		for i, waypoint := range connection.Waypoints {
-			c.drawLineSegment(canvas, prevX, prevY, waypoint.X, waypoint.Y, connection.FromID, connection.ToID, false)
+		points := make([]struct{ X, Y int }, 0, len(connection.Waypoints)+2)
+		points = append(points, struct{ X, Y int }{fromX, fromY})
+		points = append(points, connection.Waypoints...)
+		points = append(points, struct{ X, Y int }{toX, toY})
 
-			if i > 0 {
-				prevWaypoint := connection.Waypoints[i-1]
-				var nextX, nextY int
-				if i < len(connection.Waypoints)-1 {
-					nextWaypoint := connection.Waypoints[i+1]
-					nextX, nextY = nextWaypoint.X, nextWaypoint.Y
-				} else {
-					nextX, nextY = toX, toY
+		for i := 0; i < len(points)-1; i++ {
+			prevPoint := points[i]
+			nextPoint := points[i+1]
+
+			drawFromArrow := (i == 0 && connection.ArrowFrom)
+			drawToArrow := (i == len(points)-2 && connection.ArrowTo)
+
+			if prevPoint.X == nextPoint.X {
+				startY := prevPoint.Y
+				endY := nextPoint.Y
+				if startY > endY {
+					startY, endY = endY, startY
 				}
-				c.drawCorner(canvas, waypoint.X, waypoint.Y, prevWaypoint.X, prevWaypoint.Y, nextX, nextY, connection.FromID, connection.ToID)
+				for y := startY + 1; y < endY; y++ {
+					if c.isValidPos(canvas, prevPoint.X, y) && !c.isPointInBox(prevPoint.X, y, connection.FromID, connection.ToID) {
+						canvas[y][prevPoint.X] = '│'
+					}
+				}
+				// Draw a corner at prevPoint if the previous segment was horizontal
+				if i > 0 {
+					prevPrev := points[i-1]
+					prevWasHorizontal := prevPrev.Y == prevPoint.Y
+					if prevWasHorizontal {
+						cornerX, cornerY := prevPoint.X, prevPoint.Y
+						var cornerChar rune
+						if prevPrev.X < prevPoint.X && nextPoint.Y > prevPoint.Y {
+							cornerChar = '┐'
+						} else if prevPrev.X < prevPoint.X && nextPoint.Y < prevPoint.Y {
+							cornerChar = '┘'
+						} else if prevPrev.X > prevPoint.X && nextPoint.Y > prevPoint.Y {
+							cornerChar = '┌'
+						} else {
+							cornerChar = '└'
+						}
+						if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBox(cornerX, cornerY, connection.FromID, connection.ToID) {
+							canvas[cornerY][cornerX] = cornerChar
+						}
+					}
+				}
+				if drawFromArrow && i == 0 {
+					var fromArrowX, fromArrowY int
+					var fromArrowChar rune
+					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
+						fromBox := c.boxes[connection.FromID]
+						fromX, fromY := connection.FromX, connection.FromY
+						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X - 1
+							fromArrowY = fromY
+							fromArrowChar = '▶'
+						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X + fromBox.Width
+							fromArrowY = fromY
+							fromArrowChar = '◀'
+						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y - 1
+							fromArrowChar = '▼'
+						} else {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y + fromBox.Height
+							fromArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBox(fromArrowX, fromArrowY, connection.FromID, connection.ToID) {
+						canvas[fromArrowY][fromArrowX] = fromArrowChar
+					}
+				}
+				if drawToArrow && i == len(points)-2 {
+					var toArrowX, toArrowY int
+					var toArrowChar rune
+					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
+						toBox := c.boxes[connection.ToID]
+						toX, toY := connection.ToX, connection.ToY
+						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X - 1
+							toArrowY = toY
+							toArrowChar = '▶'
+						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X + toBox.Width
+							toArrowY = toY
+							toArrowChar = '◀'
+						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toX
+							toArrowY = toBox.Y - 1
+							toArrowChar = '▼'
+						} else {
+							toArrowX = toX
+							toArrowY = toBox.Y + toBox.Height
+							toArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBox(toArrowX, toArrowY, connection.FromID, connection.ToID) {
+						canvas[toArrowY][toArrowX] = toArrowChar
+					}
+				}
+			} else if prevPoint.Y == nextPoint.Y {
+				startX := prevPoint.X
+				endX := nextPoint.X
+				if startX > endX {
+					startX, endX = endX, startX
+				}
+				for x := startX + 1; x < endX; x++ {
+					if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBox(x, prevPoint.Y, connection.FromID, connection.ToID) {
+						canvas[prevPoint.Y][x] = '─'
+					}
+				}
+				// Draw a corner at prevPoint if the previous segment was vertical
+				if i > 0 {
+					prevPrev := points[i-1]
+					prevWasVertical := prevPrev.X == prevPoint.X
+					if prevWasVertical {
+						cornerX, cornerY := prevPoint.X, prevPoint.Y
+						var cornerChar rune
+						if prevPrev.Y < prevPoint.Y && nextPoint.X > prevPoint.X {
+							cornerChar = '└'
+						} else if prevPrev.Y < prevPoint.Y && nextPoint.X < prevPoint.X {
+							cornerChar = '┘'
+						} else if prevPrev.Y > prevPoint.Y && nextPoint.X > prevPoint.X {
+							cornerChar = '┌'
+						} else {
+							cornerChar = '┐'
+						}
+						if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBox(cornerX, cornerY, connection.FromID, connection.ToID) {
+							canvas[cornerY][cornerX] = cornerChar
+						}
+					}
+				}
+				if drawFromArrow && i == 0 {
+					var fromArrowX, fromArrowY int
+					var fromArrowChar rune
+					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
+						fromBox := c.boxes[connection.FromID]
+						fromX, fromY := connection.FromX, connection.FromY
+						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X - 1
+							fromArrowY = fromY
+							fromArrowChar = '▶'
+						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X + fromBox.Width
+							fromArrowY = fromY
+							fromArrowChar = '◀'
+						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y - 1
+							fromArrowChar = '▼'
+						} else {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y + fromBox.Height
+							fromArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBox(fromArrowX, fromArrowY, connection.FromID, connection.ToID) {
+						canvas[fromArrowY][fromArrowX] = fromArrowChar
+					}
+				}
+				if drawToArrow && i == len(points)-2 {
+					var toArrowX, toArrowY int
+					var toArrowChar rune
+					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
+						toBox := c.boxes[connection.ToID]
+						toX, toY := connection.ToX, connection.ToY
+						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X - 1
+							toArrowY = toY
+							toArrowChar = '▶'
+						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X + toBox.Width
+							toArrowY = toY
+							toArrowChar = '◀'
+						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toX
+							toArrowY = toBox.Y - 1
+							toArrowChar = '▼'
+						} else {
+							toArrowX = toX
+							toArrowY = toBox.Y + toBox.Height
+							toArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBox(toArrowX, toArrowY, connection.FromID, connection.ToID) {
+						canvas[toArrowY][toArrowX] = toArrowChar
+					}
+				}
 			} else {
-				var nextX, nextY int
-				if i < len(connection.Waypoints)-1 {
-					nextWaypoint := connection.Waypoints[i+1]
-					nextX, nextY = nextWaypoint.X, nextWaypoint.Y
-				} else {
-					nextX, nextY = toX, toY
+				// Determine whether to turn horizontal-then-vertical or vertical-then-horizontal
+				firstHorizontal := true
+				if i > 0 {
+					prevPrev := points[i-1]
+					if prevPrev.X == prevPoint.X {
+						firstHorizontal = false
+					} else if prevPrev.Y == prevPoint.Y {
+						firstHorizontal = true
+					}
+				} else if i+2 < len(points) {
+					nextNext := points[i+2]
+					if nextPoint.X == nextNext.X {
+						firstHorizontal = true
+					} else if nextPoint.Y == nextNext.Y {
+						firstHorizontal = false
+					}
 				}
-				c.drawCorner(canvas, waypoint.X, waypoint.Y, fromX, fromY, nextX, nextY, connection.FromID, connection.ToID)
-			}
 
-			prevX, prevY = waypoint.X, waypoint.Y
+				var cornerX, cornerY int
+				if firstHorizontal {
+					// Horizontal from prev -> corner, then vertical corner -> next
+					cornerX = nextPoint.X
+					cornerY = prevPoint.Y
+
+					if prevPoint.X < cornerX {
+						for x := prevPoint.X + 1; x < cornerX; x++ {
+							if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBox(x, prevPoint.Y, connection.FromID, connection.ToID) {
+								canvas[prevPoint.Y][x] = '─'
+							}
+						}
+					} else if prevPoint.X > cornerX {
+						for x := cornerX + 1; x < prevPoint.X; x++ {
+							if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBox(x, prevPoint.Y, connection.FromID, connection.ToID) {
+								canvas[prevPoint.Y][x] = '─'
+							}
+						}
+					}
+
+					if cornerY < nextPoint.Y {
+						for y := cornerY + 1; y < nextPoint.Y; y++ {
+							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, connection.FromID, connection.ToID) {
+								canvas[y][cornerX] = '│'
+							}
+						}
+					} else if cornerY > nextPoint.Y {
+						for y := nextPoint.Y + 1; y < cornerY; y++ {
+							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, connection.FromID, connection.ToID) {
+								canvas[y][cornerX] = '│'
+							}
+						}
+					}
+
+					var cornerChar rune
+					if prevPoint.X < cornerX && cornerY < nextPoint.Y {
+						cornerChar = '┐'
+					} else if prevPoint.X < cornerX && cornerY > nextPoint.Y {
+						cornerChar = '┘'
+					} else if prevPoint.X > cornerX && cornerY < nextPoint.Y {
+						cornerChar = '┌'
+					} else {
+						cornerChar = '└'
+					}
+					if c.isValidPos(canvas, cornerX, cornerY) {
+						canvas[cornerY][cornerX] = cornerChar
+					}
+				} else {
+					// Vertical from prev -> corner, then horizontal corner -> next
+					cornerX = prevPoint.X
+					cornerY = nextPoint.Y
+
+					if prevPoint.Y < cornerY {
+						for y := prevPoint.Y + 1; y < cornerY; y++ {
+							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, connection.FromID, connection.ToID) {
+								canvas[y][cornerX] = '│'
+							}
+						}
+					} else if prevPoint.Y > cornerY {
+						for y := cornerY + 1; y < prevPoint.Y; y++ {
+							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBox(cornerX, y, connection.FromID, connection.ToID) {
+								canvas[y][cornerX] = '│'
+							}
+						}
+					}
+
+					if cornerX < nextPoint.X {
+						for x := cornerX + 1; x < nextPoint.X; x++ {
+							if c.isValidPos(canvas, x, cornerY) && !c.isPointInBox(x, cornerY, connection.FromID, connection.ToID) {
+								canvas[cornerY][x] = '─'
+							}
+						}
+					} else if cornerX > nextPoint.X {
+						for x := nextPoint.X + 1; x < cornerX; x++ {
+							if c.isValidPos(canvas, x, cornerY) && !c.isPointInBox(x, cornerY, connection.FromID, connection.ToID) {
+								canvas[cornerY][x] = '─'
+							}
+						}
+					}
+
+					var cornerChar rune
+					if prevPoint.Y < cornerY && cornerX < nextPoint.X {
+						cornerChar = '└'
+					} else if prevPoint.Y < cornerY && cornerX > nextPoint.X {
+						cornerChar = '┘'
+					} else if prevPoint.Y > cornerY && cornerX < nextPoint.X {
+						cornerChar = '┌'
+					} else {
+						cornerChar = '┐'
+					}
+					if c.isValidPos(canvas, cornerX, cornerY) {
+						canvas[cornerY][cornerX] = cornerChar
+					}
+				}
+
+				if drawFromArrow && i == 0 {
+					var fromArrowX, fromArrowY int
+					var fromArrowChar rune
+					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
+						fromBox := c.boxes[connection.FromID]
+						fromX, fromY := connection.FromX, connection.FromY
+						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X - 1
+							fromArrowY = fromY
+							fromArrowChar = '▶'
+						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromBox.X + fromBox.Width
+							fromArrowY = fromY
+							fromArrowChar = '◀'
+						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y - 1
+							fromArrowChar = '▼'
+						} else {
+							fromArrowX = fromX
+							fromArrowY = fromBox.Y + fromBox.Height
+							fromArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBox(fromArrowX, fromArrowY, connection.FromID, connection.ToID) {
+						canvas[fromArrowY][fromArrowX] = fromArrowChar
+					}
+				}
+
+				if drawToArrow && i == len(points)-2 {
+					var toArrowX, toArrowY int
+					var toArrowChar rune
+					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
+						toBox := c.boxes[connection.ToID]
+						toX, toY := connection.ToX, connection.ToY
+						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X - 1
+							toArrowY = toY
+							toArrowChar = '▶'
+						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toBox.X + toBox.Width
+							toArrowY = toY
+							toArrowChar = '◀'
+						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
+							toArrowX = toX
+							toArrowY = toBox.Y - 1
+							toArrowChar = '▼'
+						} else {
+							toArrowX = toX
+							toArrowY = toBox.Y + toBox.Height
+							toArrowChar = '▲'
+						}
+					}
+					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBox(toArrowX, toArrowY, connection.FromID, connection.ToID) {
+						canvas[toArrowY][toArrowX] = toArrowChar
+					}
+				}
+			}
 		}
-		if len(connection.Waypoints) > 0 {
-			lastWaypoint := connection.Waypoints[len(connection.Waypoints)-1]
-			c.drawCorner(canvas, lastWaypoint.X, lastWaypoint.Y, prevX, prevY, toX, toY, connection.FromID, connection.ToID)
-		}
-		c.drawLineSegment(canvas, prevX, prevY, toX, toY, connection.FromID, connection.ToID, true)
 	} else {
-		c.drawLineSegment(canvas, fromX, fromY, toX, toY, connection.FromID, connection.ToID, true)
+		c.drawLineSegment(canvas, fromX, fromY, toX, toY, connection.FromID, connection.ToID, connection.ArrowFrom, connection.ArrowTo, false)
 	}
 }
 
@@ -1176,11 +1793,18 @@ func (c *Canvas) SaveToFile(filename string) error {
 			}
 			waypointsStr = "|" + strings.Join(waypointParts, ",")
 		}
-		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%d,%d%s\n",
+		arrowFlags := 0
+		if connection.ArrowFrom {
+			arrowFlags |= 1
+		}
+		if connection.ArrowTo {
+			arrowFlags |= 2
+		}
+		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d%s\n",
 			connection.FromID, connection.ToID,
 			connection.FromX, connection.FromY,
 			connection.ToX, connection.ToY,
-			len(connection.Waypoints), waypointsStr)
+			len(connection.Waypoints), arrowFlags, waypointsStr)
 	}
 
 	fmt.Fprintf(file, "TEXTS:%d\n", len(c.texts))
@@ -1297,6 +1921,11 @@ func (c *Canvas) LoadFromFile(filename string) error {
 			toY, _ := strconv.Atoi(mainParts[5])
 			waypointCount, _ := strconv.Atoi(mainParts[6])
 
+			arrowFlags := 2
+			if len(mainParts) >= 8 {
+				arrowFlags, _ = strconv.Atoi(mainParts[7])
+			}
+
 			var waypoints []struct{ X, Y int }
 			if len(parts) > 1 && waypointCount > 0 {
 				waypointParts := strings.Split(parts[1], ",")
@@ -1310,7 +1939,18 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				}
 			}
 
-			c.AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY, waypoints)
+			connection := Connection{
+				FromID:    fromID,
+				ToID:      toID,
+				FromX:     fromX,
+				FromY:     fromY,
+				ToX:       toX,
+				ToY:       toY,
+				Waypoints: waypoints,
+				ArrowFrom: (arrowFlags & 1) != 0,
+				ArrowTo:   (arrowFlags & 2) != 0,
+			}
+			c.connections = append(c.connections, connection)
 		} else {
 			return fmt.Errorf("invalid connection format")
 		}

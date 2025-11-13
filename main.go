@@ -42,6 +42,7 @@ type model struct {
 	confirmAction       ConfirmAction
 	confirmBoxID        int
 	confirmTextID       int
+	confirmConnIdx      int
 	undoStack           []Action
 	redoStack           []Action
 	originalMoveX       int
@@ -85,6 +86,7 @@ type ConfirmAction int
 const (
 	ConfirmDeleteBox ConfirmAction = iota
 	ConfirmDeleteText
+	ConfirmDeleteConnection
 	ConfirmQuit
 )
 
@@ -103,6 +105,8 @@ const (
 	ActionResizeBox
 	ActionMoveBox
 	ActionAddConnection
+	ActionDeleteConnection
+	ActionCycleArrow
 )
 
 type AddBoxData struct {
@@ -191,6 +195,18 @@ func (m *model) undo() {
 	case ActionAddConnection:
 		data := action.Inverse.(AddConnectionData)
 		m.canvas.RemoveSpecificConnection(data.Connection)
+	case ActionDeleteConnection:
+		data := action.Inverse.(AddConnectionData)
+		m.canvas.RestoreConnection(data.Connection)
+	case ActionCycleArrow:
+		cycleData := action.Inverse.(struct {
+			ConnIdx int
+			OldConn Connection
+			NewConn Connection
+		})
+		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.canvas.connections) {
+			m.canvas.connections[cycleData.ConnIdx] = cycleData.OldConn
+		}
 	}
 
 	m.redoStack = append(m.redoStack, action)
@@ -224,6 +240,18 @@ func (m *model) redo() {
 	case ActionAddConnection:
 		data := action.Data.(AddConnectionData)
 		m.canvas.RestoreConnection(data.Connection)
+	case ActionDeleteConnection:
+		data := action.Data.(AddConnectionData)
+		m.canvas.RemoveSpecificConnection(data.Connection)
+	case ActionCycleArrow:
+		cycleData := action.Data.(struct {
+			ConnIdx int
+			OldConn Connection
+			NewConn Connection
+		})
+		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.canvas.connections) {
+			m.canvas.connections[cycleData.ConnIdx] = cycleData.NewConn
+		}
 	}
 
 	m.undoStack = append(m.undoStack, action)
@@ -427,6 +455,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editCursorPos = len(m.editText)
 				}
 				return m, nil
+			case "tab":
+				lineConnIdx, _, _ := m.canvas.findNearestPointOnConnection(m.cursorX, m.cursorY)
+				if lineConnIdx != -1 {
+					oldConn := m.canvas.connections[lineConnIdx]
+					m.canvas.CycleConnectionArrowState(lineConnIdx)
+					newConn := m.canvas.connections[lineConnIdx]
+					cycleData := struct {
+						ConnIdx int
+						OldConn Connection
+						NewConn Connection
+					}{lineConnIdx, oldConn, newConn}
+					m.recordAction(ActionCycleArrow, cycleData, cycleData)
+					m.successMessage = ""
+				}
+				return m, nil
 			case "a":
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
 				lineConnIdx, lineX, lineY := m.canvas.findNearestPointOnConnection(m.cursorX, m.cursorY)
@@ -498,17 +541,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "d":
-				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
-				textID := m.canvas.GetTextAt(m.cursorX, m.cursorY)
+				lineConnIdx, _, _ := m.canvas.findNearestPointOnConnection(m.cursorX, m.cursorY)
+				if lineConnIdx != -1 {
+					m.mode = ModeConfirm
+					m.confirmAction = ConfirmDeleteConnection
+					m.confirmConnIdx = lineConnIdx
+				} else {
+					boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
+					textID := m.canvas.GetTextAt(m.cursorX, m.cursorY)
 
-				if boxID != -1 {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmDeleteBox
-					m.confirmBoxID = boxID
-				} else if textID != -1 {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmDeleteText
-					m.confirmTextID = textID
+					if boxID != -1 {
+						m.mode = ModeConfirm
+						m.confirmAction = ConfirmDeleteBox
+						m.confirmBoxID = boxID
+					} else if textID != -1 {
+						m.mode = ModeConfirm
+						m.confirmAction = ConfirmDeleteText
+						m.confirmTextID = textID
+					}
 				}
 				return m, nil
 			case "s":
@@ -937,6 +987,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// TODO: Add undo support for text deletion
 					m.canvas.DeleteText(m.confirmTextID)
 					m.ensureCursorInBounds()
+				case ConfirmDeleteConnection:
+					if m.confirmConnIdx >= 0 && m.confirmConnIdx < len(m.canvas.connections) {
+						conn := m.canvas.connections[m.confirmConnIdx]
+						deleteData := AddConnectionData{FromID: conn.FromID, ToID: conn.ToID, Connection: conn}
+						m.canvas.RemoveSpecificConnection(conn)
+						m.recordAction(ActionDeleteConnection, deleteData, deleteData)
+						m.successMessage = ""
+					}
+					m.mode = ModeNormal
+					return m, nil
 				case ConfirmQuit:
 					return m, tea.Quit
 				}
@@ -1079,6 +1139,8 @@ func (m model) View() string {
 			message = "Delete this box? (y/n)"
 		case ConfirmDeleteText:
 			message = "Delete this text? (y/n)"
+		case ConfirmDeleteConnection:
+			message = "Delete this connection? (y/n)"
 		case ConfirmQuit:
 			message = "Quit Flerm? (y/n)"
 		}
