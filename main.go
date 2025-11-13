@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +31,7 @@ type model struct {
 	helpScroll          int
 	selectedBox         int
 	editText            string
+	editCursorPos       int
 	connectionFrom      int
 	connectionFromX     int
 	connectionFromY     int
@@ -49,7 +51,9 @@ type model struct {
 	textInputX          int
 	textInputY          int
 	textInputText       string
+	textInputCursorPos  int
 	errorMessage        string
+	successMessage      string
 	fromStartup         bool
 	clipboard           *Box
 }
@@ -382,6 +386,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				addData := AddBoxData{X: m.cursorX, Y: m.cursorY, Text: "Box", ID: boxID}
 				deleteData := DeleteBoxData{ID: boxID, Connections: nil}
 				m.recordAction(ActionAddBox, addData, deleteData)
+				m.successMessage = ""
 				m.ensureCursorInBounds()
 				return m, nil
 			case "t":
@@ -389,6 +394,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInputX = m.cursorX
 				m.textInputY = m.cursorY
 				m.textInputText = ""
+				m.textInputCursorPos = 0
 				return m, nil
 			case "r":
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
@@ -418,6 +424,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedBox = boxID
 					m.mode = ModeEditing
 					m.editText = m.canvas.GetBoxText(boxID)
+					m.editCursorPos = len(m.editText)
 				}
 				return m, nil
 			case "a":
@@ -456,6 +463,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
 						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
+						m.successMessage = ""
 						m.connectionFrom = -1
 						m.connectionFromLine = -1
 						m.connectionFromX = 0
@@ -478,6 +486,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
 						inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
 						m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
+						m.successMessage = ""
 						m.connectionFrom = -1
 						m.connectionFromLine = -1
 						m.connectionFromX = 0
@@ -507,6 +516,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fileOp = FileOpSave
 				m.filename = "flowchart"
 				m.errorMessage = ""
+				m.successMessage = ""
 				m.fromStartup = false
 				return m, nil
 			case "o":
@@ -514,6 +524,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fileOp = FileOpOpen
 				m.filename = "flowchart"
 				m.errorMessage = ""
+				m.successMessage = ""
 				m.fromStartup = false
 				return m, nil
 			case "x":
@@ -521,13 +532,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fileOp = FileOpSavePNG
 				m.filename = "flowchart"
 				m.errorMessage = ""
+				m.successMessage = ""
 				m.fromStartup = false
 				return m, nil
 			case "u":
 				m.undo()
+				m.successMessage = ""
 				return m, nil
 			case "U":
 				m.redo()
+				m.successMessage = ""
 				return m, nil
 			case "c":
 				boxID := m.canvas.GetBoxAt(m.cursorX, m.cursorY)
@@ -578,6 +592,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.Type == tea.KeyEscape:
 				m.mode = ModeNormal
 				m.editText = ""
+				m.editCursorPos = 0
 				m.selectedBox = -1
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
@@ -590,20 +605,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = ModeNormal
 				m.editText = ""
+				m.editCursorPos = 0
 				m.selectedBox = -1
 				return m, nil
+			case msg.String() == "left":
+				if m.editCursorPos > 0 {
+					m.editCursorPos--
+				}
+				return m, nil
+			case msg.String() == "right":
+				if m.editCursorPos < len(m.editText) {
+					m.editCursorPos++
+				}
+				return m, nil
 			case msg.Type == tea.KeyEnter:
-				m.editText += "\n"
+				m.editText = m.editText[:m.editCursorPos] + "\n" + m.editText[m.editCursorPos:]
+				m.editCursorPos++
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
-				if len(m.editText) > 0 {
-					m.editText = m.editText[:len(m.editText)-1]
+				if m.editCursorPos > 0 {
+					m.editText = m.editText[:m.editCursorPos-1] + m.editText[m.editCursorPos:]
+					m.editCursorPos--
+				}
+				return m, nil
+			case msg.Type == tea.KeyDelete:
+				if m.editCursorPos < len(m.editText) {
+					m.editText = m.editText[:m.editCursorPos] + m.editText[m.editCursorPos+1:]
 				}
 				return m, nil
 			default:
 				keyStr := msg.String()
 				if len(keyStr) == 1 {
-					m.editText += keyStr
+					m.editText = m.editText[:m.editCursorPos] + keyStr + m.editText[m.editCursorPos:]
+					m.editCursorPos++
 				}
 				return m, nil
 			}
@@ -613,6 +647,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.Type == tea.KeyEscape:
 				m.mode = ModeNormal
 				m.textInputText = ""
+				m.textInputCursorPos = 0
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
 				if m.textInputText != "" {
@@ -620,19 +655,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = ModeNormal
 				m.textInputText = ""
+				m.textInputCursorPos = 0
+				return m, nil
+			case msg.String() == "left":
+				if m.textInputCursorPos > 0 {
+					m.textInputCursorPos--
+				}
+				return m, nil
+			case msg.String() == "right":
+				if m.textInputCursorPos < len(m.textInputText) {
+					m.textInputCursorPos++
+				}
 				return m, nil
 			case msg.Type == tea.KeyEnter:
-				m.textInputText += "\n"
+				m.textInputText = m.textInputText[:m.textInputCursorPos] + "\n" + m.textInputText[m.textInputCursorPos:]
+				m.textInputCursorPos++
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
-				if len(m.textInputText) > 0 {
-					m.textInputText = m.textInputText[:len(m.textInputText)-1]
+				if m.textInputCursorPos > 0 {
+					m.textInputText = m.textInputText[:m.textInputCursorPos-1] + m.textInputText[m.textInputCursorPos:]
+					m.textInputCursorPos--
+				}
+				return m, nil
+			case msg.Type == tea.KeyDelete:
+				if m.textInputCursorPos < len(m.textInputText) {
+					m.textInputText = m.textInputText[:m.textInputCursorPos] + m.textInputText[m.textInputCursorPos+1:]
 				}
 				return m, nil
 			default:
 				keyStr := msg.String()
 				if len(keyStr) == 1 {
-					m.textInputText += keyStr
+					m.textInputText = m.textInputText[:m.textInputCursorPos] + keyStr + m.textInputText[m.textInputCursorPos:]
+					m.textInputCursorPos++
 				}
 				return m, nil
 			}
@@ -809,17 +863,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.fileOp == FileOpSave {
 						err := m.canvas.SaveToFile(filename)
 						if err != nil {
-							// Could show error in status, for now just ignore
+							m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
+							return m, nil
+						} else {
+							absPath, _ := filepath.Abs(filename)
+							m.successMessage = fmt.Sprintf("Saved to %s", absPath)
+							m.errorMessage = ""
 						}
 					} else {
 						err := m.canvas.LoadFromFile(filename)
 						if err != nil {
 							m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
-							// Stay in file input mode so user can try again or cancel
 							return m, nil
 						} else {
-							m.errorMessage = ""   // Clear any previous error
-							m.fromStartup = false // Clear startup flag on successful load
+							m.errorMessage = ""
+							m.fromStartup = false
 						}
 					}
 				case FileOpSavePNG:
@@ -828,7 +886,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					err := m.canvas.ExportToPNG(filename, 800, 600)
 					if err != nil {
-						// Could show error in status, for now just ignore
+						m.errorMessage = fmt.Sprintf("Error exporting PNG: %s", err.Error())
+						return m, nil
+					} else {
+						absPath, _ := filepath.Abs(filename)
+						m.successMessage = fmt.Sprintf("Exported to %s", absPath)
+						m.errorMessage = ""
 					}
 				}
 				m.mode = ModeNormal
@@ -971,13 +1034,25 @@ func (m model) View() string {
 	case ModeStartup:
 		statusLine = "Press 'n' for new flowchart, 'o' to open existing, or 'q' to quit"
 	case ModeEditing:
-		// Show text with visual newline indicators
 		displayText := strings.ReplaceAll(m.editText, "\n", "↵")
-		statusLine = fmt.Sprintf("Mode: EDIT | Text: %s | Enter=newline, Ctrl+S=save, Esc=cancel", displayText)
+		cursorPos := m.editCursorPos
+		if cursorPos > len(displayText) {
+			cursorPos = len(displayText)
+		}
+		beforeCursor := displayText[:cursorPos]
+		afterCursor := displayText[cursorPos:]
+		cursorDisplay := beforeCursor + "█" + afterCursor
+		statusLine = fmt.Sprintf("Mode: EDIT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
 	case ModeTextInput:
-		// Show text with visual newline indicators
 		displayText := strings.ReplaceAll(m.textInputText, "\n", "↵")
-		statusLine = fmt.Sprintf("Mode: TEXT | Text: %s | Enter=newline, Ctrl+S=save, Esc=cancel", displayText)
+		cursorPos := m.textInputCursorPos
+		if cursorPos > len(displayText) {
+			cursorPos = len(displayText)
+		}
+		beforeCursor := displayText[:cursorPos]
+		afterCursor := displayText[cursorPos:]
+		cursorDisplay := beforeCursor + "█" + afterCursor
+		statusLine = fmt.Sprintf("Mode: TEXT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
 	case ModeResize:
 		statusLine = fmt.Sprintf("Mode: RESIZE | Box %d | hjkl/arrows=resize, Enter=finish, Esc=cancel", m.selectedBox)
 	case ModeMove:
@@ -1018,9 +1093,12 @@ func (m model) View() string {
 		if m.selectedBox != -1 {
 			status += fmt.Sprintf(" | Selected: Box %d", m.selectedBox)
 		}
+		if m.successMessage != "" {
+			status += fmt.Sprintf(" | %s", m.successMessage)
+		}
 		if m.errorMessage != "" {
 			status += fmt.Sprintf(" | ERROR: %s", m.errorMessage)
-		} else {
+		} else if m.successMessage == "" {
 			status += " | ? for help | q to quit"
 		}
 		statusLine = status
