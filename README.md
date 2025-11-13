@@ -1,80 +1,20 @@
-# Flerm - Terminal Flowchart Editor
-
-A simple, terminal-based flowchart editor with support for boxes, connections, and text.
+# Fl(ow)(T)erm
+A super basic flowchart editor for your terminal.
 
 ## Installation
-
 ```bash
 go build -o flerm
 ```
 
-## Configuration
+## Usage
+```bash
+./flerm
+```
 
+## Configuration
 You can create a `.flermrc` configuration file in your home directory to customize Flerm's behavior.
 
-### Creating the Configuration File
-
-Create a file named `.flermrc` in your home directory:
-
-```bash
-touch ~/.flermrc
-```
-
-### Configuration Options
-
-Edit `~/.flermrc` with the following options (one per line, key=value format):
-
-#### `savedirectory` (or `save_directory`, `savedir`)
-
-Specifies the directory where all saved files (`.sav`, `.txt`, `.png`) will be stored.
-
-**Examples:**
-```
-savedirectory=~/Documents/flerm
-savedirectory=/path/to/my/flowcharts
-save_directory=~/flowcharts
-```
-
-- Supports `~` expansion for home directory
-- Supports both relative and absolute paths
-- If not specified, files are saved to the current working directory
-- The directory will be created automatically if it doesn't exist
-
-#### `startmenu` (or `start_menu`)
-
-Controls whether the start menu is shown when Flerm launches.
-
-**Values:**
-- `true` - Show start menu (default)
-- `false` - Skip start menu and open directly to a new chart
-
-**Example:**
-```
-startmenu=false
-```
-
-#### `confirmations` (or `confirm`)
-
-Controls whether confirmation prompts are shown for destructive actions.
-
-**Values:**
-- `true` - Show confirmations (default)
-- `false` - Skip confirmations and perform actions directly
-
-When disabled, the following actions will execute without confirmation:
-- Quitting the application (`q`/`Ctrl+C`)
-- Creating a new chart (`n`)
-- Deleting boxes, text, or connections (`d`)
-- Closing buffers (`x`)
-- Overwriting existing files
-
-**Example:**
-```
-confirmations=false
-```
-
 ### Example Configuration File
-
 ```bash
 # Flerm Configuration File
 # Comments start with #
@@ -89,20 +29,7 @@ startmenu=false
 confirmations=true
 ```
 
-### Notes
-
-- Lines starting with `#` are treated as comments
-- Configuration keys are case-insensitive
-- Multiple key name variations are supported (e.g., `savedirectory`, `save_directory`, `savedir`)
-- If the configuration file doesn't exist or contains errors, Flerm will use default values
-
-## Usage
-
-```bash
-./flerm
-```
-
-## Controls
+## Keymaps
 
 ### Navigation
 - `h/←/j/↓/k/↑/l/→` - Move cursor around the screen
@@ -147,30 +74,15 @@ confirmations=true
 
 ### File Operations
 - `s` - Save flowchart (prompts for filename, adds .sav if missing)
+- `S` - Export chart (prompts to choose PNG or Visual TXT format)
 - `o` - Open flowchart in current buffer (replaces current chart, shows file list)
 - `O` - Open flowchart in new buffer (creates new buffer, shows file list)
-- `S` - Export chart (prompts to choose PNG or Visual TXT format)
   - Press `p` to export as PNG image
   - Press `t` to export as Visual TXT file
-  - Filename defaults to the current buffer name
 
 **Note:** 
 - When opening files (o/O), a list of available .sav files is shown. Use ↑/↓ or k/j to navigate, or type a filename manually.
 - All file operations (save, open, export) respect the `savedirectory` setting in `~/.flermrc` if configured.
-
-### Editing Mode (after pressing 'e' on a box or text)
-- `Type` - Add text to box or text object
-- `Enter` - Add new line
-- `Backspace` - Delete last character
-- `Ctrl+S` - Save changes and return to normal mode
-- `Escape` - Cancel changes and return to normal mode
-
-### Text Mode (after pressing 't')
-- `Type` - Add plain text at cursor position
-- `Enter` - Add new line to text
-- `Backspace` - Delete last character
-- `Ctrl+S` - Save text and return to normal mode
-- `Escape` - Cancel and return to normal mode
 
 ### Buffer Operations
 - `{` - Switch to previous buffer
@@ -182,13 +94,12 @@ confirmations=true
 ### General
 - `u` - Undo last action
 - `U` - Redo last undone action
-- `Escape` - Clear selection/cancel current operation
+- `Esc` - Clear selection/cancel current operation
 - `?` - Toggle help screen
 - `q/Ctrl+C` - Quit application (shows confirmation)
 
 ## File Format
-
-Flowcharts are saved in a text format:
+Flowcharts are saved in a text (.sav) format:
 ```
 FLOWCHART
 BOXES:2
@@ -206,6 +117,5 @@ TEXTS:0
 - **TEXTS**: Format is `X,Y,Text` (optional section)
 
 ## Dependencies
-
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [gg](https://github.com/fogleman/gg) - 2D graphics library for PNG export
