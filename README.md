@@ -68,7 +68,10 @@ confirmations=true
 - `h/←/j/↓/k/↑/l/→` - Move cursor and leave colored trail 
 - `Shift+h/j/k/l` - Move cursor faster 
 - `Enter` - Highlight entire element at cursor position
-- `Esc` - Exit highlight mode 
+- `Esc` - Exit highlight mode
+<br>
+<img width="932" height="686" alt="image" src="https://github.com/user-attachments/assets/0e58f946-3017-4b73-80d5-531adabb4e19" />
+
 
 ### Resize Mode
 - `h/←/j/↓/k/↑/l/→` - Resize box
