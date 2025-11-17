@@ -61,6 +61,8 @@ var helpText = []string{
 	"  Space            Toggle highlight mode on/off",
 	"  Tab              Cycle through 8 highlight colors",
 	"  h/j/k/l          Move cursor and leave colored trail",
+	"  d    						Delete the highlight directly under the cursor",
+	"  D    						Delete all highlights from an element",
 	"  Enter            Highlight entire element at cursor (box, text, or connection)",
 	"  Esc              Exit highlight mode",
 	"",

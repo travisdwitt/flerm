@@ -67,6 +67,8 @@ confirmations=true
 - `Tab` - Cycle through 8 highlight colors (Gray, Red, Green, Yellow, Blue, Magenta, Cyan, White)
 - `h/←/j/↓/k/↑/l/→` - Move cursor and leave colored trail 
 - `Shift+h/j/k/l` - Move cursor faster 
+- `d` - remove hightlight from under the cursor
+- `D` - remove ALL highlight from the element under the cursor
 - `Enter` - Highlight entire element at cursor position
 - `Esc` - Exit highlight mode
 <br>
