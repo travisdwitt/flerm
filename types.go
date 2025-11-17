@@ -24,6 +24,7 @@ type model struct {
 	selectedText        int
 	editText            string
 	editCursorPos       int
+	originalEditText    string
 	connectionFrom      int
 	connectionFromX     int
 	connectionFromY     int
@@ -54,6 +55,8 @@ type model struct {
 	fromStartup         bool
 	clipboard           *Box
 	config              *Config
+	highlightMode       bool
+	selectedColor       int // 0-7 for 8 colors
 }
 
 type point struct {
@@ -132,5 +135,17 @@ type CycleArrowData struct {
 	ConnIdx int
 	OldConn Connection
 	NewConn Connection
+}
+
+type HighlightData struct {
+	Cells []HighlightCell // List of cells that were highlighted
+}
+
+type HighlightCell struct {
+	X         int
+	Y         int
+	Color     int
+	HadColor  bool // Whether this cell had a color before (for undo)
+	OldColor  int  // The previous color if it existed
 }
 

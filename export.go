@@ -43,7 +43,7 @@ func (m *model) exportVisualTXT(filename string) error {
 	}
 
 	// Render the canvas exactly as it appears (no selected box, no preview connection, no cursor)
-	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY)
+	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false)
 
 	// Write each line to the file
 	for _, line := range rendered {

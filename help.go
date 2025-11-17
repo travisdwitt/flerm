@@ -56,6 +56,14 @@ var helpText = []string{
 	"                   - Cycles through: no arrows → to arrow → from arrow → both arrows",
 	"                   Note: Sometimes the arrows flip around. Redrawing the line fixes it.",
 	"",
+	"Highlight Mode:",
+	"---------------",
+	"  Space            Toggle highlight mode on/off",
+	"  Tab              Cycle through 8 highlight colors",
+	"  h/j/k/l          Move cursor and leave colored trail",
+	"  Enter            Highlight entire element at cursor (box, text, or connection)",
+	"  Esc              Exit highlight mode",
+	"",
 	"File Operations:",
 	"----------------",
 	"  s                Save flowchart",
@@ -72,6 +80,7 @@ var helpText = []string{
 	"  x                Close current buffer",
 	"",
 	"General:",
+	"--------",
 	"  u                Undo last action",
 	"  U                Redo last undone action",
 	"  Esc           	Clear selection/cancel current operation",
@@ -80,4 +89,3 @@ var helpText = []string{
 	"",
 	"========== Thanks for trying Flerm! ==========",
 }
-

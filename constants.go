@@ -49,10 +49,12 @@ const (
 	ActionAddConnection
 	ActionDeleteConnection
 	ActionCycleArrow
+	ActionHighlight
 )
 
 const (
 	minBoxWidth  = 8
 	minBoxHeight = 3
+	numColors    = 8 // Number of highlight colors
 )
 

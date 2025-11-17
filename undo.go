@@ -47,6 +47,16 @@ func (m *model) undo() {
 		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
 			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.OldConn
 		}
+	case ActionHighlight:
+		data := action.Inverse.(HighlightData)
+		for _, cell := range data.Cells {
+			// Restore to previous state: if Color is -1, clear; otherwise restore the color
+			if cell.Color >= 0 {
+				m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
+			} else {
+				m.getCanvas().ClearHighlight(cell.X, cell.Y)
+			}
+		}
 	}
 
 	buf.redoStack = append(buf.redoStack, action)
@@ -94,6 +104,11 @@ func (m *model) redo() {
 		cycleData := action.Data.(CycleArrowData)
 		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
 			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.NewConn
+		}
+	case ActionHighlight:
+		data := action.Data.(HighlightData)
+		for _, cell := range data.Cells {
+			m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
 		}
 	}
 

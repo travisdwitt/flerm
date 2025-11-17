@@ -109,6 +109,8 @@ func initialModel() model {
 		connectionFrom:     -1,
 		connectionFromLine:  -1,
 		config:              config,
+		highlightMode:       false,
+		selectedColor:       0,
 	}
 }
 
@@ -268,6 +270,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ModeNormal:
 			if msg.Type == tea.KeyEscape {
 				m.zPanMode = false
+				m.highlightMode = false
 				m.connectionFrom = -1
 				m.connectionFromLine = -1
 				m.connectionFromX = 0
@@ -436,12 +439,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedText = -1
 					m.mode = ModeEditing
 					m.editText = m.getCanvas().GetBoxText(boxID)
+					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
 				} else if textID != -1 {
 					m.selectedText = textID
 					m.selectedBox = -1
 					m.mode = ModeEditing
 					m.editText = m.getCanvas().GetTextText(textID)
+					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
 				}
 				return m, nil
@@ -610,12 +615,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Auto-fill filename from buffer if it exists
 				buf := m.getCurrentBuffer()
 				if buf != nil && buf.filename != "" {
+					// Extract just the base filename (without directory path)
+					baseName := filepath.Base(buf.filename)
 					// Remove .sav extension for display
-					filename := buf.filename
-					if strings.HasSuffix(strings.ToLower(filename), ".sav") {
-						filename = filename[:len(filename)-4]
+					if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
+						baseName = baseName[:len(baseName)-4]
 					}
-					m.filename = filename
+					m.filename = baseName
 				} else {
 					m.filename = ""
 				}
@@ -698,6 +704,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.successMessage = ""
 				return m, nil
 			case "c":
+				// Copy box
 				buf := m.getCurrentBuffer()
 				panX, panY := 0, 0
 				if buf != nil {
@@ -747,6 +754,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "escape":
 				m.zPanMode = false
+				m.highlightMode = false
 				m.connectionFrom = -1
 				m.connectionFromLine = -1
 				m.connectionFromX = 0
@@ -754,33 +762,124 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.connectionWaypoints = nil
 				m.selectedBox = -1
 				return m, nil
+			case "tab":
+				// Cycle through colors
+				m.selectedColor = (m.selectedColor + 1) % numColors
+				return m, nil
+			case " ":
+				// Toggle highlight mode
+				m.highlightMode = !m.highlightMode
+				return m, nil
+			case "enter":
+				// In highlight mode, highlight entire element at cursor
+				if m.highlightMode {
+					buf := m.getCurrentBuffer()
+					panX, panY := 0, 0
+					if buf != nil {
+						panX, panY = buf.panX, buf.panY
+					}
+					worldX := m.cursorX + panX
+					worldY := m.cursorY + panY
+					
+					// Check what's at the cursor position
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					textID := m.getCanvas().GetTextAt(worldX, worldY)
+					lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
+					
+					highlightedCells := make([]HighlightCell, 0)
+					
+			// Helper function to add a cell to the highlight list
+			addHighlightCell := func(x, y int) {
+				oldColor := m.getCanvas().GetHighlight(x, y)
+				hadColor := (oldColor != -1)
+				m.getCanvas().SetHighlight(x, y, m.selectedColor)
+				highlightedCells = append(highlightedCells, HighlightCell{
+					X:        x,
+					Y:        y,
+					Color:    m.selectedColor,
+					HadColor: hadColor,
+					OldColor: oldColor,
+				})
+			}
+					
+					// Highlight based on what's at cursor
+					if boxID != -1 {
+						// Highlight entire box
+						cells := m.getCanvas().GetBoxCells(boxID)
+						for _, cell := range cells {
+							addHighlightCell(cell.X, cell.Y)
+						}
+					} else if textID != -1 {
+						// Highlight entire text
+						cells := m.getCanvas().GetTextCells(textID)
+						for _, cell := range cells {
+							addHighlightCell(cell.X, cell.Y)
+						}
+					} else if lineConnIdx != -1 {
+						// Highlight entire connection
+						cells := m.getCanvas().GetConnectionCells(lineConnIdx)
+						for _, cell := range cells {
+							addHighlightCell(cell.X, cell.Y)
+						}
+					}
+					
+					// Record the highlight action for undo
+					if len(highlightedCells) > 0 {
+						// Create inverse data (restore previous state)
+						inverseCells := make([]HighlightCell, len(highlightedCells))
+						for i, cell := range highlightedCells {
+							oldColorForInverse := cell.OldColor
+							if oldColorForInverse < 0 {
+								oldColorForInverse = -1
+							}
+							inverseCells[i] = HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    oldColorForInverse,
+								HadColor: cell.HadColor,
+								OldColor: cell.Color,
+							}
+						}
+						
+						highlightData := HighlightData{Cells: highlightedCells}
+						inverseData := HighlightData{Cells: inverseCells}
+						m.recordAction(ActionHighlight, highlightData, inverseData)
+					}
+				}
+				return m, nil
 			}
 
 		case ModeEditing:
 			switch {
 			case msg.Type == tea.KeyEscape:
+				// Restore original text
+				if m.selectedBox != -1 {
+					m.getCanvas().SetBoxText(m.selectedBox, m.originalEditText)
+				} else if m.selectedText != -1 {
+					m.getCanvas().SetTextText(m.selectedText, m.originalEditText)
+				}
 				m.mode = ModeNormal
 				m.editText = ""
+				m.originalEditText = ""
 				m.editCursorPos = 0
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
 				if m.selectedBox != -1 {
-					oldText := m.getCanvas().GetBoxText(m.selectedBox)
-					m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-					editData := EditBoxData{ID: m.selectedBox, NewText: m.editText, OldText: oldText}
-					inverseData := EditBoxData{ID: m.selectedBox, NewText: oldText, OldText: m.editText}
+					// Box text is already updated in real-time, just record the action
+					editData := EditBoxData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText}
+					inverseData := EditBoxData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText}
 					m.recordAction(ActionEditBox, editData, inverseData)
 				} else if m.selectedText != -1 {
-					oldText := m.getCanvas().GetTextText(m.selectedText)
-					m.getCanvas().SetTextText(m.selectedText, m.editText)
-					editData := EditTextData{ID: m.selectedText, NewText: m.editText, OldText: oldText}
-					inverseData := EditTextData{ID: m.selectedText, NewText: oldText, OldText: m.editText}
+					// Text is already updated in real-time, just record the action
+					editData := EditTextData{ID: m.selectedText, NewText: m.editText, OldText: m.originalEditText}
+					inverseData := EditTextData{ID: m.selectedText, NewText: m.originalEditText, OldText: m.editText}
 					m.recordAction(ActionEditText, editData, inverseData)
 				}
 				m.mode = ModeNormal
 				m.editText = ""
+				m.originalEditText = ""
 				m.editCursorPos = 0
 				m.selectedBox = -1
 				m.selectedText = -1
@@ -798,16 +897,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.Type == tea.KeyEnter:
 				m.editText = m.editText[:m.editCursorPos] + "\n" + m.editText[m.editCursorPos:]
 				m.editCursorPos++
+				// Update box/text in real-time
+				if m.selectedBox != -1 {
+					m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+				} else if m.selectedText != -1 {
+					m.getCanvas().SetTextText(m.selectedText, m.editText)
+				}
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
 				if m.editCursorPos > 0 {
 					m.editText = m.editText[:m.editCursorPos-1] + m.editText[m.editCursorPos:]
 					m.editCursorPos--
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
 				}
 				return m, nil
 			case msg.Type == tea.KeyDelete:
 				if m.editCursorPos < len(m.editText) {
 					m.editText = m.editText[:m.editCursorPos] + m.editText[m.editCursorPos+1:]
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
 				}
 				return m, nil
 			default:
@@ -815,6 +932,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(keyStr) == 1 {
 					m.editText = m.editText[:m.editCursorPos] + keyStr + m.editText[m.editCursorPos:]
 					m.editCursorPos++
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
 				}
 				return m, nil
 			}
@@ -1575,38 +1698,29 @@ func (m model) View() string {
 	if buf != nil {
 		panX, panY = buf.panX, buf.panY
 	}
-	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY)
-
 	// Ensure cursor is in bounds before rendering
 	cursorX := m.cursorX
 	cursorY := m.cursorY
 
 	// Validate cursor position against actual canvas size
-	if cursorY >= len(canvas) {
-		cursorY = len(canvas) - 1
+	// Note: We validate against render dimensions, not canvas size
+	if cursorY >= renderHeight {
+		cursorY = renderHeight - 1
 	}
 	if cursorY < 0 {
 		cursorY = 0
 	}
-	if cursorY < len(canvas) && cursorX >= len(canvas[cursorY]) {
-		if len(canvas[cursorY]) > 0 {
-			cursorX = len(canvas[cursorY]) - 1
-		} else {
-			cursorX = 0
-		}
+	if cursorX >= renderWidth {
+		cursorX = renderWidth - 1
 	}
 	if cursorX < 0 {
 		cursorX = 0
 	}
 
-	// Add cursor (except in startup mode and file input mode)
-	if m.mode != ModeStartup && m.mode != ModeFileInput && cursorY < len(canvas) && cursorX < len(canvas[cursorY]) {
-		line := []rune(canvas[cursorY])
-		if cursorX < len(line) {
-			line[cursorX] = '█'
-			canvas[cursorY] = string(line)
-		}
-	}
+	// Determine if we should show the cursor
+	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput)
+
+	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor)
 
 	// Build result with proper newlines
 	var result strings.Builder
@@ -1790,7 +1904,14 @@ func (m model) View() string {
 		if m.zPanMode {
 			modeStr = "PAN"
 		}
+		if m.highlightMode {
+			modeStr = "HIGHLIGHT"
+		}
+		colorNames := []string{"Gray", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"}
 		status := fmt.Sprintf("Mode: %s | Cursor: (%d,%d)", modeStr, m.cursorX, m.cursorY)
+		if m.highlightMode {
+			status += fmt.Sprintf(" | Color: %s (%d/8)", colorNames[m.selectedColor], m.selectedColor+1)
+		}
 		if m.connectionFrom != -1 {
 			status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
 		} else if m.connectionFromLine != -1 {
