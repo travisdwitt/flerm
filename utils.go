@@ -29,13 +29,17 @@ func (m *model) worldCoords() (int, int) {
 }
 
 func (m *model) addNewBuffer(canvas *Canvas, filename string) {
+	m.addNewBufferWithPan(canvas, filename, 0, 0)
+}
+
+func (m *model) addNewBufferWithPan(canvas *Canvas, filename string, panX, panY int) {
 	buffer := Buffer{
 		canvas:    canvas,
 		undoStack: []Action{},
 		redoStack: []Action{},
 		filename:  filename,
-		panX:      0,
-		panY:      0,
+		panX:      panX,
+		panY:      panY,
 	}
 	m.buffers = append(m.buffers, buffer)
 	m.currentBufferIndex = len(m.buffers) - 1

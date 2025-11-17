@@ -834,18 +834,19 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	}
 
 	// Draw preview connection if in progress
+	// Note: previewFromX, previewFromY, previewToX, previewToY, and waypoints are in world coordinates
 	if previewFromX >= 0 && previewFromY >= 0 {
 		previewConnection := Connection{
 			FromID:    -1,
 			ToID:      -1,
-			FromX:     previewFromX - panX,
-			FromY:     previewFromY - panY,
-			ToX:       previewToX - panX,
-			ToY:       previewToY - panY,
+			FromX:     previewFromX, // World coordinates
+			FromY:     previewFromY, // World coordinates
+			ToX:       previewToX,   // World coordinates
+			ToY:       previewToY,   // World coordinates
 			Waypoints: make([]point, len(previewWaypoints)),
 		}
 		for i, wp := range previewWaypoints {
-			previewConnection.Waypoints[i] = point{X: wp.X - panX, Y: wp.Y - panY}
+			previewConnection.Waypoints[i] = point{X: wp.X, Y: wp.Y} // World coordinates
 		}
 		c.drawConnectionWithPan(canvas, previewConnection, panX, panY)
 	}
@@ -2087,6 +2088,52 @@ func (c *Canvas) GetConnectionCells(connIdx int) []point {
 	return cells
 }
 
+// Get all adjacent highlighted cells of the same color (flood fill)
+func (c *Canvas) GetAdjacentHighlightsOfColor(startX, startY int, targetColor int) []point {
+	if targetColor < 0 || targetColor >= numColors {
+		return nil
+	}
+
+	visited := make(map[string]bool)
+	queue := []point{{startX, startY}}
+	result := make([]point, 0)
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		key := fmt.Sprintf("%d,%d", current.X, current.Y)
+		if visited[key] {
+			continue
+		}
+
+		// Check if this cell has the target color
+		if c.GetHighlight(current.X, current.Y) != targetColor {
+			continue
+		}
+
+		visited[key] = true
+		result = append(result, current)
+
+		// Check all 4 adjacent cells (up, down, left, right)
+		adjacent := []point{
+			{current.X, current.Y - 1}, // up
+			{current.X, current.Y + 1}, // down
+			{current.X - 1, current.Y}, // left
+			{current.X + 1, current.Y}, // right
+		}
+
+		for _, adj := range adjacent {
+			adjKey := fmt.Sprintf("%d,%d", adj.X, adj.Y)
+			if !visited[adjKey] {
+				queue = append(queue, adj)
+			}
+		}
+	}
+
+	return result
+}
+
 func (c *Canvas) SaveToFile(filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
@@ -2138,6 +2185,24 @@ func (c *Canvas) SaveToFile(filename string) error {
 		fmt.Fprintf(file, "%d,%d,%d\n", x, y, colorIndex)
 	}
 
+	return nil
+}
+
+// SaveToFileWithPan saves the canvas and pan position to a file
+func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
+	err := c.SaveToFile(filename)
+	if err != nil {
+		return err
+	}
+
+	// Append pan position to the file
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
 	return nil
 }
 
@@ -2344,6 +2409,41 @@ func (c *Canvas) LoadFromFile(filename string) error {
 	}
 
 	return scanner.Err()
+}
+
+// LoadFromFileWithPan loads the canvas and pan position from a file
+// Returns the canvas, panX, panY, and any error
+func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
+	err := c.LoadFromFile(filename)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Try to read pan position from file
+	file, err := os.Open(filename)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	panX, panY := 0, 0
+
+	// Scan through file to find PAN line
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PAN:") {
+			panStr := strings.TrimPrefix(line, "PAN:")
+			parts := strings.Split(panStr, ",")
+			if len(parts) >= 2 {
+				panX, _ = strconv.Atoi(parts[0])
+				panY, _ = strconv.Atoi(parts[1])
+			}
+			break
+		}
+	}
+
+	return panX, panY, scanner.Err()
 }
 
 func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, panX, panY int) error {

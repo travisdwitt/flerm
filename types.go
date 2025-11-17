@@ -40,6 +40,8 @@ type model struct {
 	confirmBoxID        int
 	confirmTextID       int
 	confirmConnIdx      int
+	confirmHighlightX  int
+	confirmHighlightY  int
 	originalMoveX       int
 	originalMoveY       int
 	originalTextMoveX   int

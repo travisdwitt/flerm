@@ -554,6 +554,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				worldX := m.cursorX + panX
 				worldY := m.cursorY + panY
+				
+				// First check if cursor is on a highlighted cell
+				highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
+				if highlightColor != -1 {
+					// Remove highlight directly (no confirmation)
+					oldColor := highlightColor
+					m.getCanvas().ClearHighlight(worldX, worldY)
+					// Record for undo
+					highlightData := HighlightData{
+						Cells: []HighlightCell{
+							{
+								X:        worldX,
+								Y:        worldY,
+								Color:    -1, // Removed
+								HadColor: true,
+								OldColor: oldColor,
+							},
+						},
+					}
+					inverseData := HighlightData{
+						Cells: []HighlightCell{
+							{
+								X:        worldX,
+								Y:        worldY,
+								Color:    oldColor, // Restore
+								HadColor: true,
+								OldColor: -1,
+							},
+						},
+					}
+					m.recordAction(ActionHighlight, highlightData, inverseData)
+					return m, nil
+				}
+				
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 				if lineConnIdx != -1 {
 					if m.config != nil && m.config.Confirmations {
@@ -607,6 +641,108 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().DeleteText(textID)
 						m.ensureCursorInBounds()
 					}
+				}
+				return m, nil
+			case "D":
+				// Remove all highlights from element, or all adjacent highlights of same color
+				buf := m.getCurrentBuffer()
+				panX, panY := 0, 0
+				if buf != nil {
+					panX, panY = buf.panX, buf.panY
+				}
+				worldX := m.cursorX + panX
+				worldY := m.cursorY + panY
+				
+				highlightedCells := make([]HighlightCell, 0)
+				
+				// Check if cursor is on an element (box, text, or connection)
+				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+				textID := m.getCanvas().GetTextAt(worldX, worldY)
+				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
+				
+				if boxID != -1 {
+					// Remove all highlights from the box
+					cells := m.getCanvas().GetBoxCells(boxID)
+					for _, cell := range cells {
+						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
+							highlightedCells = append(highlightedCells, HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    -1, // Removed
+								HadColor: true,
+								OldColor: color,
+							})
+							m.getCanvas().ClearHighlight(cell.X, cell.Y)
+						}
+					}
+				} else if textID != -1 {
+					// Remove all highlights from the text
+					cells := m.getCanvas().GetTextCells(textID)
+					for _, cell := range cells {
+						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
+							highlightedCells = append(highlightedCells, HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    -1, // Removed
+								HadColor: true,
+								OldColor: color,
+							})
+							m.getCanvas().ClearHighlight(cell.X, cell.Y)
+						}
+					}
+				} else if lineConnIdx != -1 {
+					// Remove all highlights from the connection
+					cells := m.getCanvas().GetConnectionCells(lineConnIdx)
+					for _, cell := range cells {
+						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
+							highlightedCells = append(highlightedCells, HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    -1, // Removed
+								HadColor: true,
+								OldColor: color,
+							})
+							m.getCanvas().ClearHighlight(cell.X, cell.Y)
+						}
+					}
+				} else {
+					// Not on an element - find all adjacent highlights of the same color
+					highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
+					if highlightColor != -1 {
+						adjacentCells := m.getCanvas().GetAdjacentHighlightsOfColor(worldX, worldY, highlightColor)
+						for _, cell := range adjacentCells {
+							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+							if oldColor != -1 {
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X:        cell.X,
+									Y:        cell.Y,
+									Color:    -1, // Removed
+									HadColor: true,
+									OldColor: oldColor,
+								})
+								m.getCanvas().ClearHighlight(cell.X, cell.Y)
+							}
+						}
+					}
+				}
+				
+				// Record the action for undo
+				if len(highlightedCells) > 0 {
+					// Create inverse data (restore previous state)
+					inverseCells := make([]HighlightCell, len(highlightedCells))
+					for i, cell := range highlightedCells {
+						inverseCells[i] = HighlightCell{
+							X:        cell.X,
+							Y:        cell.Y,
+							Color:    cell.OldColor, // Restore
+							HadColor: cell.HadColor,
+							OldColor: -1,
+						}
+					}
+					
+					highlightData := HighlightData{Cells: highlightedCells}
+					inverseData := HighlightData{Cells: inverseCells}
+					m.recordAction(ActionHighlight, highlightData, inverseData)
 				}
 				return m, nil
 			case "s":
@@ -1302,7 +1438,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Confirmations disabled, overwrite directly
 						}
 						// File doesn't exist or confirmations disabled, save directly
-						err := m.getCanvas().SaveToFile(savePath)
+						buf := m.getCurrentBuffer()
+					panX, panY := 0, 0
+					if buf != nil {
+						panX, panY = buf.panX, buf.panY
+					}
+					err := m.getCanvas().SaveToFileWithPan(savePath, panX, panY)
 						if err != nil {
 							m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
 							return m, nil
@@ -1332,27 +1473,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 						newCanvas := NewCanvas()
-						err := newCanvas.LoadFromFile(loadPath)
-						if err != nil {
-							m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
-							return m, nil
-						} else {
-							// Update buffer filename with the actual path used
-							if m.fromStartup {
-								// Replace startup buffer
-								m.buffers[0] = Buffer{
-									canvas:    newCanvas,
-									undoStack: []Action{},
-									redoStack: []Action{},
-									filename:  loadPath,
-									panX:      0,
-									panY:      0,
-								}
+					panX, panY, err := newCanvas.LoadFromFileWithPan(loadPath)
+					if err != nil {
+						m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
+						return m, nil
+					} else {
+						// Update buffer filename with the actual path used
+						if m.fromStartup {
+							// Replace startup buffer
+							m.buffers[0] = Buffer{
+								canvas:    newCanvas,
+								undoStack: []Action{},
+								redoStack: []Action{},
+								filename:  loadPath,
+								panX:      panX,
+								panY:      panY,
+							}
 								m.currentBufferIndex = 0
 								m.fromStartup = false
 							} else if m.openInNewBuffer {
 								// Add new buffer (capital O)
-								m.addNewBuffer(newCanvas, loadPath)
+								m.addNewBufferWithPan(newCanvas, loadPath, panX, panY)
 								m.openInNewBuffer = false
 							} else {
 								// Replace current buffer (lowercase o)
@@ -1360,6 +1501,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								if buf != nil {
 									buf.canvas = newCanvas
 									buf.filename = loadPath
+									buf.panX = panX
+									buf.panY = panY
 									buf.undoStack = []Action{}
 									buf.redoStack = []Action{}
 								}
@@ -1487,6 +1630,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.mode = ModeNormal
 					return m, nil
+				case ConfirmDeleteHighlight:
+					oldColor := m.getCanvas().GetHighlight(m.confirmHighlightX, m.confirmHighlightY)
+					if oldColor != -1 {
+						m.getCanvas().ClearHighlight(m.confirmHighlightX, m.confirmHighlightY)
+						// Record for undo
+						highlightData := HighlightData{
+							Cells: []HighlightCell{
+								{
+									X:        m.confirmHighlightX,
+									Y:        m.confirmHighlightY,
+									Color:    -1, // Removed
+									HadColor: true,
+									OldColor: oldColor,
+								},
+							},
+						}
+						inverseData := HighlightData{
+							Cells: []HighlightCell{
+								{
+									X:        m.confirmHighlightX,
+									Y:        m.confirmHighlightY,
+									Color:    oldColor, // Restore
+									HadColor: true,
+									OldColor: -1,
+								},
+							},
+						}
+						m.recordAction(ActionHighlight, highlightData, inverseData)
+					}
+					m.mode = ModeNormal
+					return m, nil
 				case ConfirmQuit:
 					return m, tea.Quit
 				case ConfirmNewChart:
@@ -1555,7 +1729,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						baseName := filepath.Base(filename)
 						filename = m.config.GetSavePath(baseName)
 					}
-					err := m.getCanvas().SaveToFile(filename)
+					buf := m.getCurrentBuffer()
+					panX, panY := 0, 0
+					if buf != nil {
+						panX, panY = buf.panX, buf.panY
+					}
+					err := m.getCanvas().SaveToFileWithPan(filename, panX, panY)
 					if err != nil {
 						m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
 						m.mode = ModeFileInput
@@ -1887,6 +2066,8 @@ func (m model) View() string {
 			message = "Delete this text? (y/n)"
 		case ConfirmDeleteConnection:
 			message = "Delete this connection? (y/n)"
+		case ConfirmDeleteHighlight:
+			message = "Remove highlight? (y/n)"
 		case ConfirmQuit:
 			message = "Quit Flerm? (y/n)"
 		case ConfirmNewChart:
