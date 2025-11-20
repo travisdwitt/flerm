@@ -725,6 +725,71 @@ func (c *Canvas) SetTextPosition(id int, x, y int) {
 	}
 }
 
+// MoveConnection moves all points of a connection (endpoints and waypoints) by the given delta
+func (c *Canvas) MoveConnection(connIdx int, deltaX, deltaY int) {
+	if connIdx < 0 || connIdx >= len(c.connections) {
+		return
+	}
+	conn := &c.connections[connIdx]
+	
+	// Move endpoints
+	conn.FromX += deltaX
+	conn.FromY += deltaY
+	conn.ToX += deltaX
+	conn.ToY += deltaY
+	
+	// Move waypoints
+	for i := range conn.Waypoints {
+		conn.Waypoints[i].X += deltaX
+		conn.Waypoints[i].Y += deltaY
+	}
+	
+	// Ensure coordinates don't go negative
+	if conn.FromX < 0 {
+		conn.FromX = 0
+	}
+	if conn.FromY < 0 {
+		conn.FromY = 0
+	}
+	if conn.ToX < 0 {
+		conn.ToX = 0
+	}
+	if conn.ToY < 0 {
+		conn.ToY = 0
+	}
+	for i := range conn.Waypoints {
+		if conn.Waypoints[i].X < 0 {
+			conn.Waypoints[i].X = 0
+		}
+		if conn.Waypoints[i].Y < 0 {
+			conn.Waypoints[i].Y = 0
+		}
+	}
+}
+
+// MoveConnectionWaypoints moves only the waypoints of a connection by the given delta
+// This is used when endpoints are already recalculated by MoveBox
+func (c *Canvas) MoveConnectionWaypoints(connIdx int, deltaX, deltaY int) {
+	if connIdx < 0 || connIdx >= len(c.connections) {
+		return
+	}
+	conn := &c.connections[connIdx]
+	
+	// Move only waypoints (endpoints are already updated by MoveBox)
+	for i := range conn.Waypoints {
+		conn.Waypoints[i].X += deltaX
+		conn.Waypoints[i].Y += deltaY
+		
+		// Ensure coordinates don't go negative
+		if conn.Waypoints[i].X < 0 {
+			conn.Waypoints[i].X = 0
+		}
+		if conn.Waypoints[i].Y < 0 {
+			conn.Waypoints[i].Y = 0
+		}
+	}
+}
+
 func (c *Canvas) SetBoxSize(id int, width, height int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
@@ -1990,6 +2055,48 @@ func (c *Canvas) GetHighlight(x, y int) int {
 func (c *Canvas) ClearHighlight(x, y int) {
 	key := fmt.Sprintf("%d,%d", x, y)
 	delete(c.highlights, key)
+}
+
+// MoveHighlight moves a highlight from one position to another
+func (c *Canvas) MoveHighlight(fromX, fromY, toX, toY int) {
+	fromKey := fmt.Sprintf("%d,%d", fromX, fromY)
+	if colorIndex, exists := c.highlights[fromKey]; exists {
+		// Remove from old position
+		delete(c.highlights, fromKey)
+		// Set at new position (only if new position is valid)
+		if toX >= 0 && toY >= 0 {
+			toKey := fmt.Sprintf("%d,%d", toX, toY)
+			c.highlights[toKey] = colorIndex
+		}
+	}
+}
+
+// MoveHighlightsInRegion moves all highlights in a rectangular region by the given delta
+func (c *Canvas) MoveHighlightsInRegion(minX, minY, maxX, maxY, deltaX, deltaY int) {
+	// Collect all highlights in the region
+	highlightsToMove := make(map[string]int)
+	for key, colorIndex := range c.highlights {
+		var x, y int
+		fmt.Sscanf(key, "%d,%d", &x, &y)
+		if x >= minX && x <= maxX && y >= minY && y <= maxY {
+			highlightsToMove[key] = colorIndex
+		}
+	}
+	
+	// Move each highlight
+	for key, colorIndex := range highlightsToMove {
+		var x, y int
+		fmt.Sscanf(key, "%d,%d", &x, &y)
+		// Remove from old position
+		delete(c.highlights, key)
+		// Set at new position
+		newX := x + deltaX
+		newY := y + deltaY
+		if newX >= 0 && newY >= 0 {
+			newKey := fmt.Sprintf("%d,%d", newX, newY)
+			c.highlights[newKey] = colorIndex
+		}
+	}
 }
 
 // Get all cells that make up a box

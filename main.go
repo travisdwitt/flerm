@@ -111,6 +111,14 @@ func initialModel() model {
 		config:              config,
 		highlightMode:       false,
 		selectedColor:       0,
+		selectionStartX:     -1,
+		selectionStartY:     -1,
+		selectedBoxes:       []int{},
+		selectedTexts:       []int{},
+		selectedConnections: []int{},
+		originalBoxPositions: make(map[int]point),
+		originalTextPositions: make(map[int]point),
+		originalConnections: make(map[int]Connection),
 	}
 }
 
@@ -191,6 +199,239 @@ func forceRefresh() tea.Msg {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Helper function to move highlights on selected objects
+	// This moves highlights from the original positions to the new positions
+	// We use the cumulative delta to move highlights from original to (original + cumulative)
+	moveHighlightsOnSelectedObjects := func(cumulativeDeltaX, cumulativeDeltaY int) {
+		// Move highlights on selected boxes (using original positions)
+		for _, boxID := range m.selectedBoxes {
+			originalPos, hasOriginal := m.originalBoxPositions[boxID]
+			if hasOriginal && boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+				currentBox := m.getCanvas().boxes[boxID]
+				// Get all cells in the box at original position
+				// Use current box size in case it was resized
+				for y := originalPos.Y; y < originalPos.Y+currentBox.Height; y++ {
+					for x := originalPos.X; x < originalPos.X+currentBox.Width; x++ {
+						// Check if there's a highlight at the original position
+						if m.getCanvas().GetHighlight(x, y) != -1 {
+							newX := x + cumulativeDeltaX
+							newY := y + cumulativeDeltaY
+							if newX >= 0 && newY >= 0 {
+								m.getCanvas().MoveHighlight(x, y, newX, newY)
+							} else {
+								// If new position is invalid, just clear the highlight
+								m.getCanvas().ClearHighlight(x, y)
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Move highlights on selected texts (using original positions)
+		for _, textID := range m.selectedTexts {
+			originalPos, hasOriginal := m.originalTextPositions[textID]
+			if hasOriginal && textID >= 0 && textID < len(m.getCanvas().texts) {
+				currentText := m.getCanvas().texts[textID]
+				// Get all cells in the text at original position
+				for lineIdx, line := range currentText.Lines {
+					lineY := originalPos.Y + lineIdx
+					for x := originalPos.X; x < originalPos.X+len(line); x++ {
+						// Check if there's a highlight at the original position
+						if m.getCanvas().GetHighlight(x, lineY) != -1 {
+							newX := x + cumulativeDeltaX
+							newY := lineY + cumulativeDeltaY
+							if newX >= 0 && newY >= 0 {
+								m.getCanvas().MoveHighlight(x, lineY, newX, newY)
+							} else {
+								// If new position is invalid, just clear the highlight
+								m.getCanvas().ClearHighlight(x, lineY)
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Move highlights on selected connections (using original positions)
+		for _, connIdx := range m.selectedConnections {
+			originalConn, hasOriginal := m.originalConnections[connIdx]
+			if hasOriginal && connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+				// Build path from original connection waypoints
+				points := []point{{originalConn.FromX, originalConn.FromY}}
+				points = append(points, originalConn.Waypoints...)
+				points = append(points, point{originalConn.ToX, originalConn.ToY})
+				
+				// Get all cells along the original connection path
+				for i := 0; i < len(points)-1; i++ {
+					from := points[i]
+					to := points[i+1]
+					
+					// Add cells along the line segment
+					if from.X == to.X {
+						// Vertical line
+						startY, endY := from.Y, to.Y
+						if startY > endY {
+							startY, endY = endY, startY
+						}
+						for y := startY; y <= endY; y++ {
+							if m.getCanvas().GetHighlight(from.X, y) != -1 {
+								newX := from.X + cumulativeDeltaX
+								newY := y + cumulativeDeltaY
+								if newX >= 0 && newY >= 0 {
+									m.getCanvas().MoveHighlight(from.X, y, newX, newY)
+								} else {
+									m.getCanvas().ClearHighlight(from.X, y)
+								}
+							}
+						}
+					} else if from.Y == to.Y {
+						// Horizontal line
+						startX, endX := from.X, to.X
+						if startX > endX {
+							startX, endX = endX, startX
+						}
+						for x := startX; x <= endX; x++ {
+							if m.getCanvas().GetHighlight(x, from.Y) != -1 {
+								newX := x + cumulativeDeltaX
+								newY := from.Y + cumulativeDeltaY
+								if newX >= 0 && newY >= 0 {
+									m.getCanvas().MoveHighlight(x, from.Y, newX, newY)
+								} else {
+									m.getCanvas().ClearHighlight(x, from.Y)
+								}
+							}
+						}
+					} else {
+						// Diagonal line - use L-shaped path
+						cornerX := to.X
+						cornerY := from.Y
+						
+						// Horizontal segment
+						startX, endX := from.X, cornerX
+						if startX > endX {
+							startX, endX = endX, startX
+						}
+						for x := startX; x <= endX; x++ {
+							if m.getCanvas().GetHighlight(x, from.Y) != -1 {
+								newX := x + cumulativeDeltaX
+								newY := from.Y + cumulativeDeltaY
+								if newX >= 0 && newY >= 0 {
+									m.getCanvas().MoveHighlight(x, from.Y, newX, newY)
+								} else {
+									m.getCanvas().ClearHighlight(x, from.Y)
+								}
+							}
+						}
+						
+						// Vertical segment
+						startY, endY := cornerY, to.Y
+						if startY > endY {
+							startY, endY = endY, startY
+						}
+						for y := startY; y <= endY; y++ {
+							if m.getCanvas().GetHighlight(cornerX, y) != -1 {
+								newX := cornerX + cumulativeDeltaX
+								newY := y + cumulativeDeltaY
+								if newX >= 0 && newY >= 0 {
+									m.getCanvas().MoveHighlight(cornerX, y, newX, newY)
+								} else {
+									m.getCanvas().ClearHighlight(cornerX, y)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Helper function to move contained connections as a unit
+	// After boxes are moved, we need to move connection points (endpoints and waypoints) by the same delta
+	moveContainedConnections := func(deltaX, deltaY int) {
+		// Calculate cumulative delta from first selected box's position (if boxes are selected)
+		// All boxes move by the same amount, so we can use any box to calculate the total movement
+		// If no boxes are selected, we'll use incremental delta and track cumulative movement
+		var cumulativeDeltaX, cumulativeDeltaY int
+		if len(m.selectedBoxes) > 0 {
+			boxID := m.selectedBoxes[0]
+			if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+				currentBox := m.getCanvas().boxes[boxID]
+				originalPos, hasOriginal := m.originalBoxPositions[boxID]
+				if hasOriginal {
+					cumulativeDeltaX = currentBox.X - originalPos.X
+					cumulativeDeltaY = currentBox.Y - originalPos.Y
+				}
+			}
+		} else {
+			// No boxes selected - for connections-only, we need to track cumulative movement
+			// Calculate from first connection's current position vs original, then add incremental
+			if len(m.selectedConnections) > 0 {
+				connIdx := m.selectedConnections[0]
+				if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+					conn := m.getCanvas().connections[connIdx]
+					originalConn, hasOriginal := m.originalConnections[connIdx]
+					if hasOriginal {
+						// Calculate cumulative movement from original position
+						cumulativeDeltaX = conn.FromX - originalConn.FromX
+						cumulativeDeltaY = conn.FromY - originalConn.FromY
+						// Add the incremental delta for this move
+						cumulativeDeltaX += deltaX
+						cumulativeDeltaY += deltaY
+					} else {
+						// No original stored (shouldn't happen, but handle it)
+						cumulativeDeltaX = deltaX
+						cumulativeDeltaY = deltaY
+					}
+				}
+			}
+		}
+		
+		// Move all connection points by the cumulative delta
+		for _, connIdx := range m.selectedConnections {
+			originalConn, hasOriginal := m.originalConnections[connIdx]
+			if hasOriginal && connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+				conn := &m.getCanvas().connections[connIdx]
+				// Restore original endpoints and move by cumulative delta
+				// This ensures the connection moves as a rigid unit
+				conn.FromX = originalConn.FromX + cumulativeDeltaX
+				conn.FromY = originalConn.FromY + cumulativeDeltaY
+				conn.ToX = originalConn.ToX + cumulativeDeltaX
+				conn.ToY = originalConn.ToY + cumulativeDeltaY
+				
+				// Move waypoints
+				if len(conn.Waypoints) == len(originalConn.Waypoints) {
+					for i := range conn.Waypoints {
+						conn.Waypoints[i].X = originalConn.Waypoints[i].X + cumulativeDeltaX
+						conn.Waypoints[i].Y = originalConn.Waypoints[i].Y + cumulativeDeltaY
+					}
+				}
+				
+				// Ensure coordinates don't go negative
+				if conn.FromX < 0 {
+					conn.FromX = 0
+				}
+				if conn.FromY < 0 {
+					conn.FromY = 0
+				}
+				if conn.ToX < 0 {
+					conn.ToX = 0
+				}
+				if conn.ToY < 0 {
+					conn.ToY = 0
+				}
+				for i := range conn.Waypoints {
+					if conn.Waypoints[i].X < 0 {
+						conn.Waypoints[i].X = 0
+					}
+					if conn.Waypoints[i].Y < 0 {
+						conn.Waypoints[i].Y = 0
+					}
+				}
+			}
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -423,6 +664,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.mode = ModeMove
 				}
+				return m, nil
+			case "M":
+				// Enter multi-select mode
+				m.zPanMode = false
+				buf := m.getCurrentBuffer()
+				panX, panY := 0, 0
+				if buf != nil {
+					panX, panY = buf.panX, buf.panY
+				}
+				// Set selection start to current cursor position (in world coordinates)
+				m.selectionStartX = m.cursorX + panX
+				m.selectionStartY = m.cursorY + panY
+				m.selectedBoxes = []int{}
+				m.selectedTexts = []int{}
+				m.mode = ModeMultiSelect
 				return m, nil
 			case "e":
 				buf := m.getCurrentBuffer()
@@ -1208,15 +1464,255 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case ModeMultiSelect:
+			switch msg.String() {
+			case "escape":
+				m.mode = ModeNormal
+				m.selectionStartX = -1
+				m.selectionStartY = -1
+				m.selectedBoxes = []int{}
+				m.selectedTexts = []int{}
+				return m, nil
+			case "h", "left", "H", "shift+left":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "l", "right", "L", "shift+l", "shift+right":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "k", "up", "K", "shift+k", "shift+up":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "j", "down", "J", "shift+j", "shift+down":
+				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+			case "enter":
+				// Finalize selection and enter move mode
+				buf := m.getCurrentBuffer()
+				panX, panY := 0, 0
+				if buf != nil {
+					panX, panY = buf.panX, buf.panY
+				}
+				selectionEndX := m.cursorX + panX
+				selectionEndY := m.cursorY + panY
+				
+				// Calculate selection rectangle bounds
+				minX := m.selectionStartX
+				if selectionEndX < m.selectionStartX {
+					minX = selectionEndX
+				}
+				maxX := m.selectionStartX
+				if selectionEndX > m.selectionStartX {
+					maxX = selectionEndX
+				}
+				minY := m.selectionStartY
+				if selectionEndY < m.selectionStartY {
+					minY = selectionEndY
+				}
+				maxY := m.selectionStartY
+				if selectionEndY > m.selectionStartY {
+					maxY = selectionEndY
+				}
+				
+				// Find all boxes and texts within the selection rectangle
+				m.selectedBoxes = []int{}
+				m.selectedTexts = []int{}
+				m.selectedConnections = []int{}
+				m.originalBoxPositions = make(map[int]point)
+				m.originalTextPositions = make(map[int]point)
+				m.originalConnections = make(map[int]Connection)
+				
+				// Check boxes
+				for i, box := range m.getCanvas().boxes {
+					// Check if box overlaps with selection rectangle
+					// A box is selected if any part of it is within the selection
+					boxRight := box.X + box.Width - 1
+					boxBottom := box.Y + box.Height - 1
+					
+					if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
+						m.selectedBoxes = append(m.selectedBoxes, i)
+						m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
+					}
+				}
+				
+				// Check texts
+				for i, text := range m.getCanvas().texts {
+					// Check if any part of the text is within the selection
+					textRight := text.X
+					textBottom := text.Y
+					for _, line := range text.Lines {
+						if text.X+len(line) > textRight {
+							textRight = text.X + len(line)
+						}
+					}
+					if len(text.Lines) > 0 {
+						textBottom = text.Y + len(text.Lines) - 1
+					}
+					
+					if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
+						m.selectedTexts = append(m.selectedTexts, i)
+						m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
+					}
+				}
+				
+				// Check connections - find connections that should be included in the selection
+				selectedBoxSet := make(map[int]bool)
+				for _, boxID := range m.selectedBoxes {
+					selectedBoxSet[boxID] = true
+				}
+				
+				// Helper function to check if a point is within the selection rectangle
+				pointInSelection := func(x, y int) bool {
+					return x >= minX && x <= maxX && y >= minY && y <= maxY
+				}
+				
+				// Helper function to check if a connection should be selected
+				shouldSelectConnection := func(conn Connection) bool {
+					// Case 1: Both endpoints are selected boxes
+					if conn.FromID >= 0 && conn.ToID >= 0 {
+						if selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
+							return true
+						}
+					}
+					
+					// Case 2: One endpoint is a selected box and the other is a connection point within selection
+					if conn.FromID >= 0 && selectedBoxSet[conn.FromID] {
+						if conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
+							return true
+						}
+					}
+					if conn.ToID >= 0 && selectedBoxSet[conn.ToID] {
+						if conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
+							return true
+						}
+					}
+					
+					// Case 3: Both endpoints are connection points within selection
+					if conn.FromID == -1 && conn.ToID == -1 {
+						if pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
+							return true
+						}
+					}
+					
+					// Case 4: Connection has significant points within selection
+					// Check if endpoints or waypoints are in selection
+					pointsInSelection := 0
+					totalPoints := 2 + len(conn.Waypoints) // endpoints + waypoints
+					
+					if pointInSelection(conn.FromX, conn.FromY) {
+						pointsInSelection++
+					}
+					if pointInSelection(conn.ToX, conn.ToY) {
+						pointsInSelection++
+					}
+					for _, wp := range conn.Waypoints {
+						if pointInSelection(wp.X, wp.Y) {
+							pointsInSelection++
+						}
+					}
+					
+					// If at least half the points are in selection, include it
+					if totalPoints > 0 && pointsInSelection*2 >= totalPoints {
+						return true
+					}
+					
+					return false
+				}
+				
+				for i, conn := range m.getCanvas().connections {
+					if shouldSelectConnection(conn) {
+						m.selectedConnections = append(m.selectedConnections, i)
+						// Store a deep copy of the connection for undo
+						connCopy := Connection{
+							FromID:    conn.FromID,
+							ToID:      conn.ToID,
+							FromX:     conn.FromX,
+							FromY:     conn.FromY,
+							ToX:       conn.ToX,
+							ToY:       conn.ToY,
+							Waypoints: make([]point, len(conn.Waypoints)),
+							ArrowFrom: conn.ArrowFrom,
+							ArrowTo:   conn.ArrowTo,
+						}
+						copy(connCopy.Waypoints, conn.Waypoints)
+						m.originalConnections[i] = connCopy
+					}
+				}
+				
+				// If we have selections (boxes, texts, or connections), enter move mode
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					m.mode = ModeMove
+					m.selectedBox = -1
+					m.selectedText = -1
+				} else {
+					// No selections, return to normal mode
+					m.mode = ModeNormal
+					m.selectionStartX = -1
+					m.selectionStartY = -1
+				}
+				return m, nil
+			default:
+				return m, nil
+			}
+
 		case ModeMove:
 			switch msg.String() {
 			case "escape":
 				m.mode = ModeNormal
 				m.selectedBox = -1
 				m.selectedText = -1
+				m.selectedBoxes = []int{}
+				m.selectedTexts = []int{}
+				m.selectedConnections = []int{}
+				m.originalBoxPositions = make(map[int]point)
+				m.originalTextPositions = make(map[int]point)
+				m.originalConnections = make(map[int]Connection)
 				return m, nil
 			case "h", "left":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := -1, 0
+					// First, move all boxes (this will recalculate connection endpoints)
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, -1, 0)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1225,7 +1721,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "H", "shift+left":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := -2, 0
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, -2, 0)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1234,7 +1777,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "l", "right":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 1, 0
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 1, 0)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1243,7 +1833,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "L", "shift+right":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 2, 0
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 2, 0)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1252,7 +1889,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "k", "up":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 0, -1
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 0, -1)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1261,7 +1945,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "K", "shift+up":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 0, -2
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 0, -2)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1270,7 +2001,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "j", "down":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 0, 1
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 0, 1)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1279,7 +2057,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "J", "shift+down":
-				if m.selectedBox != -1 {
+				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+					// Multi-select move
+					deltaX, deltaY := 0, 2
+					for _, boxID := range m.selectedBoxes {
+						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+					}
+					for _, textID := range m.selectedTexts {
+						m.getCanvas().MoveText(textID, deltaX, deltaY)
+					}
+					// Move contained connections as a unit
+					moveContainedConnections(deltaX, deltaY)
+					// Calculate cumulative delta for highlight movement
+					var cumulativeDeltaX, cumulativeDeltaY int
+					if len(m.selectedBoxes) > 0 {
+						boxID := m.selectedBoxes[0]
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								cumulativeDeltaX = currentBox.X - originalPos.X
+								cumulativeDeltaY = currentBox.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedTexts) > 0 {
+						textID := m.selectedTexts[0]
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								cumulativeDeltaX = currentText.X - originalPos.X
+								cumulativeDeltaY = currentText.Y - originalPos.Y
+							}
+						}
+					} else if len(m.selectedConnections) > 0 {
+						connIdx := m.selectedConnections[0]
+						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+							conn := m.getCanvas().connections[connIdx]
+							originalConn, hasOriginal := m.originalConnections[connIdx]
+							if hasOriginal {
+								cumulativeDeltaX = conn.FromX - originalConn.FromX
+								cumulativeDeltaY = conn.FromY - originalConn.FromY
+							}
+						}
+					}
+					// Move highlights on selected objects (from original positions to new positions)
+					moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.ensureCursorInBounds()
+				} else if m.selectedBox != -1 {
 					m.getCanvas().MoveBox(m.selectedBox, 0, 2)
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1289,6 +2114,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				// Record the move action when finishing move mode
+				// Handle multi-select moves first
+				if len(m.selectedBoxes) > 0 {
+					for _, boxID := range m.selectedBoxes {
+						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+							currentBox := m.getCanvas().boxes[boxID]
+							originalPos, hasOriginal := m.originalBoxPositions[boxID]
+							if hasOriginal {
+								deltaX := currentBox.X - originalPos.X
+								deltaY := currentBox.Y - originalPos.Y
+								if deltaX != 0 || deltaY != 0 {
+									moveData := MoveBoxData{ID: boxID, DeltaX: deltaX, DeltaY: deltaY}
+									originalState := OriginalBoxState{ID: boxID, X: originalPos.X, Y: originalPos.Y, Width: currentBox.Width, Height: currentBox.Height}
+									m.recordAction(ActionMoveBox, moveData, originalState)
+								}
+							}
+						}
+					}
+				}
+				if len(m.selectedTexts) > 0 {
+					for _, textID := range m.selectedTexts {
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							currentText := m.getCanvas().texts[textID]
+							originalPos, hasOriginal := m.originalTextPositions[textID]
+							if hasOriginal {
+								deltaX := currentText.X - originalPos.X
+								deltaY := currentText.Y - originalPos.Y
+								if deltaX != 0 || deltaY != 0 {
+									moveData := MoveTextData{ID: textID, DeltaX: deltaX, DeltaY: deltaY}
+									originalState := OriginalTextState{ID: textID, X: originalPos.X, Y: originalPos.Y}
+									m.recordAction(ActionMoveText, moveData, originalState)
+								}
+							}
+						}
+					}
+				}
+				// Handle single-item moves (backward compatibility)
 				if m.selectedBox != -1 && m.selectedBox < len(m.getCanvas().boxes) {
 					currentBox := m.getCanvas().boxes[m.selectedBox]
 					// Calculate the total change from original position
@@ -1317,6 +2178,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeNormal
 				m.selectedBox = -1
 				m.selectedText = -1
+				m.selectedBoxes = []int{}
+				m.selectedTexts = []int{}
+				m.selectedConnections = []int{}
+				m.originalBoxPositions = make(map[int]point)
+				m.originalTextPositions = make(map[int]point)
+				m.originalConnections = make(map[int]Connection)
 				return m, nil
 			}
 
@@ -1901,6 +2768,129 @@ func (m model) View() string {
 
 	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor)
 
+	// Draw selection rectangle if in multi-select mode
+	if m.mode == ModeMultiSelect && m.selectionStartX >= 0 && m.selectionStartY >= 0 {
+		selectionEndX := m.cursorX + panX
+		selectionEndY := m.cursorY + panY
+		
+		// Convert to screen coordinates
+		startScreenX := m.selectionStartX - panX
+		startScreenY := m.selectionStartY - panY
+		endScreenX := selectionEndX - panX
+		endScreenY := selectionEndY - panY
+		
+		// Calculate rectangle bounds
+		minX := startScreenX
+		if endScreenX < startScreenX {
+			minX = endScreenX
+		}
+		maxX := startScreenX
+		if endScreenX > startScreenX {
+			maxX = endScreenX
+		}
+		minY := startScreenY
+		if endScreenY < startScreenY {
+			minY = endScreenY
+		}
+		maxY := startScreenY
+		if endScreenY > startScreenY {
+			maxY = endScreenY
+		}
+		
+		// Clamp to visible area
+		if minX < 0 {
+			minX = 0
+		}
+		if maxX >= renderWidth {
+			maxX = renderWidth - 1
+		}
+		if minY < 0 {
+			minY = 0
+		}
+		if maxY >= renderHeight {
+			maxY = renderHeight - 1
+		}
+		
+		// Convert canvas lines to rune arrays for modification
+		// Note: This approach works with the rendered strings which may contain ANSI codes
+		// We'll draw the selection rectangle by replacing characters at specific positions
+		canvasRunes := make([][]rune, len(canvas))
+		for i, line := range canvas {
+			canvasRunes[i] = []rune(line)
+		}
+		
+		// Draw selection rectangle border
+		// Top and bottom edges
+		for x := minX; x <= maxX && x < renderWidth; x++ {
+			if minY >= 0 && minY < renderHeight && x >= 0 {
+				if x == minX || x == maxX {
+					// Corners
+					if minY == maxY {
+						// Single line
+						if len(canvasRunes[minY]) > x {
+							canvasRunes[minY][x] = '█'
+						}
+					} else {
+						if x == minX {
+							if len(canvasRunes[minY]) > x {
+								canvasRunes[minY][x] = '┌'
+							}
+						} else {
+							if len(canvasRunes[minY]) > x {
+								canvasRunes[minY][x] = '┐'
+							}
+						}
+					}
+				} else {
+					// Horizontal edge
+					if len(canvasRunes[minY]) > x {
+						canvasRunes[minY][x] = '─'
+					}
+				}
+				if maxY != minY && maxY >= 0 && maxY < renderHeight {
+					if x == minX || x == maxX {
+						// Corners
+						if x == minX {
+							if len(canvasRunes[maxY]) > x {
+								canvasRunes[maxY][x] = '└'
+							}
+						} else {
+							if len(canvasRunes[maxY]) > x {
+								canvasRunes[maxY][x] = '┘'
+							}
+						}
+					} else {
+						// Horizontal edge
+						if len(canvasRunes[maxY]) > x {
+							canvasRunes[maxY][x] = '─'
+						}
+					}
+				}
+			}
+		}
+		
+		// Left and right edges
+		for y := minY + 1; y < maxY && y < renderHeight; y++ {
+			if y >= 0 {
+				if minX >= 0 && minX < renderWidth {
+					if len(canvasRunes[y]) > minX {
+						canvasRunes[y][minX] = '│'
+					}
+				}
+				if maxX >= 0 && maxX < renderWidth {
+					if len(canvasRunes[y]) > maxX {
+						canvasRunes[y][maxX] = '│'
+					}
+				}
+			}
+		}
+		
+		// Convert back to strings
+		for i := range canvas {
+			canvas[i] = string(canvasRunes[i])
+		}
+	}
+
 	// Build result with proper newlines
 	var result strings.Builder
 
@@ -2025,13 +3015,30 @@ func (m model) View() string {
 	case ModeResize:
 		statusLine = fmt.Sprintf("Mode: RESIZE | Box %d | hjkl/arrows=resize, Enter=finish, Esc=cancel", m.selectedBox)
 	case ModeMove:
-		if m.selectedBox != -1 {
+		if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 {
+			boxCount := len(m.selectedBoxes)
+			textCount := len(m.selectedTexts)
+			connCount := len(m.selectedConnections)
+			parts := []string{}
+			if boxCount > 0 {
+				parts = append(parts, fmt.Sprintf("%d boxes", boxCount))
+			}
+			if textCount > 0 {
+				parts = append(parts, fmt.Sprintf("%d texts", textCount))
+			}
+			if connCount > 0 {
+				parts = append(parts, fmt.Sprintf("%d connections", connCount))
+			}
+			statusLine = fmt.Sprintf("Mode: MOVE | %s | hjkl/arrows=move, Enter=finish, Esc=cancel", strings.Join(parts, ", "))
+		} else if m.selectedBox != -1 {
 			statusLine = fmt.Sprintf("Mode: MOVE | Box %d | hjkl/arrows=move, Enter=finish, Esc=cancel", m.selectedBox)
 		} else if m.selectedText != -1 {
 			statusLine = fmt.Sprintf("Mode: MOVE | Text %d | hjkl/arrows=move, Enter=finish, Esc=cancel", m.selectedText)
 		} else {
 			statusLine = "Mode: MOVE | hjkl/arrows=move, Enter=finish, Esc=cancel"
 		}
+	case ModeMultiSelect:
+		statusLine = "Mode: MULTI-SELECT | hjkl/arrows=draw selection, Enter=select and move, Esc=cancel"
 	case ModeFileInput:
 		var opStr string
 		switch m.fileOp {
@@ -2136,6 +3143,8 @@ func (m model) modeString() string {
 		return "RESIZE"
 	case ModeMove:
 		return "MOVE"
+	case ModeMultiSelect:
+		return "MULTI-SELECT"
 	case ModeFileInput:
 		return "FILE"
 	case ModeConfirm:

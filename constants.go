@@ -10,6 +10,7 @@ const (
 	ModeTextInput
 	ModeResize
 	ModeMove
+	ModeMultiSelect
 	ModeFileInput
 	ModeConfirm
 )

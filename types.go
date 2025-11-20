@@ -59,6 +59,14 @@ type model struct {
 	config              *Config
 	highlightMode       bool
 	selectedColor       int // 0-7 for 8 colors
+	selectionStartX     int // Multi-select start position (world coordinates)
+	selectionStartY     int
+	selectedBoxes       []int // List of selected box IDs
+	selectedTexts       []int // List of selected text IDs
+	selectedConnections []int // List of selected connection indices (connections where both endpoints are selected)
+	originalBoxPositions map[int]point // Original positions for undo
+	originalTextPositions map[int]point // Original positions for undo
+	originalConnections map[int]Connection // Original connection states for undo
 }
 
 type point struct {
