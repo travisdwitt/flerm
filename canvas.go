@@ -2320,28 +2320,35 @@ func (c *Canvas) MoveHighlight(fromX, fromY, toX, toY int) {
 
 // MoveHighlightsInRegion moves all highlights in a rectangular region by the given delta
 func (c *Canvas) MoveHighlightsInRegion(minX, minY, maxX, maxY, deltaX, deltaY int) {
-	// Collect all highlights in the region
-	highlightsToMove := make(map[string]int)
+	// Collect all highlights in the region with their positions and colors
+	type highlightInfo struct {
+		x, y  int
+		color int
+	}
+	highlightsToMove := make([]highlightInfo, 0)
+	keysToDelete := make([]string, 0)
+	
 	for key, colorIndex := range c.highlights {
 		var x, y int
 		fmt.Sscanf(key, "%d,%d", &x, &y)
 		if x >= minX && x <= maxX && y >= minY && y <= maxY {
-			highlightsToMove[key] = colorIndex
+			highlightsToMove = append(highlightsToMove, highlightInfo{x: x, y: y, color: colorIndex})
+			keysToDelete = append(keysToDelete, key)
 		}
 	}
 	
-	// Move each highlight
-	for key, colorIndex := range highlightsToMove {
-		var x, y int
-		fmt.Sscanf(key, "%d,%d", &x, &y)
-		// Remove from old position
+	// First, delete ALL old positions
+	for _, key := range keysToDelete {
 		delete(c.highlights, key)
-		// Set at new position
-		newX := x + deltaX
-		newY := y + deltaY
+	}
+	
+	// Then, create ALL new positions
+	for _, h := range highlightsToMove {
+		newX := h.x + deltaX
+		newY := h.y + deltaY
 		if newX >= 0 && newY >= 0 {
 			newKey := fmt.Sprintf("%d,%d", newX, newY)
-			c.highlights[newKey] = colorIndex
+			c.highlights[newKey] = h.color
 		}
 	}
 }
