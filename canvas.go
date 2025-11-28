@@ -873,7 +873,7 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool) []string {
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int) []string {
 	// Ensure minimum dimensions
 	if height < 1 {
 		height = 1
@@ -920,6 +920,17 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	for _, text := range c.texts {
 		c.drawTextWithPan(canvas, text, panX, panY)
 	}
+	
+	// Draw text input preview if in text input mode
+	if editTextX >= 0 && editTextY >= 0 && editText != "" {
+		previewText := Text{
+			X:     editTextX,
+			Y:     editTextY,
+			Lines: strings.Split(editText, "\n"),
+			ID:    -1,
+		}
+		c.drawTextWithPan(canvas, previewText, panX, panY)
+	}
 
 	// Draw boxes last (so they appear on top)
 	for i, box := range c.boxes {
@@ -927,7 +938,34 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
 	}
 
-	// Draw cursor if needed (before applying colors)
+	// Draw text editing cursor if in edit mode
+	if editBoxID >= 0 && editBoxID < len(c.boxes) {
+		box := c.boxes[editBoxID]
+		editCursorX, editCursorY := c.calculateTextCursorPosition(box, editCursorPos, editText, panX, panY)
+		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
+			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
+				canvas[editCursorY][editCursorX] = '█'
+			}
+		}
+	} else if editTextID >= 0 && editTextID < len(c.texts) {
+		text := c.texts[editTextID]
+		editCursorX, editCursorY := c.calculateTextCursorPositionForText(text, editCursorPos, editText, panX, panY)
+		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
+			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
+				canvas[editCursorY][editCursorX] = '█'
+			}
+		}
+	} else if editTextX >= 0 && editTextY >= 0 {
+		// Text input mode - show cursor at input position
+		editCursorX, editCursorY := c.calculateTextCursorPositionForNewText(editTextX, editTextY, editCursorPos, editText, panX, panY)
+		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
+			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
+				canvas[editCursorY][editCursorX] = '█'
+			}
+		}
+	}
+
+	// Draw navigation cursor if needed (before applying colors)
 	if showCursor && cursorY >= 0 && cursorY < height && cursorX >= 0 && cursorX < width {
 		if cursorY < len(canvas) && cursorX < len(canvas[cursorY]) {
 			canvas[cursorY][cursorX] = '█'
@@ -1088,6 +1126,108 @@ func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
 			}
 		}
 	}
+}
+
+// calculateTextCursorPosition calculates the screen position of the text editing cursor for a box
+func (c *Canvas) calculateTextCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
+	// Split text into lines
+	lines := strings.Split(text, "\n")
+	
+	// Find which line the cursor is on
+	currentPos := 0
+	for lineIdx, line := range lines {
+		lineLength := len([]rune(line))
+		if cursorPos <= currentPos+lineLength {
+			// Cursor is on this line
+			posInLine := cursorPos - currentPos
+			// Box text starts at box.X + 1, box.Y + 1 + lineIdx
+			cursorX := box.X + 1 + posInLine - panX
+			cursorY := box.Y + 1 + lineIdx - panY
+			return cursorX, cursorY
+		}
+		currentPos += lineLength + 1 // +1 for newline
+	}
+	
+	// Cursor is at the end - place it after the last line
+	if len(lines) > 0 {
+		lastLine := lines[len(lines)-1]
+		cursorX := box.X + 1 + len([]rune(lastLine)) - panX
+		cursorY := box.Y + 1 + len(lines) - 1 - panY
+		return cursorX, cursorY
+	}
+	
+	// Empty text - cursor at start
+	cursorX := box.X + 1 - panX
+	cursorY := box.Y + 1 - panY
+	return cursorX, cursorY
+}
+
+// calculateTextCursorPositionForText calculates the screen position of the text editing cursor for a text object
+func (c *Canvas) calculateTextCursorPositionForText(text Text, cursorPos int, textContent string, panX, panY int) (int, int) {
+	// Split text into lines
+	lines := strings.Split(textContent, "\n")
+	
+	// Find which line the cursor is on
+	currentPos := 0
+	for lineIdx, line := range lines {
+		lineLength := len([]rune(line))
+		if cursorPos <= currentPos+lineLength {
+			// Cursor is on this line
+			posInLine := cursorPos - currentPos
+			// Text starts at text.X, text.Y + lineIdx
+			cursorX := text.X + posInLine - panX
+			cursorY := text.Y + lineIdx - panY
+			return cursorX, cursorY
+		}
+		currentPos += lineLength + 1 // +1 for newline
+	}
+	
+	// Cursor is at the end - place it after the last line
+	if len(lines) > 0 {
+		lastLine := lines[len(lines)-1]
+		cursorX := text.X + len([]rune(lastLine)) - panX
+		cursorY := text.Y + len(lines) - 1 - panY
+		return cursorX, cursorY
+	}
+	
+	// Empty text - cursor at start
+	cursorX := text.X - panX
+	cursorY := text.Y - panY
+	return cursorX, cursorY
+}
+
+// calculateTextCursorPositionForNewText calculates the screen position of the text editing cursor for new text input
+func (c *Canvas) calculateTextCursorPositionForNewText(textX, textY int, cursorPos int, textContent string, panX, panY int) (int, int) {
+	// Split text into lines
+	lines := strings.Split(textContent, "\n")
+	
+	// Find which line the cursor is on
+	currentPos := 0
+	for lineIdx, line := range lines {
+		lineLength := len([]rune(line))
+		if cursorPos <= currentPos+lineLength {
+			// Cursor is on this line
+			posInLine := cursorPos - currentPos
+			// Text starts at textX, textY + lineIdx
+			cursorX := textX + posInLine - panX
+			cursorY := textY + lineIdx - panY
+			return cursorX, cursorY
+		}
+		currentPos += lineLength + 1 // +1 for newline
+	}
+	
+	// Cursor is at the end - place it after the last line
+	if len(lines) > 0 {
+		lastLine := lines[len(lines)-1]
+		cursorX := textX + len([]rune(lastLine)) - panX
+		cursorY := textY + len(lines) - 1 - panY
+		return cursorX, cursorY
+	}
+	
+	// Empty text - cursor at start
+	cursorX := textX - panX
+	cursorY := textY - panY
+	return cursorX, cursorY
 }
 
 func (c *Canvas) isPointInBox(x, y int, excludeFromID, excludeToID int) bool {

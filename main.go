@@ -1276,6 +1276,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
+			case msg.Type == tea.KeyCtrlV:
+				// Paste clipboard content at cursor position
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					// Insert clipboard text at cursor position
+					m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
+					m.editCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
+				}
+				return m, nil
+			case msg.String() == "ctrl+v":
+				// Alternative paste detection (some terminals send this)
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					// Insert clipboard text at cursor position
+					m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
+					m.editCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
+				}
+				return m, nil
 			case msg.String() == "left":
 				if m.editCursorPos > 0 {
 					m.editCursorPos--
@@ -1320,10 +1350,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				keyStr := msg.String()
-				if len(keyStr) == 1 {
-					m.editText = m.editText[:m.editCursorPos] + keyStr + m.editText[m.editCursorPos:]
-					m.editCursorPos++
+				// Handle typed characters - use msg.Runes for proper Unicode support
+				// and to handle multi-character paste events
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					runeStr := string(msg.Runes)
+					m.editText = m.editText[:m.editCursorPos] + runeStr + m.editText[m.editCursorPos:]
+					m.editCursorPos += len(msg.Runes)
 					// Update box/text in real-time
 					if m.selectedBox != -1 {
 						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
@@ -1356,6 +1388,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInputText = ""
 				m.textInputCursorPos = 0
 				return m, nil
+			case msg.Type == tea.KeyCtrlV:
+				// Paste clipboard content at cursor position
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					// Insert clipboard text at cursor position
+					m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
+					m.textInputCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+				}
+				return m, nil
+			case msg.String() == "ctrl+v":
+				// Alternative paste detection (some terminals send this)
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					// Insert clipboard text at cursor position
+					m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
+					m.textInputCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+				}
+				return m, nil
 			case msg.String() == "left":
 				if m.textInputCursorPos > 0 {
 					m.textInputCursorPos--
@@ -1382,10 +1432,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				keyStr := msg.String()
-				if len(keyStr) == 1 {
-					m.textInputText = m.textInputText[:m.textInputCursorPos] + keyStr + m.textInputText[m.textInputCursorPos:]
-					m.textInputCursorPos++
+				// Handle typed characters - use msg.Runes for proper Unicode support
+				// and to handle multi-character paste events
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					runeStr := string(msg.Runes)
+					m.textInputText = m.textInputText[:m.textInputCursorPos] + runeStr + m.textInputText[m.textInputCursorPos:]
+					m.textInputCursorPos += len(msg.Runes)
 				}
 				return m, nil
 			}
@@ -2451,10 +2503,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				// Handle all other keys as regular characters (including hjkl/HJKL)
-				keyStr := msg.String()
-				// Only process single character keys, not special keys like "shift+left"
-				if len(keyStr) == 1 {
-					m.filename += keyStr
+				// Use msg.Runes for proper Unicode support and paste handling
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.filename += string(msg.Runes)
 					// Clear selection when typing
 					m.selectedFileIndex = -1
 				}
@@ -2764,9 +2815,29 @@ func (m model) View() string {
 	}
 
 	// Determine if we should show the cursor
-	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput)
+	// Determine if we should show the navigation cursor
+	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput)
 
-	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor)
+	// Determine text editing cursor info
+	var editBoxID, editTextID int = -1, -1
+	var editCursorPos int = 0
+	var editText string = ""
+	var editTextX, editTextY int = -1, -1
+	if m.mode == ModeEditing {
+		editBoxID = m.selectedBox
+		editTextID = m.selectedText
+		editCursorPos = m.editCursorPos
+		editText = m.editText
+	} else if m.mode == ModeTextInput {
+		// For text input, we need to show cursor at the input position
+		editTextID = -1 // Text input creates new text, not editing existing
+		editCursorPos = m.textInputCursorPos
+		editText = m.textInputText
+		editTextX = m.textInputX
+		editTextY = m.textInputY
+	}
+
+	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY)
 
 	// Draw selection rectangle if in multi-select mode
 	if m.mode == ModeMultiSelect && m.selectionStartX >= 0 && m.selectionStartY >= 0 {
