@@ -42,8 +42,8 @@ func (m *model) exportVisualTXT(filename string) error {
 		height = 24 // Default minimum height
 	}
 
-	// Render the canvas exactly as it appears (no selected box, no preview connection, no cursor, no editing cursor)
-	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1)
+	// Render the canvas exactly as it appears (no selected box, no preview connection, no cursor, no editing cursor, no selection rectangle)
+	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1)
 
 	// Write each line to the file
 	for _, line := range rendered {

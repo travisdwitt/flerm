@@ -67,6 +67,8 @@ type model struct {
 	originalBoxPositions map[int]point // Original positions for undo
 	originalTextPositions map[int]point // Original positions for undo
 	originalConnections map[int]Connection // Original connection states for undo
+	originalHighlights map[point]int // Original highlight positions and colors for multiselect movement
+	highlightMoveDelta point // Current delta applied to highlights from their original positions
 }
 
 type point struct {

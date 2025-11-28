@@ -873,7 +873,7 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int) []string {
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int) []string {
 	// Ensure minimum dimensions
 	if height < 1 {
 		height = 1
@@ -969,6 +969,113 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	if showCursor && cursorY >= 0 && cursorY < height && cursorX >= 0 && cursorX < width {
 		if cursorY < len(canvas) && cursorX < len(canvas[cursorY]) {
 			canvas[cursorY][cursorX] = '█'
+		}
+	}
+
+	// Draw selection rectangle if in multi-select mode (before applying colors)
+	if selectionStartX >= 0 && selectionStartY >= 0 {
+		// Convert world coordinates to screen coordinates
+		startScreenX := selectionStartX - panX
+		startScreenY := selectionStartY - panY
+		endScreenX := selectionEndX - panX
+		endScreenY := selectionEndY - panY
+		
+		// Calculate rectangle bounds
+		minX := startScreenX
+		if endScreenX < startScreenX {
+			minX = endScreenX
+		}
+		maxX := startScreenX
+		if endScreenX > startScreenX {
+			maxX = endScreenX
+		}
+		minY := startScreenY
+		if endScreenY < startScreenY {
+			minY = endScreenY
+		}
+		maxY := startScreenY
+		if endScreenY > startScreenY {
+			maxY = endScreenY
+		}
+		
+		// Clamp to visible area
+		if minX < 0 {
+			minX = 0
+		}
+		if maxX >= width {
+			maxX = width - 1
+		}
+		if minY < 0 {
+			minY = 0
+		}
+		if maxY >= height {
+			maxY = height - 1
+		}
+		
+		// Draw selection rectangle border
+		// Top and bottom edges
+		for x := minX; x <= maxX && x < width; x++ {
+			if minY >= 0 && minY < height && x >= 0 {
+				if x == minX || x == maxX {
+					// Corners
+					if minY == maxY {
+						// Single line
+						if len(canvas[minY]) > x {
+							canvas[minY][x] = '█'
+						}
+					} else {
+						if x == minX {
+							if len(canvas[minY]) > x {
+								canvas[minY][x] = '┌'
+							}
+						} else {
+							if len(canvas[minY]) > x {
+								canvas[minY][x] = '┐'
+							}
+						}
+					}
+				} else {
+					// Horizontal edge
+					if len(canvas[minY]) > x {
+						canvas[minY][x] = '─'
+					}
+				}
+				if maxY != minY && maxY >= 0 && maxY < height {
+					if x == minX || x == maxX {
+						// Corners
+						if x == minX {
+							if len(canvas[maxY]) > x {
+								canvas[maxY][x] = '└'
+							}
+						} else {
+							if len(canvas[maxY]) > x {
+								canvas[maxY][x] = '┘'
+							}
+						}
+					} else {
+						// Horizontal edge
+						if len(canvas[maxY]) > x {
+							canvas[maxY][x] = '─'
+						}
+					}
+				}
+			}
+		}
+		
+		// Left and right edges
+		for y := minY + 1; y < maxY && y < height; y++ {
+			if y >= 0 {
+				if minX >= 0 && minX < width {
+					if len(canvas[y]) > minX {
+						canvas[y][minX] = '│'
+					}
+				}
+				if maxX >= 0 && maxX < width {
+					if len(canvas[y]) > maxX {
+						canvas[y][maxX] = '│'
+					}
+				}
+			}
 		}
 	}
 
