@@ -540,10 +540,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.originalBoxPositions = make(map[int]point)
 					m.originalTextPositions = make(map[int]point)
 					m.originalConnections = make(map[int]Connection)
+					// Capture highlights within this box's bounds for movement
 					m.originalHighlights = make(map[point]int)
+					m.highlightMoveDelta = point{X: 0, Y: 0}
 					if boxID < len(m.getCanvas().boxes) {
-						m.originalMoveX = m.getCanvas().boxes[boxID].X
-						m.originalMoveY = m.getCanvas().boxes[boxID].Y
+						box := m.getCanvas().boxes[boxID]
+						m.originalMoveX = box.X
+						m.originalMoveY = box.Y
+						// Capture all highlights within the box bounds
+						for y := box.Y; y < box.Y+box.Height; y++ {
+							for x := box.X; x < box.X+box.Width; x++ {
+								color := m.getCanvas().GetHighlight(x, y)
+								if color != -1 {
+									m.originalHighlights[point{X: x, Y: y}] = color
+								}
+							}
+						}
 					}
 					m.mode = ModeMove
 				} else if textID != -1 {
@@ -556,12 +568,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.originalBoxPositions = make(map[int]point)
 					m.originalTextPositions = make(map[int]point)
 					m.originalConnections = make(map[int]Connection)
+					// Capture highlights within this text's bounds for movement
 					m.originalHighlights = make(map[point]int)
+					m.highlightMoveDelta = point{X: 0, Y: 0}
 					if textID < len(m.getCanvas().texts) {
-						m.originalTextMoveX = m.getCanvas().texts[textID].X
-						m.originalTextMoveY = m.getCanvas().texts[textID].Y
+						text := m.getCanvas().texts[textID]
+						m.originalTextMoveX = text.X
+						m.originalTextMoveY = text.Y
+						// Capture all highlights within the text bounds
+						maxWidth := 0
+						for _, line := range text.Lines {
+							if len(line) > maxWidth {
+								maxWidth = len(line)
+							}
+						}
+						for y := text.Y; y < text.Y+len(text.Lines); y++ {
+							for x := text.X; x < text.X+maxWidth; x++ {
+								color := m.getCanvas().GetHighlight(x, y)
+								if color != -1 {
+									m.originalHighlights[point{X: x, Y: y}] = color
+								}
+							}
+						}
 					}
 					m.mode = ModeMove
+				} else {
+					// Check if there's a highlight at cursor position (standalone highlight)
+					highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
+					if highlightColor != -1 {
+						// Move just the standalone highlight
+						m.selectedBox = -1
+						m.selectedText = -1
+						m.selectedBoxes = []int{}
+						m.selectedTexts = []int{}
+						m.selectedConnections = []int{}
+						m.originalBoxPositions = make(map[int]point)
+						m.originalTextPositions = make(map[int]point)
+						m.originalConnections = make(map[int]Connection)
+						m.originalHighlights = make(map[point]int)
+						m.originalHighlights[point{X: worldX, Y: worldY}] = highlightColor
+						m.highlightMoveDelta = point{X: 0, Y: 0}
+						m.mode = ModeMove
+					}
 				}
 				return m, nil
 			case "M":
@@ -1056,6 +1104,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "tab":
 				// Cycle through colors
 				m.selectedColor = (m.selectedColor + 1) % numColors
+				return m, nil
+			case "Z":
+				// Cycle z-level of box at cursor (0-3) for drop shadow effect
+				m.zPanMode = false
+				buf := m.getCurrentBuffer()
+				panX, panY := 0, 0
+				if buf != nil {
+					panX, panY = buf.panX, buf.panY
+				}
+				worldX := m.cursorX + panX
+				worldY := m.cursorY + panY
+				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+				if boxID != -1 {
+					m.getCanvas().CycleBoxZLevel(boxID)
+				}
 				return m, nil
 			case " ":
 				// Toggle highlight mode
@@ -1644,12 +1707,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.originalHighlights = make(map[point]int)
 				return m, nil
 			case "h", "left":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, -1, 0)
+					// Move only the captured highlights (not all highlights in region)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, -1, 0)
+					// Move only the captured highlights (not all highlights in region)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := -1, 0
-					// First, move all boxes (this will recalculate connection endpoints)
+					// Move all boxes without touching connections (connections handled by moveContainedConnections)
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -1695,37 +1777,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, -1, 0)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, -1, 0)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, -1, 0)
-					}
-					m.getCanvas().MoveText(m.selectedText, -1, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "H", "shift+left":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, -2, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, -2, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := -2, 0
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -1771,37 +1848,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, -2, 0)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, -2, 0)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, -2, 0)
-					}
-					m.getCanvas().MoveText(m.selectedText, -2, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "l", "right":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 1, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 1, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 1, 0
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -1847,37 +1919,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 1, 0)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 1, 0)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 1, 0)
-					}
-					m.getCanvas().MoveText(m.selectedText, 1, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "L", "shift+right":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 2, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 2, 0)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 2, 0
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -1923,37 +1990,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 2, 0)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 2, 0)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 2, 0)
-					}
-					m.getCanvas().MoveText(m.selectedText, 2, 0)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "k", "up":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 0, -1)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 0, -1)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 0, -1
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -1999,37 +2061,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 0, -1)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 0, -1)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 0, -1)
-					}
-					m.getCanvas().MoveText(m.selectedText, 0, -1)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "K", "shift+up":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 0, -2)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 0, -2)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 0, -2
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -2075,37 +2132,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 0, -2)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 0, -2)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 0, -2)
-					}
-					m.getCanvas().MoveText(m.selectedText, 0, -2)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "j", "down":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 0, 1)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 0, 1)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 0, 1
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -2151,37 +2203,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 0, 1)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 0, 1)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 0, 1)
-					}
-					m.getCanvas().MoveText(m.selectedText, 0, 1)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
 			case "J", "shift+down":
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move
+				// Check single-element moves FIRST (before multiselect)
+				if m.selectedBox != -1 {
+					m.getCanvas().MoveBox(m.selectedBox, 0, 2)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if m.selectedText != -1 {
+					m.getCanvas().MoveText(m.selectedText, 0, 2)
+					if len(m.originalHighlights) > 0 {
+						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					}
+					m.ensureCursorInBounds()
+				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+					// Multi-select move (or highlights-only move)
 					deltaX, deltaY := 0, 2
 					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBox(boxID, deltaX, deltaY)
+						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
 					}
 					for _, textID := range m.selectedTexts {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
@@ -2227,28 +2274,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Move highlights on selected objects (from original positions to new positions)
 					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
-				} else if m.selectedBox != -1 {
-					// Get box bounds before moving to move highlights with it
-					if m.selectedBox < len(m.getCanvas().boxes) {
-						box := m.getCanvas().boxes[m.selectedBox]
-						m.getCanvas().MoveHighlightsInRegion(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1, 0, 2)
-					}
-					m.getCanvas().MoveBox(m.selectedBox, 0, 2)
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					// Get text bounds before moving to move highlights with it
-					if m.selectedText < len(m.getCanvas().texts) {
-						text := m.getCanvas().texts[m.selectedText]
-						maxWidth := 0
-						for _, line := range text.Lines {
-							if len(line) > maxWidth {
-								maxWidth = len(line)
-							}
-						}
-						m.getCanvas().MoveHighlightsInRegion(text.X, text.Y, text.X+maxWidth-1, text.Y+len(text.Lines)-1, 0, 2)
-					}
-					m.getCanvas().MoveText(m.selectedText, 0, 2)
 					m.ensureCursorInBounds()
 				}
 				return m, nil

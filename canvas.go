@@ -44,6 +44,7 @@ type Box struct {
 	Height int
 	Lines  []string
 	ID     int
+	ZLevel int // 0-3, higher values render on top with drop shadows
 }
 
 func (b *Box) GetText() string {
@@ -619,6 +620,24 @@ func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 	}
 }
 
+// MoveBoxOnly moves only the box position without updating connections
+// Use this for multiselect moves where connections are handled separately
+func (c *Canvas) MoveBoxOnly(id int, deltaX, deltaY int) {
+	if id >= 0 && id < len(c.boxes) {
+		box := &c.boxes[id]
+		box.X += deltaX
+		box.Y += deltaY
+
+		// Ensure box doesn't go negative
+		if box.X < 0 {
+			box.X = 0
+		}
+		if box.Y < 0 {
+			box.Y = 0
+		}
+	}
+}
+
 func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
@@ -636,21 +655,93 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 		for i := range c.connections {
 			conn := &c.connections[i]
 			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+				// Both endpoints are boxes - recalculate clean path
 				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
 				conn.FromX = newFromX
 				conn.FromY = newFromY
 				conn.ToX = newToX
 				conn.ToY = newToY
-			}
-			if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+				// Clear waypoints to let the connection draw as a clean L-shape
+				conn.Waypoints = nil
+			} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+				// Both endpoints are boxes - recalculate clean path
 				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
 				conn.FromX = newFromX
 				conn.FromY = newFromY
 				conn.ToX = newToX
 				conn.ToY = newToY
+				// Clear waypoints to let the connection draw as a clean L-shape
+				conn.Waypoints = nil
+			} else if conn.FromID == id && conn.ToID < 0 {
+				// Connection from this box to a free point - recalculate from point based on box edge
+				// and move waypoints with the box
+				fromCenterX := box.X + box.Width/2
+				fromCenterY := box.Y + box.Height/2
+				// Determine which edge to connect from based on "to" point direction
+				if abs(conn.ToX-fromCenterX) > abs(conn.ToY-fromCenterY) {
+					if conn.ToX > fromCenterX {
+						conn.FromX = box.X + box.Width - 1
+					} else {
+						conn.FromX = box.X
+					}
+					conn.FromY = fromCenterY
+				} else {
+					if conn.ToY > fromCenterY {
+						conn.FromY = box.Y + box.Height - 1
+					} else {
+						conn.FromY = box.Y
+					}
+					conn.FromX = fromCenterX
+				}
+				// Move waypoints with the box
+				for j := range conn.Waypoints {
+					conn.Waypoints[j].X += deltaX
+					conn.Waypoints[j].Y += deltaY
+				}
+			} else if conn.ToID == id && conn.FromID < 0 {
+				// Connection to this box from a free point - recalculate to point based on box edge
+				// and move waypoints with the box
+				toCenterX := box.X + box.Width/2
+				toCenterY := box.Y + box.Height/2
+				// Determine which edge to connect to based on "from" point direction
+				if abs(conn.FromX-toCenterX) > abs(conn.FromY-toCenterY) {
+					if conn.FromX > toCenterX {
+						conn.ToX = box.X + box.Width - 1
+					} else {
+						conn.ToX = box.X
+					}
+					conn.ToY = toCenterY
+				} else {
+					if conn.FromY > toCenterY {
+						conn.ToY = box.Y + box.Height - 1
+					} else {
+						conn.ToY = box.Y
+					}
+					conn.ToX = toCenterX
+				}
+				// Move waypoints with the box
+				for j := range conn.Waypoints {
+					conn.Waypoints[j].X += deltaX
+					conn.Waypoints[j].Y += deltaY
+				}
 			}
 		}
 	}
+}
+
+// CycleBoxZLevel cycles the z-level of a box from 0-3
+func (c *Canvas) CycleBoxZLevel(id int) {
+	if id >= 0 && id < len(c.boxes) {
+		c.boxes[id].ZLevel = (c.boxes[id].ZLevel + 1) % 4
+	}
+}
+
+// GetBoxZLevel returns the z-level of a box
+func (c *Canvas) GetBoxZLevel(id int) int {
+	if id >= 0 && id < len(c.boxes) {
+		return c.boxes[id].ZLevel
+	}
+	return 0
 }
 
 func (c *Canvas) SetBoxPosition(id int, x, y int) {
@@ -932,9 +1023,32 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		c.drawTextWithPan(canvas, previewText, panX, panY)
 	}
 
-	// Draw boxes last (so they appear on top)
-	for i, box := range c.boxes {
+	// Draw boxes in z-order (lower z-level first, higher z-level last)
+	// First, create a sorted list of box indices by z-level
+	boxOrder := make([]int, len(c.boxes))
+	for i := range boxOrder {
+		boxOrder[i] = i
+	}
+	// Sort by z-level (stable sort to preserve original order for same z-level)
+	for i := 0; i < len(boxOrder)-1; i++ {
+		for j := i + 1; j < len(boxOrder); j++ {
+			if c.boxes[boxOrder[i]].ZLevel > c.boxes[boxOrder[j]].ZLevel {
+				boxOrder[i], boxOrder[j] = boxOrder[j], boxOrder[i]
+			}
+		}
+	}
+	
+	// Draw boxes in z-order with drop shadows
+	for _, i := range boxOrder {
+		box := c.boxes[i]
 		isSelected := (i == selectedBox)
+		
+		// Draw drop shadow based on z-level (offset increases with z-level)
+		if box.ZLevel > 0 {
+			shadowOffset := box.ZLevel
+			c.drawBoxShadow(canvas, box, shadowOffset, panX, panY)
+		}
+		
 		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
 	}
 
@@ -1136,6 +1250,49 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	}
 
 	return result
+}
+
+// drawBoxShadow draws a drop shadow for a box based on its z-level
+func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX, panY int) {
+	// Apply pan offset to box coordinates
+	boxX := box.X - panX + shadowOffset
+	boxY := box.Y - panY + shadowOffset
+	
+	height := len(canvas)
+	width := 0
+	if height > 0 {
+		width = len(canvas[0])
+	}
+	
+	// Draw shadow using block characters
+	shadowChar := '░' // Light shade for shadow
+	if shadowOffset >= 2 {
+		shadowChar = '▒' // Medium shade for deeper shadow
+	}
+	if shadowOffset >= 3 {
+		shadowChar = '▓' // Dark shade for deepest shadow
+	}
+	
+	// Draw shadow rectangle (offset from box position)
+	for y := boxY; y < boxY+box.Height && y < height; y++ {
+		if y < 0 {
+			continue
+		}
+		for x := boxX; x < boxX+box.Width && x < width; x++ {
+			if x < 0 {
+				continue
+			}
+			// Only draw shadow where the actual box won't be drawn
+			actualBoxX := box.X - panX
+			actualBoxY := box.Y - panY
+			if x >= actualBoxX && x < actualBoxX+box.Width && y >= actualBoxY && y < actualBoxY+box.Height {
+				continue // Skip where box will be drawn
+			}
+			if y < len(canvas) && x < len(canvas[y]) {
+				canvas[y][x] = shadowChar
+			}
+		}
+	}
 }
 
 func (c *Canvas) drawBoxWithPan(canvas [][]rune, box Box, isSelected bool, panX, panY int) {
@@ -2506,7 +2663,8 @@ func (c *Canvas) SaveToFile(filename string) error {
 	fmt.Fprintf(file, "BOXES:%d\n", len(c.boxes))
 	for _, box := range c.boxes {
 		encodedText := strings.ReplaceAll(box.GetText(), "\n", "\\n")
-		fmt.Fprintf(file, "%d,%d,%d,%d,%s\n", box.X, box.Y, box.Width, box.Height, encodedText)
+		// Include ZLevel at the end (defaults to 0 for backwards compatibility)
+		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%s\n", box.X, box.Y, box.Width, box.Height, box.ZLevel, encodedText)
 	}
 
 	fmt.Fprintf(file, "CONNECTIONS:%d\n", len(c.connections))
@@ -2609,28 +2767,34 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		x, _ := strconv.Atoi(parts[0])
 		y, _ := strconv.Atoi(parts[1])
 
-		var width, height int
+		var width, height, zLevel int
 		var text string
 
 		if len(parts) >= 6 {
-			// Old format with color (backward compatibility): X,Y,Width,Height,Color,Text
-			// Skip the color field
+			// New format with ZLevel: X,Y,Width,Height,ZLevel,Text
+			// OR old format with color: X,Y,Width,Height,Color,Text
 			width, _ = strconv.Atoi(parts[2])
 			height, _ = strconv.Atoi(parts[3])
-			// Skip parts[4] which is the color
+			zLevel, _ = strconv.Atoi(parts[4])
+			// Ensure ZLevel is in valid range (0-3)
+			if zLevel < 0 || zLevel > 3 {
+				zLevel = 0
+			}
 			text = strings.ReplaceAll(strings.Join(parts[5:], ","), "\\n", "\n")
 		} else if len(parts) >= 5 {
-			// Old format without color: X,Y,Width,Height,Text
+			// Old format without ZLevel: X,Y,Width,Height,Text
 			width, _ = strconv.Atoi(parts[2])
 			height, _ = strconv.Atoi(parts[3])
+			zLevel = 0
 			text = strings.ReplaceAll(strings.Join(parts[4:], ","), "\\n", "\n")
 		} else {
 			// Very old format: X,Y,Text
 			text = strings.ReplaceAll(strings.Join(parts[2:], ","), "\\n", "\n")
 			box := Box{
-				X:  x,
-				Y:  y,
-				ID: i,
+				X:      x,
+				Y:      y,
+				ID:     i,
+				ZLevel: 0,
 			}
 			box.SetText(text)
 			c.boxes = append(c.boxes, box)
@@ -2638,9 +2802,10 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		}
 
 		box := Box{
-			X:  x,
-			Y:  y,
-			ID: i,
+			X:      x,
+			Y:      y,
+			ID:     i,
+			ZLevel: zLevel,
 		}
 		box.SetText(text)
 		box.Width = width

@@ -19,6 +19,7 @@ var helpText = []string{
 	"  d                Delete box under cursor",
 	"  c                Copy box under cursor",
 	"  p                Paste copied box at cursor position",
+	"  Z (Shift+z)      Cycle box z-level (0-3) for drop shadow effect",
 	"",
 	"Text Operations:",
 	"----------------",
