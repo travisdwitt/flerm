@@ -1,10 +1,10 @@
 ```
-            ___ __ 
-          .'  _|  |.-----.----.--------.
-          |   _|  ||  -__|   _|        |
-          |__| |__||_____|__| |__|__|__|
+        ___ __ 
+      .'  _|  |.-----.----.--------.
+      |   _|  ||  -__|   _|        |
+      |__| |__||_____|__| |__|__|__|
 
-    A basic flowchart editor for your (fl)erminal.
+A basic flowchart editor for your (fl)erminal.
 ```
 <br>
 <img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/62cbfad3-f27e-471e-b219-2c3ed56d381d" />
