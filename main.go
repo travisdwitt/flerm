@@ -1930,6 +1930,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.showingDeleteConfirm = false
 					return m, nil
 				}
+				// If not showing delete confirmation, treat as regular character
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.filename += string(msg.Runes)
+					// Clear selection when typing
+					m.selectedFileIndex = -1
+				}
+				return m, nil
 			case msg.Type == tea.KeyEscape:
 				// Cancel delete confirmation if active, otherwise handle normal escape
 				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
