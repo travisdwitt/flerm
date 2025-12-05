@@ -33,7 +33,7 @@ func (m *model) exportVisualTXT(filename string) error {
 	if height < 1 {
 		height = 24
 	}
-	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1)
+	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false)
 	for _, line := range rendered {
 		fmt.Fprintln(file, line)
 	}

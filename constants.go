@@ -13,6 +13,7 @@ const (
 	ModeMultiSelect
 	ModeFileInput
 	ModeConfirm
+	ModeBoxJump
 )
 
 type FileOperation int

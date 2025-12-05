@@ -71,6 +71,7 @@ type model struct {
 	originalConnections   map[int]Connection
 	originalHighlights    map[point]int
 	highlightMoveDelta    point
+	boxJumpInput          string
 }
 
 type point struct {

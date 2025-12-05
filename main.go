@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -448,6 +449,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.recordAction(ActionAddBox, addData, deleteData)
 				m.successMessage = ""
 				m.ensureCursorInBounds()
+				return m, nil
+			case "B":
+				// Enter box jump mode
+				m.mode = ModeBoxJump
+				m.boxJumpInput = ""
 				return m, nil
 			case "t":
 				m.zPanMode = false
@@ -1176,6 +1182,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					runeStr := string(msg.Runes)
 					m.textInputText = m.textInputText[:m.textInputCursorPos] + runeStr + m.textInputText[m.textInputCursorPos:]
 					m.textInputCursorPos += len(msg.Runes)
+				}
+				return m, nil
+			}
+
+		case ModeBoxJump:
+			switch {
+			case msg.Type == tea.KeyEscape:
+				m.mode = ModeNormal
+				m.boxJumpInput = ""
+				return m, nil
+			case msg.Type == tea.KeyEnter:
+				// Jump to the box with the entered number
+				if m.boxJumpInput != "" {
+					boxNum, err := strconv.Atoi(m.boxJumpInput)
+					if err == nil && boxNum >= 0 && boxNum < len(m.getCanvas().boxes) {
+						box := m.getCanvas().boxes[boxNum]
+						panX, panY := m.getPanOffset()
+						// Move cursor to the center of the box
+						m.cursorX = box.X + box.Width/2 - panX
+						m.cursorY = box.Y + box.Height/2 - panY
+						m.ensureCursorInBounds()
+					}
+				}
+				m.mode = ModeNormal
+				m.boxJumpInput = ""
+				return m, nil
+			case msg.Type == tea.KeyBackspace:
+				if len(m.boxJumpInput) > 0 {
+					m.boxJumpInput = m.boxJumpInput[:len(m.boxJumpInput)-1]
+				}
+				return m, nil
+			default:
+				// Handle number input
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					runeStr := string(msg.Runes)
+					// Only allow digits
+					if len(runeStr) == 1 && runeStr[0] >= '0' && runeStr[0] <= '9' {
+						m.boxJumpInput += runeStr
+					}
 				}
 				return m, nil
 			}
@@ -2527,7 +2572,8 @@ func (m model) View() string {
 		selectionEndY = m.cursorY + panY
 	}
 
-	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY)
+	showBoxNumbers := (m.mode == ModeBoxJump)
+	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
 
 	// Build result with proper newlines
 	var result strings.Builder
@@ -2682,6 +2728,8 @@ func (m model) View() string {
 			message = "Export as PNG (p) or Visual TXT (t)? Press Esc to cancel"
 		}
 		statusLine = fmt.Sprintf("Mode: CONFIRM | %s", message)
+	case ModeBoxJump:
+		statusLine = fmt.Sprintf("Mode: BOX JUMP | Enter box number: %s | Enter=jump, Esc=cancel", m.boxJumpInput)
 	default:
 		modeStr := m.modeString()
 		if m.zPanMode {
@@ -2698,7 +2746,7 @@ func (m model) View() string {
 		if m.connectionFrom != -1 {
 			status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
 		} else if m.connectionFromLine != -1 {
-			status += fmt.Sprintf(" | Connection from line (select target)")
+			status += " | Connection from line (select target)"
 		}
 		if m.selectedBox != -1 {
 			status += fmt.Sprintf(" | Selected: Box %d", m.selectedBox)
@@ -2942,6 +2990,8 @@ func (m model) modeString() string {
 		return "FILE"
 	case ModeConfirm:
 		return "CONFIRM"
+	case ModeBoxJump:
+		return "BOX JUMP"
 	default:
 		return "UNKNOWN"
 	}

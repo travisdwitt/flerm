@@ -868,7 +868,7 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int) []string {
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) []string {
 	if height < 1 {
 		height = 1
 	}
@@ -934,6 +934,22 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 			c.drawBoxShadow(canvas, box, box.ZLevel, panX, panY)
 		}
 		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
+		if showBoxNumbers {
+			// Draw box number in top left corner
+			boxScreenX := box.X - panX
+			boxScreenY := box.Y - panY
+			if boxScreenY >= 0 && boxScreenY < height && boxScreenX >= 0 && boxScreenX < width {
+				numberStr := fmt.Sprintf("%d", i)
+				for idx, char := range numberStr {
+					posX := boxScreenX + 1 + idx
+					if posX < boxScreenX+box.Width-1 && posX >= 0 && posX < width && boxScreenY >= 0 && boxScreenY < height {
+						if boxScreenY < len(canvas) && posX < len(canvas[boxScreenY]) {
+							canvas[boxScreenY][posX] = char
+						}
+					}
+				}
+			}
+		}
 	}
 	if editBoxID >= 0 && editBoxID < len(c.boxes) {
 		box := c.boxes[editBoxID]
