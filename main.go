@@ -3316,7 +3316,7 @@ func (m model) renderStartupMenu() string {
 					logoLineIdx := relY - 2
 					logoX := relX - 1 - (contentWidth-logoWidth)/2
 					if logoX >= 0 && logoX < len(logo[logoLineIdx]) {
-						result.WriteString(string(logo[logoLineIdx][logoX]))
+						result.WriteString("\033[32m" + string(logo[logoLineIdx][logoX]) + "\033[0m")
 					} else {
 						result.WriteString(" ")
 					}
