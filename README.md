@@ -113,8 +113,6 @@ confirmations=true
 - `n` - Create new chart in current buffer 
 - `N` - Create new chart in new buffer 
 - `x` - Close current buffer
-<br>
-<img width="932" height="685" alt="flermguy" src="https://github.com/user-attachments/assets/d609f834-5048-46e3-a3ad-e0c5d10003d1" />
 
 ### General
 - `u` - Undo last action
@@ -144,3 +142,28 @@ TEXTS:0
 ## Dependencies
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [gg](https://github.com/fogleman/gg) - 2D graphics library for PNG export
+
+## Known Bugs
+There's some weird stuff that happens and I haven't been able to fix it yet.
+I'm currently using this application in a professional setting, but YMMV so
+be careful and don't expect this to be a bug-free battle-hardened productivity
+tool.
+
+- Moving boxes around when it's connected to other boxes.
+  - This _technically_ works, but the connectors and pointers get super wonky. The
+    better option right now is to just delete the connections, move the box, then
+    reconnect everything.
+
+- Highlighting and coloring weirdness
+  - Sometimes when you're highlighting text and you move to a space without text,
+    there will be an extra line of color that just kind of appears?
+  - Making a big box, highlighting it, then making the box smaller will leave a box
+    of color behind. 
+  - Sometimes when drawing with the highlighter, it will look like the highlighter
+    isn't working. It is, when you hit Ctrl+S any missing color should show up.
+
+- PNG Exports
+  - Ugly, probably not super useful.
+
+- TXT Exports
+  - Mostly good, sometimes connections can look funky. Also colors don't translate.

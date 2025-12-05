@@ -8,43 +8,37 @@ import (
 )
 
 type Config struct {
-	SaveDirectory      string
-	StartMenu          bool
-	Confirmations      bool
+	SaveDirectory string
+	StartMenu     bool
+	Confirmations bool
 }
 
 func loadConfig() *Config {
 	config := &Config{
-		SaveDirectory: "", // Empty means use current directory
+		SaveDirectory: "",
 		StartMenu:     true,
 		Confirmations: true,
 	}
 
-	// Get home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return config // Return defaults if we can't get home directory
+		return config
 	}
 
-	// Check for .flermrc file
 	configPath := filepath.Join(homeDir, ".flermrc")
 	file, err := os.Open(configPath)
 	if err != nil {
-		return config // Return defaults if file doesn't exist
+		return config
 	}
 	defer file.Close()
 
-	// Parse config file
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
-		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		// Parse key=value pairs
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
@@ -55,14 +49,11 @@ func loadConfig() *Config {
 
 		switch strings.ToLower(key) {
 		case "savedirectory", "save_directory", "savedir":
-			// Expand ~ to home directory if present
 			if strings.HasPrefix(value, "~") {
 				value = filepath.Join(homeDir, strings.TrimPrefix(value, "~"))
 			}
-			// Expand to absolute path
 			if !filepath.IsAbs(value) {
-				absPath, err := filepath.Abs(value)
-				if err == nil {
+				if absPath, err := filepath.Abs(value); err == nil {
 					value = absPath
 				}
 			}
@@ -81,10 +72,7 @@ func (c *Config) GetSavePath(filename string) string {
 	if c.SaveDirectory == "" {
 		return filename
 	}
-	
-	// Ensure directory exists
 	os.MkdirAll(c.SaveDirectory, 0755)
-	
 	return filepath.Join(c.SaveDirectory, filename)
 }
 

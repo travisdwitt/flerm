@@ -60,17 +60,17 @@ type model struct {
 	clipboard           *Box
 	config              *Config
 	highlightMode       bool
-	selectedColor       int // 0-7 for 8 colors
-	selectionStartX     int // Multi-select start position (world coordinates)
-	selectionStartY     int
-	selectedBoxes       []int // List of selected box IDs
-	selectedTexts       []int // List of selected text IDs
-	selectedConnections []int // List of selected connection indices (connections where both endpoints are selected)
-	originalBoxPositions map[int]point // Original positions for undo
-	originalTextPositions map[int]point // Original positions for undo
-	originalConnections map[int]Connection // Original connection states for undo
-	originalHighlights map[point]int // Original highlight positions and colors for multiselect movement
-	highlightMoveDelta point // Current delta applied to highlights from their original positions
+	selectedColor         int
+	selectionStartX       int
+	selectionStartY       int
+	selectedBoxes         []int
+	selectedTexts         []int
+	selectedConnections   []int
+	originalBoxPositions  map[int]point
+	originalTextPositions map[int]point
+	originalConnections   map[int]Connection
+	originalHighlights    map[point]int
+	highlightMoveDelta    point
 }
 
 type point struct {
@@ -152,14 +152,14 @@ type CycleArrowData struct {
 }
 
 type HighlightData struct {
-	Cells []HighlightCell // List of cells that were highlighted
+	Cells []HighlightCell
 }
 
 type HighlightCell struct {
-	X         int
-	Y         int
-	Color     int
-	HadColor  bool // Whether this cell had a color before (for undo)
-	OldColor  int  // The previous color if it existed
+	X        int
+	Y        int
+	Color    int
+	HadColor bool
+	OldColor int
 }
 

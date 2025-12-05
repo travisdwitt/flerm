@@ -50,7 +50,6 @@ func (m *model) undo() {
 	case ActionHighlight:
 		data := action.Inverse.(HighlightData)
 		for _, cell := range data.Cells {
-			// Restore to previous state: if Color is -1, clear; otherwise restore the color
 			if cell.Color >= 0 {
 				m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
 			} else {

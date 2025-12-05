@@ -19,7 +19,7 @@ type Canvas struct {
 	boxes       []Box
 	connections []Connection
 	texts       []Text
-	highlights  map[string]int // Map of "x,y" to color index (0-7)
+	highlights  map[string]int
 }
 
 type Text struct {
@@ -44,7 +44,7 @@ type Box struct {
 	Height int
 	Lines  []string
 	ID     int
-	ZLevel int // 0-3, higher values render on top with drop shadows
+	ZLevel int
 }
 
 func (b *Box) GetText() string {
@@ -61,16 +61,13 @@ func (b *Box) updateSize() {
 		b.Lines = []string{""}
 	}
 
-	// Calculate width based on longest line
 	maxWidth := minBoxWidth
 	for _, line := range b.Lines {
-		if len(line)+2 > maxWidth { // +2 for padding
+		if len(line)+2 > maxWidth {
 			maxWidth = len(line) + 2
 		}
 	}
 	b.Width = maxWidth
-
-	// Height is number of lines + 2 for borders
 	b.Height = len(b.Lines) + 2
 }
 
@@ -122,20 +119,15 @@ func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
 		ID: id,
 	}
 	box.SetText(text)
-
-	// Insert box at the correct position to maintain ID order
 	if id >= len(c.boxes) {
-		// Extend slice if needed
 		for len(c.boxes) <= id {
 			c.boxes = append(c.boxes, Box{})
 		}
 		c.boxes[id] = box
 	} else {
-		// Insert at position and shift others
 		c.boxes = append(c.boxes, Box{})
 		copy(c.boxes[id+1:], c.boxes[id:])
 		c.boxes[id] = box
-		// Update IDs for shifted boxes
 		for i := id + 1; i < len(c.boxes); i++ {
 			c.boxes[i].ID = i
 		}
@@ -474,10 +466,7 @@ func (c *Canvas) GetTextAt(x, y int) int {
 
 func (c *Canvas) DeleteText(id int) {
 	if id >= 0 && id < len(c.texts) {
-		// Remove the text
 		c.texts = append(c.texts[:id], c.texts[id+1:]...)
-
-		// Update IDs for remaining texts
 		for i := id; i < len(c.texts); i++ {
 			c.texts[i].ID = i
 		}
@@ -512,19 +501,13 @@ func (c *Canvas) SetTextText(id int, text string) {
 
 func (c *Canvas) DeleteBox(id int) {
 	if id >= 0 && id < len(c.boxes) {
-		// Remove the box
 		c.boxes = append(c.boxes[:id], c.boxes[id+1:]...)
-
-		// Update IDs for remaining boxes
 		for i := id; i < len(c.boxes); i++ {
 			c.boxes[i].ID = i
 		}
-
-		// Remove connections connected to this box and update connection IDs
 		newConnections := make([]Connection, 0)
 		for _, connection := range c.connections {
 			if connection.FromID != id && connection.ToID != id {
-				// Update IDs if they're greater than the deleted box ID
 				if connection.FromID > id {
 					connection.FromID--
 				}
@@ -541,21 +524,13 @@ func (c *Canvas) DeleteBox(id int) {
 func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
-
-		// Set minimum size constraints
-		minWidth := minBoxWidth
-		minHeight := minBoxHeight
-
-		// Calculate new size
 		newWidth := box.Width + deltaWidth
 		newHeight := box.Height + deltaHeight
-
-		// Apply minimum constraints
-		if newWidth < minWidth {
-			newWidth = minWidth
+		if newWidth < minBoxWidth {
+			newWidth = minBoxWidth
 		}
-		if newHeight < minHeight {
-			newHeight = minHeight
+		if newHeight < minBoxHeight {
+			newHeight = minBoxHeight
 		}
 
 		oldBoxX := box.X
@@ -620,15 +595,11 @@ func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 	}
 }
 
-// MoveBoxOnly moves only the box position without updating connections
-// Use this for multiselect moves where connections are handled separately
 func (c *Canvas) MoveBoxOnly(id int, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
 		box.X += deltaX
 		box.Y += deltaY
-
-		// Ensure box doesn't go negative
 		if box.X < 0 {
 			box.X = 0
 		}
@@ -643,41 +614,25 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 		box := &c.boxes[id]
 		box.X += deltaX
 		box.Y += deltaY
-
-		// Ensure box doesn't go negative
 		if box.X < 0 {
 			box.X = 0
 		}
 		if box.Y < 0 {
 			box.Y = 0
 		}
-
 		for i := range c.connections {
 			conn := &c.connections[i]
 			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-				// Both endpoints are boxes - recalculate clean path
 				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
-				conn.FromX = newFromX
-				conn.FromY = newFromY
-				conn.ToX = newToX
-				conn.ToY = newToY
-				// Clear waypoints to let the connection draw as a clean L-shape
+				conn.FromX, conn.FromY, conn.ToX, conn.ToY = newFromX, newFromY, newToX, newToY
 				conn.Waypoints = nil
 			} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-				// Both endpoints are boxes - recalculate clean path
 				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
-				conn.FromX = newFromX
-				conn.FromY = newFromY
-				conn.ToX = newToX
-				conn.ToY = newToY
-				// Clear waypoints to let the connection draw as a clean L-shape
+				conn.FromX, conn.FromY, conn.ToX, conn.ToY = newFromX, newFromY, newToX, newToY
 				conn.Waypoints = nil
 			} else if conn.FromID == id && conn.ToID < 0 {
-				// Connection from this box to a free point - recalculate from point based on box edge
-				// and move waypoints with the box
 				fromCenterX := box.X + box.Width/2
 				fromCenterY := box.Y + box.Height/2
-				// Determine which edge to connect from based on "to" point direction
 				if abs(conn.ToX-fromCenterX) > abs(conn.ToY-fromCenterY) {
 					if conn.ToX > fromCenterX {
 						conn.FromX = box.X + box.Width - 1
@@ -693,17 +648,13 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 					}
 					conn.FromX = fromCenterX
 				}
-				// Move waypoints with the box
 				for j := range conn.Waypoints {
 					conn.Waypoints[j].X += deltaX
 					conn.Waypoints[j].Y += deltaY
 				}
 			} else if conn.ToID == id && conn.FromID < 0 {
-				// Connection to this box from a free point - recalculate to point based on box edge
-				// and move waypoints with the box
 				toCenterX := box.X + box.Width/2
 				toCenterY := box.Y + box.Height/2
-				// Determine which edge to connect to based on "from" point direction
 				if abs(conn.FromX-toCenterX) > abs(conn.FromY-toCenterY) {
 					if conn.FromX > toCenterX {
 						conn.ToX = box.X + box.Width - 1
@@ -719,7 +670,6 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 					}
 					conn.ToX = toCenterX
 				}
-				// Move waypoints with the box
 				for j := range conn.Waypoints {
 					conn.Waypoints[j].X += deltaX
 					conn.Waypoints[j].Y += deltaY
@@ -729,14 +679,12 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 	}
 }
 
-// CycleBoxZLevel cycles the z-level of a box from 0-3
 func (c *Canvas) CycleBoxZLevel(id int) {
 	if id >= 0 && id < len(c.boxes) {
 		c.boxes[id].ZLevel = (c.boxes[id].ZLevel + 1) % 4
 	}
 }
 
-// GetBoxZLevel returns the z-level of a box
 func (c *Canvas) GetBoxZLevel(id int) int {
 	if id >= 0 && id < len(c.boxes) {
 		return c.boxes[id].ZLevel
@@ -747,37 +695,23 @@ func (c *Canvas) GetBoxZLevel(id int) int {
 func (c *Canvas) SetBoxPosition(id int, x, y int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
-		oldX := box.X
-		oldY := box.Y
-		box.X = x
-		box.Y = y
-
-		// Ensure box doesn't go negative
+		oldX, oldY := box.X, box.Y
+		box.X, box.Y = x, y
 		if box.X < 0 {
 			box.X = 0
 		}
 		if box.Y < 0 {
 			box.Y = 0
 		}
-
-		deltaX := box.X - oldX
-		deltaY := box.Y - oldY
+		deltaX, deltaY := box.X-oldX, box.Y-oldY
 		if deltaX != 0 || deltaY != 0 {
 			for i := range c.connections {
 				conn := &c.connections[i]
 				if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-					newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
-					conn.FromX = newFromX
-					conn.FromY = newFromY
-					conn.ToX = newToX
-					conn.ToY = newToY
+					conn.FromX, conn.FromY, conn.ToX, conn.ToY = c.calculateConnectionPoints(id, conn.ToID)
 				}
 				if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-					newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
-					conn.FromX = newFromX
-					conn.FromY = newFromY
-					conn.ToX = newToX
-					conn.ToY = newToY
+					conn.FromX, conn.FromY, conn.ToX, conn.ToY = c.calculateConnectionPoints(conn.FromID, id)
 				}
 			}
 		}
@@ -789,8 +723,6 @@ func (c *Canvas) MoveText(id int, deltaX, deltaY int) {
 		text := &c.texts[id]
 		text.X += deltaX
 		text.Y += deltaY
-
-		// Ensure text doesn't go negative
 		if text.X < 0 {
 			text.X = 0
 		}
@@ -803,10 +735,7 @@ func (c *Canvas) MoveText(id int, deltaX, deltaY int) {
 func (c *Canvas) SetTextPosition(id int, x, y int) {
 	if id >= 0 && id < len(c.texts) {
 		text := &c.texts[id]
-		text.X = x
-		text.Y = y
-
-		// Ensure text doesn't go negative
+		text.X, text.Y = x, y
 		if text.X < 0 {
 			text.X = 0
 		}
@@ -816,26 +745,19 @@ func (c *Canvas) SetTextPosition(id int, x, y int) {
 	}
 }
 
-// MoveConnection moves all points of a connection (endpoints and waypoints) by the given delta
 func (c *Canvas) MoveConnection(connIdx int, deltaX, deltaY int) {
 	if connIdx < 0 || connIdx >= len(c.connections) {
 		return
 	}
 	conn := &c.connections[connIdx]
-	
-	// Move endpoints
 	conn.FromX += deltaX
 	conn.FromY += deltaY
 	conn.ToX += deltaX
 	conn.ToY += deltaY
-	
-	// Move waypoints
 	for i := range conn.Waypoints {
 		conn.Waypoints[i].X += deltaX
 		conn.Waypoints[i].Y += deltaY
 	}
-	
-	// Ensure coordinates don't go negative
 	if conn.FromX < 0 {
 		conn.FromX = 0
 	}
@@ -858,20 +780,14 @@ func (c *Canvas) MoveConnection(connIdx int, deltaX, deltaY int) {
 	}
 }
 
-// MoveConnectionWaypoints moves only the waypoints of a connection by the given delta
-// This is used when endpoints are already recalculated by MoveBox
 func (c *Canvas) MoveConnectionWaypoints(connIdx int, deltaX, deltaY int) {
 	if connIdx < 0 || connIdx >= len(c.connections) {
 		return
 	}
 	conn := &c.connections[connIdx]
-	
-	// Move only waypoints (endpoints are already updated by MoveBox)
 	for i := range conn.Waypoints {
 		conn.Waypoints[i].X += deltaX
 		conn.Waypoints[i].Y += deltaY
-		
-		// Ensure coordinates don't go negative
 		if conn.Waypoints[i].X < 0 {
 			conn.Waypoints[i].X = 0
 		}
@@ -884,27 +800,15 @@ func (c *Canvas) MoveConnectionWaypoints(connIdx int, deltaX, deltaY int) {
 func (c *Canvas) SetBoxSize(id int, width, height int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
-
-		oldBoxX := box.X
-		oldBoxWidth := box.Width
-		oldWidth := box.Width
-		oldHeight := box.Height
-
-		// Set minimum size constraints
-		minWidth := minBoxWidth
-		minHeight := minBoxHeight
-
-		// Apply minimum constraints
-		if width < minWidth {
-			width = minWidth
+		oldBoxX, oldBoxWidth := box.X, box.Width
+		oldWidth, oldHeight := box.Width, box.Height
+		if width < minBoxWidth {
+			width = minBoxWidth
 		}
-		if height < minHeight {
-			height = minHeight
+		if height < minBoxHeight {
+			height = minBoxHeight
 		}
-
-		// Update box size
-		box.Width = width
-		box.Height = height
+		box.Width, box.Height = width, height
 
 		if box.Width != oldWidth || box.Height != oldHeight {
 			for i := range c.connections {
@@ -965,16 +869,14 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 }
 
 func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int) []string {
-	// Ensure minimum dimensions
 	if height < 1 {
 		height = 1
 	}
 	if width < 1 {
 		width = 1
 	}
-
 	canvas := make([][]rune, height)
-	colorMap := make([][]int, height) // Track color for each cell (-1 = default)
+	colorMap := make([][]int, height)
 	for i := range canvas {
 		canvas[i] = make([]rune, width)
 		colorMap[i] = make([]int, width)
@@ -984,35 +886,27 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		}
 	}
 
-	// Draw connections first (so they appear behind boxes)
 	for _, connection := range c.connections {
 		c.drawConnectionWithPan(canvas, connection, panX, panY)
 	}
-
-	// Draw preview connection if in progress
-	// Note: previewFromX, previewFromY, previewToX, previewToY, and waypoints are in world coordinates
 	if previewFromX >= 0 && previewFromY >= 0 {
 		previewConnection := Connection{
 			FromID:    -1,
 			ToID:      -1,
-			FromX:     previewFromX, // World coordinates
-			FromY:     previewFromY, // World coordinates
-			ToX:       previewToX,   // World coordinates
-			ToY:       previewToY,   // World coordinates
+			FromX:     previewFromX,
+			FromY:     previewFromY,
+			ToX:       previewToX,
+			ToY:       previewToY,
 			Waypoints: make([]point, len(previewWaypoints)),
 		}
 		for i, wp := range previewWaypoints {
-			previewConnection.Waypoints[i] = point{X: wp.X, Y: wp.Y} // World coordinates
+			previewConnection.Waypoints[i] = point{X: wp.X, Y: wp.Y}
 		}
 		c.drawConnectionWithPan(canvas, previewConnection, panX, panY)
 	}
-
-	// Draw texts (plain text without borders)
 	for _, text := range c.texts {
 		c.drawTextWithPan(canvas, text, panX, panY)
 	}
-	
-	// Draw text input preview if in text input mode
 	if editTextX >= 0 && editTextY >= 0 && editText != "" {
 		previewText := Text{
 			X:     editTextX,
@@ -1022,14 +916,10 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		}
 		c.drawTextWithPan(canvas, previewText, panX, panY)
 	}
-
-	// Draw boxes in z-order (lower z-level first, higher z-level last)
-	// First, create a sorted list of box indices by z-level
 	boxOrder := make([]int, len(c.boxes))
 	for i := range boxOrder {
 		boxOrder[i] = i
 	}
-	// Sort by z-level (stable sort to preserve original order for same z-level)
 	for i := 0; i < len(boxOrder)-1; i++ {
 		for j := i + 1; j < len(boxOrder); j++ {
 			if c.boxes[boxOrder[i]].ZLevel > c.boxes[boxOrder[j]].ZLevel {
@@ -1037,22 +927,14 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 			}
 		}
 	}
-	
-	// Draw boxes in z-order with drop shadows
 	for _, i := range boxOrder {
 		box := c.boxes[i]
 		isSelected := (i == selectedBox)
-		
-		// Draw drop shadow based on z-level (offset increases with z-level)
 		if box.ZLevel > 0 {
-			shadowOffset := box.ZLevel
-			c.drawBoxShadow(canvas, box, shadowOffset, panX, panY)
+			c.drawBoxShadow(canvas, box, box.ZLevel, panX, panY)
 		}
-		
 		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
 	}
-
-	// Draw text editing cursor if in edit mode
 	if editBoxID >= 0 && editBoxID < len(c.boxes) {
 		box := c.boxes[editBoxID]
 		editCursorX, editCursorY := c.calculateTextCursorPosition(box, editCursorPos, editText, panX, panY)
@@ -1079,40 +961,28 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		}
 	}
 
-	// Draw navigation cursor if needed (before applying colors)
 	if showCursor && cursorY >= 0 && cursorY < height && cursorX >= 0 && cursorX < width {
 		if cursorY < len(canvas) && cursorX < len(canvas[cursorY]) {
 			canvas[cursorY][cursorX] = '█'
 		}
 	}
-
-	// Draw selection rectangle if in multi-select mode (before applying colors)
 	if selectionStartX >= 0 && selectionStartY >= 0 {
-		// Convert world coordinates to screen coordinates
 		startScreenX := selectionStartX - panX
 		startScreenY := selectionStartY - panY
 		endScreenX := selectionEndX - panX
 		endScreenY := selectionEndY - panY
-		
-		// Calculate rectangle bounds
-		minX := startScreenX
+		minX, maxX := startScreenX, startScreenX
 		if endScreenX < startScreenX {
 			minX = endScreenX
-		}
-		maxX := startScreenX
-		if endScreenX > startScreenX {
+		} else if endScreenX > startScreenX {
 			maxX = endScreenX
 		}
-		minY := startScreenY
+		minY, maxY := startScreenY, startScreenY
 		if endScreenY < startScreenY {
 			minY = endScreenY
-		}
-		maxY := startScreenY
-		if endScreenY > startScreenY {
+		} else if endScreenY > startScreenY {
 			maxY = endScreenY
 		}
-		
-		// Clamp to visible area
 		if minX < 0 {
 			minX = 0
 		}
@@ -1125,9 +995,6 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		if maxY >= height {
 			maxY = height - 1
 		}
-		
-		// Draw selection rectangle border
-		// Top and bottom edges
 		for x := minX; x <= maxX && x < width; x++ {
 			if minY >= 0 && minY < height && x >= 0 {
 				if x == minX || x == maxX {
@@ -1175,7 +1042,7 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 				}
 			}
 		}
-		
+
 		// Left and right edges
 		for y := minY + 1; y < maxY && y < height; y++ {
 			if y >= 0 {
@@ -1193,32 +1060,24 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 		}
 	}
 
-	// Apply highlights (colored backgrounds)
 	for key, colorIndex := range c.highlights {
 		var x, y int
 		fmt.Sscanf(key, "%d,%d", &x, &y)
-		// Convert world coordinates to screen coordinates
 		screenX := x - panX
 		screenY := y - panY
 		if screenY >= 0 && screenY < height && screenX >= 0 && screenX < width {
-			// Mark this cell as having a color
 			if screenY < len(colorMap) && screenX < len(colorMap[screenY]) {
 				colorMap[screenY][screenX] = colorIndex
 			}
 		}
 	}
-
-	// Convert to strings with consistent line lengths and apply colors
 	result := make([]string, height)
 	for i, row := range canvas {
-		// Ensure each line is exactly the right width
 		line := make([]rune, width)
 		copy(line, row)
 		for j := len(row); j < width; j++ {
 			line[j] = ' '
 		}
-
-		// Build string with color codes
 		var coloredLine strings.Builder
 		currentColor := -1
 		for j, char := range line {
@@ -1226,14 +1085,11 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 			if i < len(colorMap) && j < len(colorMap[i]) {
 				cellColor = colorMap[i][j]
 			}
-
-			// Apply color if it changed
 			if cellColor != currentColor {
 				if currentColor != -1 {
 					coloredLine.WriteString(colorReset)
 				}
 				if cellColor != -1 {
-					// Use text color if there's actual content, background color if it's just space
 					if char != ' ' {
 						coloredLine.WriteString(getTextColorCode(cellColor))
 					} else {
@@ -1242,43 +1098,34 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 				}
 				currentColor = cellColor
 			}
-
 			coloredLine.WriteRune(char)
 		}
-
-		// Reset color at end of line if needed
 		if currentColor != -1 {
 			coloredLine.WriteString(colorReset)
 		}
-
 		result[i] = coloredLine.String()
 	}
 
 	return result
 }
 
-// drawBoxShadow draws a drop shadow for a box based on its z-level
 func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX, panY int) {
-	// Apply pan offset to box coordinates
 	boxX := box.X - panX + shadowOffset
 	boxY := box.Y - panY + shadowOffset
-	
 	height := len(canvas)
 	width := 0
 	if height > 0 {
 		width = len(canvas[0])
 	}
-	
-	// Draw shadow using block characters
-	shadowChar := '░' // Light shade for shadow
+	shadowChar := '░'
 	if shadowOffset >= 2 {
-		shadowChar = '▒' // Medium shade for deeper shadow
+		shadowChar = '▒'
 	}
 	if shadowOffset >= 3 {
-		shadowChar = '▓' // Dark shade for deepest shadow
+		shadowChar = '▓'
 	}
-	
-	// Draw shadow rectangle (offset from box position)
+	actualBoxX := box.X - panX
+	actualBoxY := box.Y - panY
 	for y := boxY; y < boxY+box.Height && y < height; y++ {
 		if y < 0 {
 			continue
@@ -1287,11 +1134,8 @@ func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX,
 			if x < 0 {
 				continue
 			}
-			// Only draw shadow where the actual box won't be drawn
-			actualBoxX := box.X - panX
-			actualBoxY := box.Y - panY
 			if x >= actualBoxX && x < actualBoxX+box.Width && y >= actualBoxY && y < actualBoxY+box.Height {
-				continue // Skip where box will be drawn
+				continue
 			}
 			if y < len(canvas) && x < len(canvas[y]) {
 				canvas[y][x] = shadowChar
@@ -1301,10 +1145,7 @@ func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX,
 }
 
 func (c *Canvas) drawBoxWithPan(canvas [][]rune, box Box, isSelected bool, panX, panY int) {
-	// Apply pan offset to box coordinates
-	boxX := box.X - panX
-	boxY := box.Y - panY
-	c.drawBoxAt(canvas, box, isSelected, boxX, boxY)
+	c.drawBoxAt(canvas, box, isSelected, box.X-panX, box.Y-panY)
 }
 
 func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
@@ -1312,55 +1153,40 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 }
 
 func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY int) {
-	// Choose border characters based on selection state
 	var corner, horizontal, vertical rune
 	if isSelected {
-		corner = '#'
-		horizontal = '#'
-		vertical = '#'
+		corner, horizontal, vertical = '#', '#', '#'
 	} else {
-		corner = '+'
-		horizontal = '-'
-		vertical = '|'
+		corner, horizontal, vertical = '+', '-', '|'
 	}
-
-	// Draw box borders with bounds checking
 	for y := boxY; y < boxY+box.Height && y < len(canvas) && y >= 0; y++ {
 		if y >= len(canvas) {
 			break
 		}
 		for x := boxX; x < boxX+box.Width && x < len(canvas[y]) && x >= 0; x++ {
 			if y == boxY || y == boxY+box.Height-1 {
-				// Top and bottom borders
 				if x == boxX || x == boxX+box.Width-1 {
-					// Corners
 					canvas[y][x] = corner
 				} else {
 					canvas[y][x] = horizontal
 				}
 			} else if x == boxX || x == boxX+box.Width-1 {
-				// Left and right borders
 				canvas[y][x] = vertical
 			}
 		}
 	}
-
-	// Draw multi-line text inside box with bounds checking
 	for lineIdx, line := range box.Lines {
 		textY := boxY + 1 + lineIdx
 		textX := boxX + 1
-
 		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 && textX >= 0 {
-			// Truncate line if it's too long for the box
-			displayText := line
 			maxWidth := box.Width - 2
 			if maxWidth < 0 {
 				maxWidth = 0
 			}
+			displayText := line
 			if len(displayText) > maxWidth {
 				displayText = displayText[:maxWidth]
 			}
-
 			for i, char := range displayText {
 				if textX+i >= 0 && textX+i < len(canvas[textY]) && textX+i < boxX+box.Width-1 {
 					canvas[textY][textX+i] = char
@@ -1371,10 +1197,7 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 }
 
 func (c *Canvas) drawTextWithPan(canvas [][]rune, text Text, panX, panY int) {
-	// Apply pan offset to text coordinates
-	textX := text.X - panX
-	textY := text.Y - panY
-	c.drawTextAt(canvas, text, textX, textY)
+	c.drawTextAt(canvas, text, text.X-panX, text.Y-panY)
 }
 
 func (c *Canvas) drawText(canvas [][]rune, text Text) {
@@ -1382,11 +1205,9 @@ func (c *Canvas) drawText(canvas [][]rune, text Text) {
 }
 
 func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
-	// Draw multi-line text directly without borders
 	for lineIdx, line := range text.Lines {
 		lineY := textY + lineIdx
 		lineX := textX
-
 		if lineY >= 0 && lineY < len(canvas) && lineX >= 0 {
 			for i, char := range line {
 				if lineX+i >= 0 && lineX+i < len(canvas[lineY]) {
@@ -1397,106 +1218,58 @@ func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
 	}
 }
 
-// calculateTextCursorPosition calculates the screen position of the text editing cursor for a box
 func (c *Canvas) calculateTextCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
-	// Split text into lines
 	lines := strings.Split(text, "\n")
-	
-	// Find which line the cursor is on
 	currentPos := 0
 	for lineIdx, line := range lines {
 		lineLength := len([]rune(line))
 		if cursorPos <= currentPos+lineLength {
-			// Cursor is on this line
 			posInLine := cursorPos - currentPos
-			// Box text starts at box.X + 1, box.Y + 1 + lineIdx
-			cursorX := box.X + 1 + posInLine - panX
-			cursorY := box.Y + 1 + lineIdx - panY
-			return cursorX, cursorY
+			return box.X + 1 + posInLine - panX, box.Y + 1 + lineIdx - panY
 		}
-		currentPos += lineLength + 1 // +1 for newline
+		currentPos += lineLength + 1
 	}
-	
-	// Cursor is at the end - place it after the last line
 	if len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
-		cursorX := box.X + 1 + len([]rune(lastLine)) - panX
-		cursorY := box.Y + 1 + len(lines) - 1 - panY
-		return cursorX, cursorY
+		return box.X + 1 + len([]rune(lastLine)) - panX, box.Y + 1 + len(lines) - 1 - panY
 	}
-	
-	// Empty text - cursor at start
-	cursorX := box.X + 1 - panX
-	cursorY := box.Y + 1 - panY
-	return cursorX, cursorY
+	return box.X + 1 - panX, box.Y + 1 - panY
 }
 
-// calculateTextCursorPositionForText calculates the screen position of the text editing cursor for a text object
 func (c *Canvas) calculateTextCursorPositionForText(text Text, cursorPos int, textContent string, panX, panY int) (int, int) {
-	// Split text into lines
 	lines := strings.Split(textContent, "\n")
-	
-	// Find which line the cursor is on
 	currentPos := 0
 	for lineIdx, line := range lines {
 		lineLength := len([]rune(line))
 		if cursorPos <= currentPos+lineLength {
-			// Cursor is on this line
 			posInLine := cursorPos - currentPos
-			// Text starts at text.X, text.Y + lineIdx
-			cursorX := text.X + posInLine - panX
-			cursorY := text.Y + lineIdx - panY
-			return cursorX, cursorY
+			return text.X + posInLine - panX, text.Y + lineIdx - panY
 		}
-		currentPos += lineLength + 1 // +1 for newline
+		currentPos += lineLength + 1
 	}
-	
-	// Cursor is at the end - place it after the last line
 	if len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
-		cursorX := text.X + len([]rune(lastLine)) - panX
-		cursorY := text.Y + len(lines) - 1 - panY
-		return cursorX, cursorY
+		return text.X + len([]rune(lastLine)) - panX, text.Y + len(lines) - 1 - panY
 	}
-	
-	// Empty text - cursor at start
-	cursorX := text.X - panX
-	cursorY := text.Y - panY
-	return cursorX, cursorY
+	return text.X - panX, text.Y - panY
 }
 
-// calculateTextCursorPositionForNewText calculates the screen position of the text editing cursor for new text input
 func (c *Canvas) calculateTextCursorPositionForNewText(textX, textY int, cursorPos int, textContent string, panX, panY int) (int, int) {
-	// Split text into lines
 	lines := strings.Split(textContent, "\n")
-	
-	// Find which line the cursor is on
 	currentPos := 0
 	for lineIdx, line := range lines {
 		lineLength := len([]rune(line))
 		if cursorPos <= currentPos+lineLength {
-			// Cursor is on this line
 			posInLine := cursorPos - currentPos
-			// Text starts at textX, textY + lineIdx
-			cursorX := textX + posInLine - panX
-			cursorY := textY + lineIdx - panY
-			return cursorX, cursorY
+			return textX + posInLine - panX, textY + lineIdx - panY
 		}
-		currentPos += lineLength + 1 // +1 for newline
+		currentPos += lineLength + 1
 	}
-	
-	// Cursor is at the end - place it after the last line
 	if len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
-		cursorX := textX + len([]rune(lastLine)) - panX
-		cursorY := textY + len(lines) - 1 - panY
-		return cursorX, cursorY
+		return textX + len([]rune(lastLine)) - panX, textY + len(lines) - 1 - panY
 	}
-	
-	// Empty text - cursor at start
-	cursorX := textX - panX
-	cursorY := textY - panY
-	return cursorX, cursorY
+	return textX - panX, textY - panY
 }
 
 func (c *Canvas) isPointInBox(x, y int, excludeFromID, excludeToID int) bool {
@@ -2021,30 +1794,21 @@ func (c *Canvas) drawCorner(canvas [][]rune, cornerX, cornerY int, prevX, prevY,
 }
 
 func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, panX, panY int) {
-	// Apply pan offset to connection coordinates for drawing
-	fromX := connection.FromX - panX
-	fromY := connection.FromY - panY
-	toX := connection.ToX - panX
-	toY := connection.ToY - panY
-
-	// Create a copy of connection with adjusted screen coordinates for drawing
 	adjustedConnection := connection
-	adjustedConnection.FromX = fromX
-	adjustedConnection.FromY = fromY
-	adjustedConnection.ToX = toX
-	adjustedConnection.ToY = toY
+	adjustedConnection.FromX = connection.FromX - panX
+	adjustedConnection.FromY = connection.FromY - panY
+	adjustedConnection.ToX = connection.ToX - panX
+	adjustedConnection.ToY = connection.ToY - panY
 	adjustedConnection.Waypoints = make([]point, len(connection.Waypoints))
 	for i, wp := range connection.Waypoints {
 		adjustedConnection.Waypoints[i] = point{X: wp.X - panX, Y: wp.Y - panY}
 	}
-	// Pass original connection for arrow calculations (uses world coordinates)
 	c.drawConnection(canvas, adjustedConnection, connection, panX, panY)
 }
 
 func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, originalConnection Connection, panX, panY int) {
 	fromX, fromY := connection.FromX, connection.FromY
 	toX, toY := connection.ToX, connection.ToY
-	// Use original world coordinates for arrow calculations
 	origFromX, origFromY := originalConnection.FromX, originalConnection.FromY
 	origToX, origToY := originalConnection.ToX, originalConnection.ToY
 
@@ -2426,83 +2190,59 @@ func abs(x int) int {
 	return x
 }
 
-// Helper function to get ANSI color code for background
 func getColorCode(colorIndex int) string {
-	// ANSI background color codes: 40-47 for standard colors
-	// Using standard colors for better terminal compatibility
-	// Colors: Gray (white), Red, Green, Yellow, Blue, Magenta, Cyan, White
 	colors := []int{47, 41, 42, 43, 44, 45, 46, 47}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
 	}
-	// Use proper ANSI escape sequence format - ensure it's a valid escape sequence
 	return fmt.Sprintf("\x1b[%dm", colors[colorIndex])
 }
 
-// Helper function to get ANSI color code for text (foreground)
 func getTextColorCode(colorIndex int) string {
-	// ANSI foreground color codes: 30-37 for standard colors
-	// Using standard colors for better terminal compatibility
-	// Colors: Gray (white), Red, Green, Yellow, Blue, Magenta, Cyan, White
 	colors := []int{37, 31, 32, 33, 34, 35, 36, 37}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
 	}
-	// Use proper ANSI escape sequence format - ensure it's a valid escape sequence
 	return fmt.Sprintf("\x1b[%dm", colors[colorIndex])
 }
 
-// Reset color code
 const colorReset = "\x1b[0m"
 
-// Set highlight at world coordinates
 func (c *Canvas) SetHighlight(x, y int, colorIndex int) {
 	if colorIndex < 0 || colorIndex >= numColors {
 		return
 	}
-	key := fmt.Sprintf("%d,%d", x, y)
-	c.highlights[key] = colorIndex
+	c.highlights[fmt.Sprintf("%d,%d", x, y)] = colorIndex
 }
 
-// Get highlight color at world coordinates
 func (c *Canvas) GetHighlight(x, y int) int {
-	key := fmt.Sprintf("%d,%d", x, y)
-	if color, ok := c.highlights[key]; ok {
+	if color, ok := c.highlights[fmt.Sprintf("%d,%d", x, y)]; ok {
 		return color
 	}
 	return -1
 }
 
-// Clear highlight at world coordinates
 func (c *Canvas) ClearHighlight(x, y int) {
-	key := fmt.Sprintf("%d,%d", x, y)
-	delete(c.highlights, key)
+	delete(c.highlights, fmt.Sprintf("%d,%d", x, y))
 }
 
-// MoveHighlight moves a highlight from one position to another
 func (c *Canvas) MoveHighlight(fromX, fromY, toX, toY int) {
 	fromKey := fmt.Sprintf("%d,%d", fromX, fromY)
 	if colorIndex, exists := c.highlights[fromKey]; exists {
-		// Remove from old position
 		delete(c.highlights, fromKey)
-		// Set at new position (only if new position is valid)
 		if toX >= 0 && toY >= 0 {
-			toKey := fmt.Sprintf("%d,%d", toX, toY)
-			c.highlights[toKey] = colorIndex
+			c.highlights[fmt.Sprintf("%d,%d", toX, toY)] = colorIndex
 		}
 	}
 }
 
-// MoveHighlightsInRegion moves all highlights in a rectangular region by the given delta
 func (c *Canvas) MoveHighlightsInRegion(minX, minY, maxX, maxY, deltaX, deltaY int) {
-	// Collect all highlights in the region with their positions and colors
 	type highlightInfo struct {
 		x, y  int
 		color int
 	}
 	highlightsToMove := make([]highlightInfo, 0)
 	keysToDelete := make([]string, 0)
-	
 	for key, colorIndex := range c.highlights {
 		var x, y int
 		fmt.Sscanf(key, "%d,%d", &x, &y)
@@ -2511,24 +2251,18 @@ func (c *Canvas) MoveHighlightsInRegion(minX, minY, maxX, maxY, deltaX, deltaY i
 			keysToDelete = append(keysToDelete, key)
 		}
 	}
-	
-	// First, delete ALL old positions
 	for _, key := range keysToDelete {
 		delete(c.highlights, key)
 	}
-	
-	// Then, create ALL new positions
 	for _, h := range highlightsToMove {
 		newX := h.x + deltaX
 		newY := h.y + deltaY
 		if newX >= 0 && newY >= 0 {
-			newKey := fmt.Sprintf("%d,%d", newX, newY)
-			c.highlights[newKey] = h.color
+			c.highlights[fmt.Sprintf("%d,%d", newX, newY)] = h.color
 		}
 	}
 }
 
-// Get all cells that make up a box
 func (c *Canvas) GetBoxCells(boxID int) []point {
 	if boxID < 0 || boxID >= len(c.boxes) {
 		return nil
@@ -2543,7 +2277,6 @@ func (c *Canvas) GetBoxCells(boxID int) []point {
 	return cells
 }
 
-// Get all cells that make up a text
 func (c *Canvas) GetTextCells(textID int) []point {
 	if textID < 0 || textID >= len(c.texts) {
 		return nil
@@ -2559,27 +2292,19 @@ func (c *Canvas) GetTextCells(textID int) []point {
 	return cells
 }
 
-// Get all cells that make up a connection
 func (c *Canvas) GetConnectionCells(connIdx int) []point {
 	if connIdx < 0 || connIdx >= len(c.connections) {
 		return nil
 	}
 	conn := c.connections[connIdx]
 	cells := make([]point, 0)
-
-	// Build path from waypoints
 	points := []point{{conn.FromX, conn.FromY}}
 	points = append(points, conn.Waypoints...)
 	points = append(points, point{conn.ToX, conn.ToY})
-
-	// Add all cells along the path
 	for i := 0; i < len(points)-1; i++ {
 		from := points[i]
 		to := points[i+1]
-
-		// Add cells along the line segment
 		if from.X == to.X {
-			// Vertical line
 			startY, endY := from.Y, to.Y
 			if startY > endY {
 				startY, endY = endY, startY
@@ -2588,7 +2313,6 @@ func (c *Canvas) GetConnectionCells(connIdx int) []point {
 				cells = append(cells, point{X: from.X, Y: y})
 			}
 		} else if from.Y == to.Y {
-			// Horizontal line
 			startX, endX := from.X, to.X
 			if startX > endX {
 				startX, endX = endX, startX
@@ -2597,11 +2321,8 @@ func (c *Canvas) GetConnectionCells(connIdx int) []point {
 				cells = append(cells, point{X: x, Y: from.Y})
 			}
 		} else {
-			// Diagonal line - use L-shaped path
 			cornerX := to.X
 			cornerY := from.Y
-
-			// Horizontal segment
 			startX, endX := from.X, cornerX
 			if startX > endX {
 				startX, endX = endX, startX
@@ -2609,8 +2330,6 @@ func (c *Canvas) GetConnectionCells(connIdx int) []point {
 			for x := startX; x <= endX; x++ {
 				cells = append(cells, point{X: x, Y: from.Y})
 			}
-
-			// Vertical segment
 			startY, endY := cornerY, to.Y
 			if startY > endY {
 				startY, endY = endY, startY
@@ -2620,45 +2339,34 @@ func (c *Canvas) GetConnectionCells(connIdx int) []point {
 			}
 		}
 	}
-
 	return cells
 }
 
-// Get all adjacent highlighted cells of the same color (flood fill)
 func (c *Canvas) GetAdjacentHighlightsOfColor(startX, startY int, targetColor int) []point {
 	if targetColor < 0 || targetColor >= numColors {
 		return nil
 	}
-
 	visited := make(map[string]bool)
 	queue := []point{{startX, startY}}
 	result := make([]point, 0)
-
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-
 		key := fmt.Sprintf("%d,%d", current.X, current.Y)
 		if visited[key] {
 			continue
 		}
-
-		// Check if this cell has the target color
 		if c.GetHighlight(current.X, current.Y) != targetColor {
 			continue
 		}
-
 		visited[key] = true
 		result = append(result, current)
-
-		// Check all 4 adjacent cells (up, down, left, right)
 		adjacent := []point{
-			{current.X, current.Y - 1}, // up
-			{current.X, current.Y + 1}, // down
-			{current.X - 1, current.Y}, // left
-			{current.X + 1, current.Y}, // right
+			{current.X, current.Y - 1},
+			{current.X, current.Y + 1},
+			{current.X - 1, current.Y},
+			{current.X + 1, current.Y},
 		}
-
 		for _, adj := range adjacent {
 			adjKey := fmt.Sprintf("%d,%d", adj.X, adj.Y)
 			if !visited[adjKey] {
@@ -2666,7 +2374,6 @@ func (c *Canvas) GetAdjacentHighlightsOfColor(startX, startY int, targetColor in
 			}
 		}
 	}
-
 	return result
 }
 
@@ -2725,14 +2432,11 @@ func (c *Canvas) SaveToFile(filename string) error {
 	return nil
 }
 
-// SaveToFileWithPan saves the canvas and pan position to a file
 func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 	err := c.SaveToFile(filename)
 	if err != nil {
 		return err
 	}
-
-	// Append pan position to the file
 	file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -2756,13 +2460,9 @@ func (c *Canvas) LoadFromFile(filename string) error {
 	c.highlights = make(map[string]int)
 
 	scanner := bufio.NewScanner(file)
-
-	// Read header
 	if !scanner.Scan() || scanner.Text() != "FLOWCHART" {
 		return fmt.Errorf("invalid file format")
 	}
-
-	// Read boxes
 	if !scanner.Scan() {
 		return fmt.Errorf("missing boxes header")
 	}
@@ -2787,26 +2487,20 @@ func (c *Canvas) LoadFromFile(filename string) error {
 
 		var width, height, zLevel int
 		var text string
-
 		if len(parts) >= 6 {
-			// New format with ZLevel: X,Y,Width,Height,ZLevel,Text
-			// OR old format with color: X,Y,Width,Height,Color,Text
 			width, _ = strconv.Atoi(parts[2])
 			height, _ = strconv.Atoi(parts[3])
 			zLevel, _ = strconv.Atoi(parts[4])
-			// Ensure ZLevel is in valid range (0-3)
 			if zLevel < 0 || zLevel > 3 {
 				zLevel = 0
 			}
 			text = strings.ReplaceAll(strings.Join(parts[5:], ","), "\\n", "\n")
 		} else if len(parts) >= 5 {
-			// Old format without ZLevel: X,Y,Width,Height,Text
 			width, _ = strconv.Atoi(parts[2])
 			height, _ = strconv.Atoi(parts[3])
 			zLevel = 0
 			text = strings.ReplaceAll(strings.Join(parts[4:], ","), "\\n", "\n")
 		} else {
-			// Very old format: X,Y,Text
 			text = strings.ReplaceAll(strings.Join(parts[2:], ","), "\\n", "\n")
 			box := Box{
 				X:      x,
@@ -2831,7 +2525,6 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		c.boxes = append(c.boxes, box)
 	}
 
-	// Read connections
 	if !scanner.Scan() {
 		return fmt.Errorf("missing connections header")
 	}
@@ -2926,7 +2619,6 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		}
 	}
 
-	// Read highlights (optional, for backward compatibility)
 	if scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "HIGHLIGHTS:") {
@@ -2949,36 +2641,28 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				}
 			}
 		}
-		// If it wasn't HIGHLIGHTS, we've already scanned past it, so we're done
 	}
 
 	return scanner.Err()
 }
 
-// LoadFromFileWithPan loads the canvas and pan position from a file
-// Returns the canvas, panX, panY, and any error
 func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
 	err := c.LoadFromFile(filename)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	// Try to read pan position from file
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer file.Close()
-
 	scanner := bufio.NewScanner(file)
 	panX, panY := 0, 0
-
-	// Scan through file to find PAN line
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "PAN:") {
-			panStr := strings.TrimPrefix(line, "PAN:")
-			parts := strings.Split(panStr, ",")
+			parts := strings.Split(strings.TrimPrefix(line, "PAN:"), ",")
 			if len(parts) >= 2 {
 				panX, _ = strconv.Atoi(parts[0])
 				panY, _ = strconv.Atoi(parts[1])
@@ -2995,16 +2679,11 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 		return fmt.Errorf("nothing to export")
 	}
 
-	// Character cell dimensions (pixels per character)
 	charWidth := 8.0
 	charHeight := 16.0
-
-	// Calculate bounds of all elements
 	minX, minY := 0, 0
 	maxX, maxY := 0, 0
 	hasElements := false
-
-	// Check boxes
 	for _, box := range c.boxes {
 		if !hasElements {
 			minX, minY = box.X, box.Y
@@ -3026,7 +2705,6 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 		}
 	}
 
-	// Check connections (including waypoints)
 	for _, conn := range c.connections {
 		points := []point{{conn.FromX, conn.FromY}}
 		points = append(points, conn.Waypoints...)
@@ -3054,7 +2732,6 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 		}
 	}
 
-	// Check texts
 	for _, text := range c.texts {
 		if !hasElements {
 			minX, minY = text.X, text.Y
@@ -3067,7 +2744,6 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 			if text.Y < minY {
 				minY = text.Y
 			}
-			// Estimate text bounds (rough)
 			maxTextX := text.X
 			for _, line := range text.Lines {
 				if text.X+len(line) > maxTextX {
@@ -3087,49 +2763,34 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 		return fmt.Errorf("nothing to export")
 	}
 
-	// Add padding
 	padding := 2
 	minX -= padding
 	minY -= padding
 	maxX += padding
 	maxY += padding
-
-	// Calculate image dimensions
 	imageWidth := int(float64(maxX-minX) * charWidth)
 	imageHeight := int(float64(maxY-minY) * charHeight)
-
-	// Create drawing context
 	dc := gg.NewContext(imageWidth, imageHeight)
 	dc.SetColor(color.White)
 	dc.Clear()
 	dc.SetColor(color.Black)
-
-	// Load font for text rendering
 	fontData := gomono.TTF
 	ttfFont, err := truetype.Parse(fontData)
 	if err != nil {
 		return fmt.Errorf("failed to parse font: %v", err)
 	}
-
-	fontSize := 12.0
 	face := truetype.NewFace(ttfFont, &truetype.Options{
-		Size:    fontSize,
+		Size:    12.0,
 		DPI:     72,
 		Hinting: font.HintingFull,
 	})
 	dc.SetFontFace(face)
-
-	// Draw connections first (so they appear behind boxes)
 	for _, conn := range c.connections {
 		c.drawConnectionPNG(dc, conn, minX, minY, charWidth, charHeight)
 	}
-
-	// Draw texts
 	for _, text := range c.texts {
 		c.drawTextPNG(dc, text, minX, minY, charWidth, charHeight)
 	}
-
-	// Draw boxes last (so they appear on top)
 	for _, box := range c.boxes {
 		c.drawBoxPNG(dc, box, minX, minY, charWidth, charHeight)
 	}
@@ -3138,77 +2799,50 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 }
 
 func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY int, charWidth, charHeight float64) {
-	// Build path from waypoints
 	points := []point{{conn.FromX, conn.FromY}}
 	points = append(points, conn.Waypoints...)
 	points = append(points, point{conn.ToX, conn.ToY})
-
 	if len(points) < 2 {
 		return
 	}
-
-	// Convert to pixel coordinates
 	dc.SetLineWidth(1.0)
 	dc.SetColor(color.Black)
-
-	// Draw line segments
 	for i := 0; i < len(points)-1; i++ {
 		x1 := float64(points[i].X-minX) * charWidth
 		y1 := float64(points[i].Y-minY) * charHeight
 		x2 := float64(points[i+1].X-minX) * charWidth
 		y2 := float64(points[i+1].Y-minY) * charHeight
-
 		dc.DrawLine(x1, y1, x2, y2)
 		dc.Stroke()
 	}
-
-	// Draw arrows
-	if conn.ArrowFrom && len(points) > 0 {
-		// Arrow at start
-		if len(points) > 1 {
-			c.drawArrowPNG(dc, points[1].X, points[1].Y, points[0].X, points[0].Y, minX, minY, charWidth, charHeight)
-		}
+	if conn.ArrowFrom && len(points) > 1 {
+		c.drawArrowPNG(dc, points[1].X, points[1].Y, points[0].X, points[0].Y, minX, minY, charWidth, charHeight)
 	}
 	if conn.ArrowTo && len(points) > 1 {
-		// Arrow at end
 		c.drawArrowPNG(dc, points[len(points)-2].X, points[len(points)-2].Y, points[len(points)-1].X, points[len(points)-1].Y, minX, minY, charWidth, charHeight)
 	}
 }
 
 func (c *Canvas) drawArrowPNG(dc *gg.Context, fromX, fromY, toX, toY, minX, minY int, charWidth, charHeight float64) {
-	// Convert to pixel coordinates
 	fx := float64(fromX-minX) * charWidth
 	fy := float64(fromY-minY) * charHeight
 	tx := float64(toX-minX) * charWidth
 	ty := float64(toY-minY) * charHeight
-
-	// Calculate arrow direction
 	dx := tx - fx
 	dy := ty - fy
 	length := math.Sqrt(dx*dx + dy*dy)
 	if length < 0.1 {
 		return
 	}
-
-	// Normalize
 	dx /= length
 	dy /= length
-
-	// Arrow size
 	arrowSize := 6.0
-	arrowAngle := 0.5 // radians
-
-	// Arrow tip
-	tipX := tx
-	tipY := ty
-
-	// Arrow base points
+	arrowAngle := 0.5
+	tipX, tipY := tx, ty
 	baseX1 := tx - arrowSize*dx + arrowSize*dy*arrowAngle
 	baseY1 := ty - arrowSize*dy - arrowSize*dx*arrowAngle
 	baseX2 := tx - arrowSize*dx - arrowSize*dy*arrowAngle
 	baseY2 := ty - arrowSize*dy + arrowSize*dx*arrowAngle
-
-	// Draw arrow
 	dc.MoveTo(tipX, tipY)
 	dc.LineTo(baseX1, baseY1)
 	dc.LineTo(baseX2, baseY2)
@@ -3217,33 +2851,23 @@ func (c *Canvas) drawArrowPNG(dc *gg.Context, fromX, fromY, toX, toY, minX, minY
 }
 
 func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, charHeight float64) {
-	// Convert box coordinates to pixel coordinates
 	x := float64(box.X-minX) * charWidth
 	y := float64(box.Y-minY) * charHeight
 	width := float64(box.Width) * charWidth
 	height := float64(box.Height) * charHeight
-
-	// Draw box border
 	dc.SetLineWidth(1.0)
 	dc.SetColor(color.Black)
 	dc.DrawRectangle(x, y, width, height)
 	dc.Stroke()
-
-	// Draw box text
-	dc.SetColor(color.Black)
 	textY := y + charHeight
 	for i, line := range box.Lines {
-		textX := x + charWidth
-		dc.DrawString(line, textX, textY+float64(i)*charHeight)
+		dc.DrawString(line, x+charWidth, textY+float64(i)*charHeight)
 	}
 }
 
 func (c *Canvas) drawTextPNG(dc *gg.Context, text Text, minX, minY int, charWidth, charHeight float64) {
-	// Convert text coordinates to pixel coordinates
 	x := float64(text.X-minX) * charWidth
 	y := float64(text.Y-minY) * charHeight
-
-	// Draw text lines
 	dc.SetColor(color.Black)
 	for i, line := range text.Lines {
 		dc.DrawString(line, x, y+float64(i)*charHeight)

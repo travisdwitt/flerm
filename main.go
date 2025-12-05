@@ -23,23 +23,17 @@ func main() {
 }
 
 func (m *model) renderBufferBar(width int) string {
-	// Only show buffer bar when there is more than one buffer
 	if len(m.buffers) <= 1 {
 		return strings.Repeat(" ", width)
 	}
-
 	var bar strings.Builder
 	bar.WriteString("Open Charts: ")
-
 	for i, buf := range m.buffers {
 		if i > 0 {
 			bar.WriteString(" | ")
 		}
-
-		// Get buffer name
 		bufName := fmt.Sprintf("%d", i+1)
 		if buf.filename != "" {
-			// Show filename without extension
 			name := buf.filename
 			if strings.HasSuffix(strings.ToLower(name), ".sav") {
 				name = name[:len(name)-4]
@@ -48,8 +42,6 @@ func (m *model) renderBufferBar(width int) string {
 		} else {
 			bufName = fmt.Sprintf("Buffer %d", i+1)
 		}
-
-		// Highlight current buffer
 		if i == m.currentBufferIndex {
 			bar.WriteString("[")
 			bar.WriteString(bufName)
@@ -58,34 +50,23 @@ func (m *model) renderBufferBar(width int) string {
 			bar.WriteString(bufName)
 		}
 	}
-
-	// Pad to width
 	currentLen := bar.Len()
 	if currentLen < width {
 		bar.WriteString(strings.Repeat(" ", width-currentLen))
 	} else {
-		// Truncate if too long
 		return bar.String()[:width]
 	}
-
 	return bar.String()
 }
 
 func initialModel() model {
-	// Load configuration
 	config := loadConfig()
-
-	// Determine initial mode based on config
 	initialMode := ModeStartup
 	if !config.StartMenu {
-		// Skip start menu, create new empty canvas
 		initialMode = ModeNormal
 	}
-
-	canvas := NewCanvas()
-
 	buffer := Buffer{
-		canvas:    canvas,
+		canvas:    NewCanvas(),
 		undoStack: []Action{},
 		redoStack: []Action{},
 		filename:  "",
@@ -126,7 +107,6 @@ func (m *model) ensureCursorInBounds() {
 	if m.width > 0 && m.cursorX >= m.width {
 		m.cursorX = m.width - 1
 	}
-	// Leave room for status line
 	maxY := m.height - 2
 	if maxY < 0 {
 		maxY = 0
@@ -138,41 +118,30 @@ func (m *model) ensureCursorInBounds() {
 
 func (m *model) scanTxtFiles() {
 	m.fileList = []string{}
-
-	// Get directory to scan (use save directory if configured, otherwise current directory)
-	var dir string
-	var err error
+	dir := ""
 	if m.config != nil && m.config.SaveDirectory != "" {
 		dir = m.config.SaveDirectory
 	} else {
+		var err error
 		dir, err = os.Getwd()
 		if err != nil {
 			m.selectedFileIndex = -1
 			return
 		}
 	}
-
-	// Read directory
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		m.selectedFileIndex = -1
 		return
 	}
-
-	// Filter .sav files
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".sav") {
 			m.fileList = append(m.fileList, entry.Name())
 		}
 	}
-
-	// Sort files alphabetically
 	sort.Strings(m.fileList)
-
-	// Set initial selection
 	if len(m.fileList) > 0 {
 		m.selectedFileIndex = 0
-		// Set filename to first file (without extension)
 		firstFile := m.fileList[0]
 		if strings.HasSuffix(strings.ToLower(firstFile), ".sav") {
 			m.filename = firstFile[:len(firstFile)-4]
@@ -184,6 +153,122 @@ func (m *model) scanTxtFiles() {
 	}
 }
 
+func (m *model) moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY int) point {
+	if len(m.originalHighlights) == 0 {
+		return m.highlightMoveDelta
+	}
+	for origPos := range m.originalHighlights {
+		m.getCanvas().ClearHighlight(origPos.X+m.highlightMoveDelta.X, origPos.Y+m.highlightMoveDelta.Y)
+	}
+	for origPos, color := range m.originalHighlights {
+		newX, newY := origPos.X+cumulativeDeltaX, origPos.Y+cumulativeDeltaY
+		if newX >= 0 && newY >= 0 {
+			m.getCanvas().SetHighlight(newX, newY, color)
+		}
+	}
+	return point{X: cumulativeDeltaX, Y: cumulativeDeltaY}
+}
+
+func (m *model) moveContainedConnections(deltaX, deltaY int) {
+	var cumulativeDeltaX, cumulativeDeltaY int
+	if len(m.selectedBoxes) > 0 {
+		boxID := m.selectedBoxes[0]
+		if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+			if originalPos, hasOriginal := m.originalBoxPositions[boxID]; hasOriginal {
+				currentBox := m.getCanvas().boxes[boxID]
+				cumulativeDeltaX, cumulativeDeltaY = currentBox.X-originalPos.X, currentBox.Y-originalPos.Y
+			}
+		}
+	} else if len(m.selectedConnections) > 0 {
+		connIdx := m.selectedConnections[0]
+		if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+			conn := m.getCanvas().connections[connIdx]
+			if originalConn, hasOriginal := m.originalConnections[connIdx]; hasOriginal {
+				cumulativeDeltaX, cumulativeDeltaY = conn.FromX-originalConn.FromX+deltaX, conn.FromY-originalConn.FromY+deltaY
+			} else {
+				cumulativeDeltaX, cumulativeDeltaY = deltaX, deltaY
+			}
+		}
+	}
+	for _, connIdx := range m.selectedConnections {
+		if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+			conn := &m.getCanvas().connections[connIdx]
+			if conn.FromID == -1 {
+				conn.FromX += cumulativeDeltaX
+				conn.FromY += cumulativeDeltaY
+			}
+			if conn.ToID == -1 {
+				conn.ToX += cumulativeDeltaX
+				conn.ToY += cumulativeDeltaY
+			}
+			for i := range conn.Waypoints {
+				conn.Waypoints[i].X += cumulativeDeltaX
+				conn.Waypoints[i].Y += cumulativeDeltaY
+			}
+		}
+	}
+}
+
+func (m *model) handleSingleElementMove(deltaX, deltaY int) {
+	if m.selectedBox != -1 {
+		m.getCanvas().MoveBox(m.selectedBox, deltaX, deltaY)
+		if len(m.originalHighlights) > 0 {
+			cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
+			cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
+			m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+		}
+		m.ensureCursorInBounds()
+	} else if m.selectedText != -1 {
+		m.getCanvas().MoveText(m.selectedText, deltaX, deltaY)
+		if len(m.originalHighlights) > 0 {
+			cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
+			cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
+			m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+		}
+		m.ensureCursorInBounds()
+	}
+}
+
+func (m *model) handleMultiSelectMove(deltaX, deltaY int) {
+	for _, boxID := range m.selectedBoxes {
+		m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
+	}
+	for _, textID := range m.selectedTexts {
+		m.getCanvas().MoveText(textID, deltaX, deltaY)
+	}
+	m.moveContainedConnections(deltaX, deltaY)
+	var cumulativeDeltaX, cumulativeDeltaY int
+	if len(m.selectedBoxes) > 0 {
+		boxID := m.selectedBoxes[0]
+		if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
+			if originalPos, hasOriginal := m.originalBoxPositions[boxID]; hasOriginal {
+				currentBox := m.getCanvas().boxes[boxID]
+				cumulativeDeltaX, cumulativeDeltaY = currentBox.X-originalPos.X, currentBox.Y-originalPos.Y
+			}
+		}
+	} else if len(m.selectedTexts) > 0 {
+		textID := m.selectedTexts[0]
+		if textID >= 0 && textID < len(m.getCanvas().texts) {
+			if originalPos, hasOriginal := m.originalTextPositions[textID]; hasOriginal {
+				currentText := m.getCanvas().texts[textID]
+				cumulativeDeltaX, cumulativeDeltaY = currentText.X-originalPos.X, currentText.Y-originalPos.Y
+			}
+		}
+	} else if len(m.selectedConnections) > 0 {
+		connIdx := m.selectedConnections[0]
+		if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
+			conn := m.getCanvas().connections[connIdx]
+			if originalConn, hasOriginal := m.originalConnections[connIdx]; hasOriginal {
+				cumulativeDeltaX, cumulativeDeltaY = conn.FromX-originalConn.FromX, conn.FromY-originalConn.FromY
+			}
+		}
+	} else if len(m.originalHighlights) > 0 {
+		cumulativeDeltaX, cumulativeDeltaY = m.highlightMoveDelta.X+deltaX, m.highlightMoveDelta.Y+deltaY
+	}
+	m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+	m.ensureCursorInBounds()
+}
+
 func (m model) Init() tea.Cmd {
 	return nil
 }
@@ -193,121 +278,6 @@ func forceRefresh() tea.Msg {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Helper function to move highlights in multiselect
-	// This moves all stored highlights from their current positions to new positions
-	// based on the cumulative delta from their original positions
-	// Returns the new highlightMoveDelta that should be stored
-	moveHighlightsOnSelectedObjects := func(cumulativeDeltaX, cumulativeDeltaY int) point {
-		if len(m.originalHighlights) == 0 {
-			return m.highlightMoveDelta
-		}
-
-		// Clear highlights at their current positions (original + current delta)
-		for origPos := range m.originalHighlights {
-			currentX := origPos.X + m.highlightMoveDelta.X
-			currentY := origPos.Y + m.highlightMoveDelta.Y
-			m.getCanvas().ClearHighlight(currentX, currentY)
-		}
-
-		// Set highlights at their new positions (original + cumulative delta)
-		for origPos, color := range m.originalHighlights {
-			newX := origPos.X + cumulativeDeltaX
-			newY := origPos.Y + cumulativeDeltaY
-			if newX >= 0 && newY >= 0 {
-				m.getCanvas().SetHighlight(newX, newY, color)
-			}
-		}
-
-		// Return the new delta to track where highlights are now
-		return point{X: cumulativeDeltaX, Y: cumulativeDeltaY}
-	}
-
-	// Helper function to move contained connections as a unit
-	// After boxes are moved, we need to move connection points (endpoints and waypoints) by the same delta
-	moveContainedConnections := func(deltaX, deltaY int) {
-		// Calculate cumulative delta from first selected box's position (if boxes are selected)
-		// All boxes move by the same amount, so we can use any box to calculate the total movement
-		// If no boxes are selected, we'll use incremental delta and track cumulative movement
-		var cumulativeDeltaX, cumulativeDeltaY int
-		if len(m.selectedBoxes) > 0 {
-			boxID := m.selectedBoxes[0]
-			if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-				currentBox := m.getCanvas().boxes[boxID]
-				originalPos, hasOriginal := m.originalBoxPositions[boxID]
-				if hasOriginal {
-					cumulativeDeltaX = currentBox.X - originalPos.X
-					cumulativeDeltaY = currentBox.Y - originalPos.Y
-				}
-			}
-		} else {
-			// No boxes selected - for connections-only, we need to track cumulative movement
-			// Calculate from first connection's current position vs original, then add incremental
-			if len(m.selectedConnections) > 0 {
-				connIdx := m.selectedConnections[0]
-				if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-					conn := m.getCanvas().connections[connIdx]
-					originalConn, hasOriginal := m.originalConnections[connIdx]
-					if hasOriginal {
-						// Calculate cumulative movement from original position
-						cumulativeDeltaX = conn.FromX - originalConn.FromX
-						cumulativeDeltaY = conn.FromY - originalConn.FromY
-						// Add the incremental delta for this move
-						cumulativeDeltaX += deltaX
-						cumulativeDeltaY += deltaY
-					} else {
-						// No original stored (shouldn't happen, but handle it)
-						cumulativeDeltaX = deltaX
-						cumulativeDeltaY = deltaY
-					}
-				}
-			}
-		}
-
-		// Move all connection points by the cumulative delta
-		for _, connIdx := range m.selectedConnections {
-			originalConn, hasOriginal := m.originalConnections[connIdx]
-			if hasOriginal && connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-				conn := &m.getCanvas().connections[connIdx]
-				// Restore original endpoints and move by cumulative delta
-				// This ensures the connection moves as a rigid unit
-				conn.FromX = originalConn.FromX + cumulativeDeltaX
-				conn.FromY = originalConn.FromY + cumulativeDeltaY
-				conn.ToX = originalConn.ToX + cumulativeDeltaX
-				conn.ToY = originalConn.ToY + cumulativeDeltaY
-
-				// Move waypoints
-				if len(conn.Waypoints) == len(originalConn.Waypoints) {
-					for i := range conn.Waypoints {
-						conn.Waypoints[i].X = originalConn.Waypoints[i].X + cumulativeDeltaX
-						conn.Waypoints[i].Y = originalConn.Waypoints[i].Y + cumulativeDeltaY
-					}
-				}
-
-				// Ensure coordinates don't go negative
-				if conn.FromX < 0 {
-					conn.FromX = 0
-				}
-				if conn.FromY < 0 {
-					conn.FromY = 0
-				}
-				if conn.ToX < 0 {
-					conn.ToX = 0
-				}
-				if conn.ToY < 0 {
-					conn.ToY = 0
-				}
-				for i := range conn.Waypoints {
-					if conn.Waypoints[i].X < 0 {
-						conn.Waypoints[i].X = 0
-					}
-					if conn.Waypoints[i].Y < 0 {
-						conn.Waypoints[i].Y = 0
-					}
-				}
-			}
-		}
-	}
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -468,16 +438,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.zPanMode = !m.zPanMode
 				return m, nil
 			case "b":
-				// Clear z-pan mode when other keys are pressed
 				m.zPanMode = false
 				boxID := len(m.getCanvas().boxes)
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				m.getCanvas().AddBox(worldX, worldY, "Box")
 				addData := AddBoxData{X: worldX, Y: worldY, Text: "Box", ID: boxID}
 				deleteData := DeleteBoxData{ID: boxID, Connections: nil}
@@ -488,25 +452,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "t":
 				m.zPanMode = false
 				m.mode = ModeTextInput
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				m.textInputX = m.cursorX + panX
-				m.textInputY = m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				m.textInputX, m.textInputY = m.cursorX+panX, m.cursorY+panY
 				m.textInputText = ""
 				m.textInputCursorPos = 0
 				return m, nil
 			case "r":
 				m.zPanMode = false
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				if boxID != -1 {
 					m.selectedBox = boxID
@@ -519,37 +473,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "m":
 				m.zPanMode = false
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				textID := m.getCanvas().GetTextAt(worldX, worldY)
 				if boxID != -1 {
 					m.selectedBox = boxID
 					m.selectedText = -1
-					// Clear multiselect state to ensure single-element move
 					m.selectedBoxes = []int{}
 					m.selectedTexts = []int{}
 					m.selectedConnections = []int{}
 					m.originalBoxPositions = make(map[int]point)
 					m.originalTextPositions = make(map[int]point)
 					m.originalConnections = make(map[int]Connection)
-					// Capture highlights within this box's bounds for movement
 					m.originalHighlights = make(map[point]int)
 					m.highlightMoveDelta = point{X: 0, Y: 0}
 					if boxID < len(m.getCanvas().boxes) {
 						box := m.getCanvas().boxes[boxID]
-						m.originalMoveX = box.X
-						m.originalMoveY = box.Y
-						// Capture all highlights within the box bounds
+						m.originalMoveX, m.originalMoveY = box.X, box.Y
 						for y := box.Y; y < box.Y+box.Height; y++ {
 							for x := box.X; x < box.X+box.Width; x++ {
-								color := m.getCanvas().GetHighlight(x, y)
-								if color != -1 {
+								if color := m.getCanvas().GetHighlight(x, y); color != -1 {
 									m.originalHighlights[point{X: x, Y: y}] = color
 								}
 							}
@@ -559,21 +503,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if textID != -1 {
 					m.selectedText = textID
 					m.selectedBox = -1
-					// Clear multiselect state to ensure single-element move
 					m.selectedBoxes = []int{}
 					m.selectedTexts = []int{}
 					m.selectedConnections = []int{}
 					m.originalBoxPositions = make(map[int]point)
 					m.originalTextPositions = make(map[int]point)
 					m.originalConnections = make(map[int]Connection)
-					// Capture highlights within this text's bounds for movement
 					m.originalHighlights = make(map[point]int)
 					m.highlightMoveDelta = point{X: 0, Y: 0}
 					if textID < len(m.getCanvas().texts) {
 						text := m.getCanvas().texts[textID]
-						m.originalTextMoveX = text.X
-						m.originalTextMoveY = text.Y
-						// Capture all highlights within the text bounds
+						m.originalTextMoveX, m.originalTextMoveY = text.X, text.Y
 						maxWidth := 0
 						for _, line := range text.Lines {
 							if len(line) > maxWidth {
@@ -582,43 +522,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						for y := text.Y; y < text.Y+len(text.Lines); y++ {
 							for x := text.X; x < text.X+maxWidth; x++ {
-								color := m.getCanvas().GetHighlight(x, y)
-								if color != -1 {
+								if color := m.getCanvas().GetHighlight(x, y); color != -1 {
 									m.originalHighlights[point{X: x, Y: y}] = color
 								}
 							}
 						}
 					}
 					m.mode = ModeMove
-				} else {
-					// Check if there's a highlight at cursor position (standalone highlight)
-					highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
-					if highlightColor != -1 {
-						// Move just the standalone highlight
-						m.selectedBox = -1
-						m.selectedText = -1
-						m.selectedBoxes = []int{}
-						m.selectedTexts = []int{}
-						m.selectedConnections = []int{}
-						m.originalBoxPositions = make(map[int]point)
-						m.originalTextPositions = make(map[int]point)
-						m.originalConnections = make(map[int]Connection)
-						m.originalHighlights = make(map[point]int)
-						m.originalHighlights[point{X: worldX, Y: worldY}] = highlightColor
-						m.highlightMoveDelta = point{X: 0, Y: 0}
-						m.mode = ModeMove
-					}
+				} else if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
+					m.selectedBox = -1
+					m.selectedText = -1
+					m.selectedBoxes = []int{}
+					m.selectedTexts = []int{}
+					m.selectedConnections = []int{}
+					m.originalBoxPositions = make(map[int]point)
+					m.originalTextPositions = make(map[int]point)
+					m.originalConnections = make(map[int]Connection)
+					m.originalHighlights = make(map[point]int)
+					m.originalHighlights[point{X: worldX, Y: worldY}] = highlightColor
+					m.highlightMoveDelta = point{X: 0, Y: 0}
+					m.mode = ModeMove
 				}
 				return m, nil
 			case "M":
-				// Enter multi-select mode
 				m.zPanMode = false
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				// Set selection start to current cursor position (in world coordinates)
+				panX, panY := m.getPanOffset()
 				m.selectionStartX = m.cursorX + panX
 				m.selectionStartY = m.cursorY + panY
 				m.selectedBoxes = []int{}
@@ -626,13 +554,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeMultiSelect
 				return m, nil
 			case "e":
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				textID := m.getCanvas().GetTextAt(worldX, worldY)
 				if boxID != -1 {
@@ -652,14 +575,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "A":
-				// Convert cursor position to world coordinates
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 				if lineConnIdx != -1 {
 					oldConn := m.getCanvas().connections[lineConnIdx]
@@ -671,13 +588,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "a":
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				lineConnIdx, lineX, lineY := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 
@@ -748,44 +660,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "d":
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
-
-				// First check if cursor is on a highlighted cell
-				highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
-				if highlightColor != -1 {
-					// Remove highlight directly (no confirmation)
-					oldColor := highlightColor
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
+				if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
 					m.getCanvas().ClearHighlight(worldX, worldY)
-					// Record for undo
-					highlightData := HighlightData{
-						Cells: []HighlightCell{
-							{
-								X:        worldX,
-								Y:        worldY,
-								Color:    -1, // Removed
-								HadColor: true,
-								OldColor: oldColor,
-							},
-						},
-					}
-					inverseData := HighlightData{
-						Cells: []HighlightCell{
-							{
-								X:        worldX,
-								Y:        worldY,
-								Color:    oldColor, // Restore
-								HadColor: true,
-								OldColor: -1,
-							},
-						},
-					}
-					m.recordAction(ActionHighlight, highlightData, inverseData)
+					cell := HighlightCell{X: worldX, Y: worldY, Color: -1, HadColor: true, OldColor: highlightColor}
+					inverseCell := HighlightCell{X: worldX, Y: worldY, Color: highlightColor, HadColor: true, OldColor: -1}
+					m.recordAction(ActionHighlight, HighlightData{Cells: []HighlightCell{cell}}, HighlightData{Cells: []HighlightCell{inverseCell}})
 					return m, nil
 				}
 
@@ -845,116 +726,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "D":
-				// Remove all highlights from element, or all adjacent highlights of same color
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
-
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				highlightedCells := make([]HighlightCell, 0)
-
-				// Check if cursor is on an element (box, text, or connection)
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				textID := m.getCanvas().GetTextAt(worldX, worldY)
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
-
 				if boxID != -1 {
-					// Remove all highlights from the box
-					cells := m.getCanvas().GetBoxCells(boxID)
-					for _, cell := range cells {
+					for _, cell := range m.getCanvas().GetBoxCells(boxID) {
 						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X:        cell.X,
-								Y:        cell.Y,
-								Color:    -1, // Removed
-								HadColor: true,
-								OldColor: color,
-							})
+							highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
 							m.getCanvas().ClearHighlight(cell.X, cell.Y)
 						}
 					}
 				} else if textID != -1 {
-					// Remove all highlights from the text
-					cells := m.getCanvas().GetTextCells(textID)
-					for _, cell := range cells {
+					for _, cell := range m.getCanvas().GetTextCells(textID) {
 						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X:        cell.X,
-								Y:        cell.Y,
-								Color:    -1, // Removed
-								HadColor: true,
-								OldColor: color,
-							})
+							highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
 							m.getCanvas().ClearHighlight(cell.X, cell.Y)
 						}
 					}
 				} else if lineConnIdx != -1 {
-					// Remove all highlights from the connection
-					cells := m.getCanvas().GetConnectionCells(lineConnIdx)
-					for _, cell := range cells {
+					for _, cell := range m.getCanvas().GetConnectionCells(lineConnIdx) {
 						if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X:        cell.X,
-								Y:        cell.Y,
-								Color:    -1, // Removed
-								HadColor: true,
-								OldColor: color,
-							})
+							highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
 							m.getCanvas().ClearHighlight(cell.X, cell.Y)
 						}
 					}
-				} else {
-					// Not on an element - find all adjacent highlights of the same color
-					highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
-					if highlightColor != -1 {
-						adjacentCells := m.getCanvas().GetAdjacentHighlightsOfColor(worldX, worldY, highlightColor)
-						for _, cell := range adjacentCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							if oldColor != -1 {
-								highlightedCells = append(highlightedCells, HighlightCell{
-									X:        cell.X,
-									Y:        cell.Y,
-									Color:    -1, // Removed
-									HadColor: true,
-									OldColor: oldColor,
-								})
-								m.getCanvas().ClearHighlight(cell.X, cell.Y)
-							}
+				} else if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
+					for _, cell := range m.getCanvas().GetAdjacentHighlightsOfColor(worldX, worldY, highlightColor) {
+						if oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y); oldColor != -1 {
+							highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: oldColor})
+							m.getCanvas().ClearHighlight(cell.X, cell.Y)
 						}
 					}
 				}
-
-				// Record the action for undo
 				if len(highlightedCells) > 0 {
-					// Create inverse data (restore previous state)
 					inverseCells := make([]HighlightCell, len(highlightedCells))
 					for i, cell := range highlightedCells {
-						inverseCells[i] = HighlightCell{
-							X:        cell.X,
-							Y:        cell.Y,
-							Color:    cell.OldColor, // Restore
-							HadColor: cell.HadColor,
-							OldColor: -1,
-						}
+						inverseCells[i] = HighlightCell{X: cell.X, Y: cell.Y, Color: cell.OldColor, HadColor: cell.HadColor, OldColor: -1}
 					}
-
-					highlightData := HighlightData{Cells: highlightedCells}
-					inverseData := HighlightData{Cells: inverseCells}
-					m.recordAction(ActionHighlight, highlightData, inverseData)
+					m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
 				}
 				return m, nil
 			case "s":
 				m.mode = ModeFileInput
 				m.fileOp = FileOpSave
-				// Auto-fill filename from buffer if it exists
-				buf := m.getCurrentBuffer()
-				if buf != nil && buf.filename != "" {
-					// Extract just the base filename (without directory path)
+				if buf := m.getCurrentBuffer(); buf != nil && buf.filename != "" {
 					baseName := filepath.Base(buf.filename)
-					// Remove .sav extension for display
 					if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
 						baseName = baseName[:len(baseName)-4]
 					}
@@ -1040,19 +859,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.successMessage = ""
 				return m, nil
 			case "c":
-				// Copy box
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				if boxID != -1 && boxID < len(m.getCanvas().boxes) {
-					// Copy the box
 					box := m.getCanvas().boxes[boxID]
-					// Create a deep copy
 					copiedBox := Box{
 						X:      box.X,
 						Y:      box.Y,
@@ -1067,18 +878,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "p":
 				if m.clipboard != nil {
-					// Paste the box at cursor position
 					boxID := len(m.getCanvas().boxes)
 					text := m.clipboard.GetText()
-					buf := m.getCurrentBuffer()
-					panX, panY := 0, 0
-					if buf != nil {
-						panX, panY = buf.panX, buf.panY
-					}
-					worldX := m.cursorX + panX
-					worldY := m.cursorY + panY
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
 					m.getCanvas().AddBox(worldX, worldY, text)
-					// Set the size to match the copied box (in case it was manually resized)
 					if boxID < len(m.getCanvas().boxes) {
 						m.getCanvas().SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
 					}
@@ -1103,80 +907,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedColor = (m.selectedColor + 1) % numColors
 				return m, nil
 			case "Z":
-				// Cycle z-level of box at cursor (0-3) for drop shadow effect
 				m.zPanMode = false
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				worldX := m.cursorX + panX
-				worldY := m.cursorY + panY
-				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-				if boxID != -1 {
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
+				if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
 					m.getCanvas().CycleBoxZLevel(boxID)
 				}
 				return m, nil
 			case " ":
-				// Toggle highlight mode
 				m.highlightMode = !m.highlightMode
 				return m, nil
 			case "enter":
-				// In highlight mode, highlight entire element at cursor
 				if m.highlightMode {
-					buf := m.getCurrentBuffer()
-					panX, panY := 0, 0
-					if buf != nil {
-						panX, panY = buf.panX, buf.panY
-					}
-					worldX := m.cursorX + panX
-					worldY := m.cursorY + panY
-
-					// Check what's at the cursor position
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
 					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 					textID := m.getCanvas().GetTextAt(worldX, worldY)
 					lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
-
 					highlightedCells := make([]HighlightCell, 0)
-
-					// Helper function to add a cell to the highlight list
 					addHighlightCell := func(x, y int) {
 						oldColor := m.getCanvas().GetHighlight(x, y)
-						hadColor := (oldColor != -1)
 						m.getCanvas().SetHighlight(x, y, m.selectedColor)
 						highlightedCells = append(highlightedCells, HighlightCell{
 							X:        x,
 							Y:        y,
 							Color:    m.selectedColor,
-							HadColor: hadColor,
+							HadColor: oldColor != -1,
 							OldColor: oldColor,
 						})
 					}
-
-					// Highlight based on what's at cursor
 					if boxID != -1 {
-						// Highlight entire box
-						cells := m.getCanvas().GetBoxCells(boxID)
-						for _, cell := range cells {
+						for _, cell := range m.getCanvas().GetBoxCells(boxID) {
 							addHighlightCell(cell.X, cell.Y)
 						}
 					} else if textID != -1 {
-						// Highlight entire text
-						cells := m.getCanvas().GetTextCells(textID)
-						for _, cell := range cells {
+						for _, cell := range m.getCanvas().GetTextCells(textID) {
 							addHighlightCell(cell.X, cell.Y)
 						}
 					} else if lineConnIdx != -1 {
-						// Highlight entire connection
-						cells := m.getCanvas().GetConnectionCells(lineConnIdx)
-						for _, cell := range cells {
+						for _, cell := range m.getCanvas().GetConnectionCells(lineConnIdx) {
 							addHighlightCell(cell.X, cell.Y)
 						}
 					}
-
-					// Record the highlight action for undo
 					if len(highlightedCells) > 0 {
-						// Create inverse data (restore previous state)
 						inverseCells := make([]HighlightCell, len(highlightedCells))
 						for i, cell := range highlightedCells {
 							oldColorForInverse := cell.OldColor
@@ -1191,10 +964,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								OldColor: cell.Color,
 							}
 						}
-
-						highlightData := HighlightData{Cells: highlightedCells}
-						inverseData := HighlightData{Cells: inverseCells}
-						m.recordAction(ActionHighlight, highlightData, inverseData)
+						m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
 					}
 				}
 				return m, nil
@@ -1502,30 +1272,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j", "down", "J", "shift+j", "shift+down":
 				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
 			case "enter":
-				// Finalize selection and enter move mode
-				buf := m.getCurrentBuffer()
-				panX, panY := 0, 0
-				if buf != nil {
-					panX, panY = buf.panX, buf.panY
-				}
-				selectionEndX := m.cursorX + panX
-				selectionEndY := m.cursorY + panY
-
-				// Calculate selection rectangle bounds
-				minX := m.selectionStartX
+				panX, panY := m.getPanOffset()
+				selectionEndX, selectionEndY := m.cursorX+panX, m.cursorY+panY
+				minX, maxX := m.selectionStartX, m.selectionStartX
 				if selectionEndX < m.selectionStartX {
 					minX = selectionEndX
-				}
-				maxX := m.selectionStartX
-				if selectionEndX > m.selectionStartX {
+				} else if selectionEndX > m.selectionStartX {
 					maxX = selectionEndX
 				}
-				minY := m.selectionStartY
+				minY, maxY := m.selectionStartY, m.selectionStartY
 				if selectionEndY < m.selectionStartY {
 					minY = selectionEndY
-				}
-				maxY := m.selectionStartY
-				if selectionEndY > m.selectionStartY {
+				} else if selectionEndY > m.selectionStartY {
 					maxY = selectionEndY
 				}
 
@@ -1537,24 +1295,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.originalTextPositions = make(map[int]point)
 				m.originalConnections = make(map[int]Connection)
 
-				// Check boxes
 				for i, box := range m.getCanvas().boxes {
-					// Check if box overlaps with selection rectangle
-					// A box is selected if any part of it is within the selection
-					boxRight := box.X + box.Width - 1
-					boxBottom := box.Y + box.Height - 1
-
+					boxRight, boxBottom := box.X+box.Width-1, box.Y+box.Height-1
 					if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
 						m.selectedBoxes = append(m.selectedBoxes, i)
 						m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
 					}
 				}
-
-				// Check texts
 				for i, text := range m.getCanvas().texts {
-					// Check if any part of the text is within the selection
-					textRight := text.X
-					textBottom := text.Y
+					textRight, textBottom := text.X, text.Y
 					for _, line := range text.Lines {
 						if text.X+len(line) > textRight {
 							textRight = text.X + len(line)
@@ -1563,57 +1312,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(text.Lines) > 0 {
 						textBottom = text.Y + len(text.Lines) - 1
 					}
-
 					if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
 						m.selectedTexts = append(m.selectedTexts, i)
 						m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
 					}
 				}
-
-				// Check connections - find connections that should be included in the selection
 				selectedBoxSet := make(map[int]bool)
 				for _, boxID := range m.selectedBoxes {
 					selectedBoxSet[boxID] = true
 				}
-
-				// Helper function to check if a point is within the selection rectangle
 				pointInSelection := func(x, y int) bool {
 					return x >= minX && x <= maxX && y >= minY && y <= maxY
 				}
-
-				// Helper function to check if a connection should be selected
 				shouldSelectConnection := func(conn Connection) bool {
-					// Case 1: Both endpoints are selected boxes
-					if conn.FromID >= 0 && conn.ToID >= 0 {
-						if selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
-							return true
-						}
+					if conn.FromID >= 0 && conn.ToID >= 0 && selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
+						return true
 					}
-
-					// Case 2: One endpoint is a selected box and the other is a connection point within selection
-					if conn.FromID >= 0 && selectedBoxSet[conn.FromID] {
-						if conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
-							return true
-						}
+					if conn.FromID >= 0 && selectedBoxSet[conn.FromID] && conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
+						return true
 					}
-					if conn.ToID >= 0 && selectedBoxSet[conn.ToID] {
-						if conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
-							return true
-						}
+					if conn.ToID >= 0 && selectedBoxSet[conn.ToID] && conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
+						return true
 					}
-
-					// Case 3: Both endpoints are connection points within selection
-					if conn.FromID == -1 && conn.ToID == -1 {
-						if pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
-							return true
-						}
+					if conn.FromID == -1 && conn.ToID == -1 && pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
+						return true
 					}
-
-					// Case 4: Connection has significant points within selection
-					// Check if endpoints or waypoints are in selection
-					pointsInSelection := 0
-					totalPoints := 2 + len(conn.Waypoints) // endpoints + waypoints
-
+					pointsInSelection, totalPoints := 0, 2+len(conn.Waypoints)
 					if pointInSelection(conn.FromX, conn.FromY) {
 						pointsInSelection++
 					}
@@ -1625,19 +1349,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							pointsInSelection++
 						}
 					}
-
-					// If at least half the points are in selection, include it
-					if totalPoints > 0 && pointsInSelection*2 >= totalPoints {
-						return true
-					}
-
-					return false
+					return totalPoints > 0 && pointsInSelection*2 >= totalPoints
 				}
-
 				for i, conn := range m.getCanvas().connections {
 					if shouldSelectConnection(conn) {
 						m.selectedConnections = append(m.selectedConnections, i)
-						// Store a deep copy of the connection for undo
 						connCopy := Connection{
 							FromID:    conn.FromID,
 							ToID:      conn.ToID,
@@ -1653,14 +1369,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.originalConnections[i] = connCopy
 					}
 				}
-
-				// Capture all highlights in the selection rectangle
 				m.originalHighlights = make(map[point]int)
 				m.highlightMoveDelta = point{X: 0, Y: 0}
 				for y := minY; y <= maxY; y++ {
 					for x := minX; x <= maxX; x++ {
-						color := m.getCanvas().GetHighlight(x, y)
-						if color != -1 {
+						if color := m.getCanvas().GetHighlight(x, y); color != -1 {
 							m.originalHighlights[point{X: x, Y: y}] = color
 						}
 					}
@@ -1697,290 +1410,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.originalHighlights = make(map[point]int)
 				return m, nil
 			case "h", "left":
-				// Check single-element moves FIRST (before multiselect)
-				if m.selectedBox != -1 {
-					m.getCanvas().MoveBox(m.selectedBox, -1, 0)
-					// Move only the captured highlights (not all highlights in region)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
-						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					m.getCanvas().MoveText(m.selectedText, -1, 0)
-					// Move only the captured highlights (not all highlights in region)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
-						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
+				if m.selectedBox != -1 || m.selectedText != -1 {
+					m.handleSingleElementMove(-1, 0)
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move (or highlights-only move)
-					deltaX, deltaY := -1, 0
-					// Move all boxes without touching connections (connections handled by moveContainedConnections)
-					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
-					}
-					for _, textID := range m.selectedTexts {
-						m.getCanvas().MoveText(textID, deltaX, deltaY)
-					}
-					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
-					// Calculate cumulative delta for highlight movement
-					var cumulativeDeltaX, cumulativeDeltaY int
-					if len(m.selectedBoxes) > 0 {
-						boxID := m.selectedBoxes[0]
-						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-							currentBox := m.getCanvas().boxes[boxID]
-							originalPos, hasOriginal := m.originalBoxPositions[boxID]
-							if hasOriginal {
-								cumulativeDeltaX = currentBox.X - originalPos.X
-								cumulativeDeltaY = currentBox.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedTexts) > 0 {
-						textID := m.selectedTexts[0]
-						if textID >= 0 && textID < len(m.getCanvas().texts) {
-							currentText := m.getCanvas().texts[textID]
-							originalPos, hasOriginal := m.originalTextPositions[textID]
-							if hasOriginal {
-								cumulativeDeltaX = currentText.X - originalPos.X
-								cumulativeDeltaY = currentText.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedConnections) > 0 {
-						connIdx := m.selectedConnections[0]
-						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-							conn := m.getCanvas().connections[connIdx]
-							originalConn, hasOriginal := m.originalConnections[connIdx]
-							if hasOriginal {
-								cumulativeDeltaX = conn.FromX - originalConn.FromX
-								cumulativeDeltaY = conn.FromY - originalConn.FromY
-							}
-						}
-					} else if len(m.originalHighlights) > 0 {
-						// Only highlights selected, calculate cumulative delta from current position + incremental
-						cumulativeDeltaX = m.highlightMoveDelta.X + deltaX
-						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
-					}
-					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
+					m.handleMultiSelectMove(-1, 0)
 				}
 				return m, nil
 			case "H", "shift+left":
-				// Check single-element moves FIRST (before multiselect)
-				if m.selectedBox != -1 {
-					m.getCanvas().MoveBox(m.selectedBox, -2, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
-						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					m.getCanvas().MoveText(m.selectedText, -2, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
-						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
+				if m.selectedBox != -1 || m.selectedText != -1 {
+					m.handleSingleElementMove(-2, 0)
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move (or highlights-only move)
-					deltaX, deltaY := -2, 0
-					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
-					}
-					for _, textID := range m.selectedTexts {
-						m.getCanvas().MoveText(textID, deltaX, deltaY)
-					}
-					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
-					// Calculate cumulative delta for highlight movement
-					var cumulativeDeltaX, cumulativeDeltaY int
-					if len(m.selectedBoxes) > 0 {
-						boxID := m.selectedBoxes[0]
-						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-							currentBox := m.getCanvas().boxes[boxID]
-							originalPos, hasOriginal := m.originalBoxPositions[boxID]
-							if hasOriginal {
-								cumulativeDeltaX = currentBox.X - originalPos.X
-								cumulativeDeltaY = currentBox.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedTexts) > 0 {
-						textID := m.selectedTexts[0]
-						if textID >= 0 && textID < len(m.getCanvas().texts) {
-							currentText := m.getCanvas().texts[textID]
-							originalPos, hasOriginal := m.originalTextPositions[textID]
-							if hasOriginal {
-								cumulativeDeltaX = currentText.X - originalPos.X
-								cumulativeDeltaY = currentText.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedConnections) > 0 {
-						connIdx := m.selectedConnections[0]
-						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-							conn := m.getCanvas().connections[connIdx]
-							originalConn, hasOriginal := m.originalConnections[connIdx]
-							if hasOriginal {
-								cumulativeDeltaX = conn.FromX - originalConn.FromX
-								cumulativeDeltaY = conn.FromY - originalConn.FromY
-							}
-						}
-					} else if len(m.originalHighlights) > 0 {
-						// Only highlights selected, calculate cumulative delta from current position + incremental
-						cumulativeDeltaX = m.highlightMoveDelta.X + deltaX
-						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
-					}
-					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
+					m.handleMultiSelectMove(-2, 0)
 				}
 				return m, nil
 			case "l", "right":
-				// Check single-element moves FIRST (before multiselect)
-				if m.selectedBox != -1 {
-					m.getCanvas().MoveBox(m.selectedBox, 1, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
-						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					m.getCanvas().MoveText(m.selectedText, 1, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
-						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
+				if m.selectedBox != -1 || m.selectedText != -1 {
+					m.handleSingleElementMove(1, 0)
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move (or highlights-only move)
-					deltaX, deltaY := 1, 0
-					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
-					}
-					for _, textID := range m.selectedTexts {
-						m.getCanvas().MoveText(textID, deltaX, deltaY)
-					}
-					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
-					// Calculate cumulative delta for highlight movement
-					var cumulativeDeltaX, cumulativeDeltaY int
-					if len(m.selectedBoxes) > 0 {
-						boxID := m.selectedBoxes[0]
-						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-							currentBox := m.getCanvas().boxes[boxID]
-							originalPos, hasOriginal := m.originalBoxPositions[boxID]
-							if hasOriginal {
-								cumulativeDeltaX = currentBox.X - originalPos.X
-								cumulativeDeltaY = currentBox.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedTexts) > 0 {
-						textID := m.selectedTexts[0]
-						if textID >= 0 && textID < len(m.getCanvas().texts) {
-							currentText := m.getCanvas().texts[textID]
-							originalPos, hasOriginal := m.originalTextPositions[textID]
-							if hasOriginal {
-								cumulativeDeltaX = currentText.X - originalPos.X
-								cumulativeDeltaY = currentText.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedConnections) > 0 {
-						connIdx := m.selectedConnections[0]
-						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-							conn := m.getCanvas().connections[connIdx]
-							originalConn, hasOriginal := m.originalConnections[connIdx]
-							if hasOriginal {
-								cumulativeDeltaX = conn.FromX - originalConn.FromX
-								cumulativeDeltaY = conn.FromY - originalConn.FromY
-							}
-						}
-					} else if len(m.originalHighlights) > 0 {
-						// Only highlights selected, calculate cumulative delta from current position + incremental
-						cumulativeDeltaX = m.highlightMoveDelta.X + deltaX
-						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
-					}
-					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
+					m.handleMultiSelectMove(1, 0)
 				}
 				return m, nil
 			case "L", "shift+right":
-				// Check single-element moves FIRST (before multiselect)
-				if m.selectedBox != -1 {
-					m.getCanvas().MoveBox(m.selectedBox, 2, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
-						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
-				} else if m.selectedText != -1 {
-					m.getCanvas().MoveText(m.selectedText, 2, 0)
-					if len(m.originalHighlights) > 0 {
-						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
-						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					}
-					m.ensureCursorInBounds()
+				if m.selectedBox != -1 || m.selectedText != -1 {
+					m.handleSingleElementMove(2, 0)
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-					// Multi-select move (or highlights-only move)
-					deltaX, deltaY := 2, 0
-					for _, boxID := range m.selectedBoxes {
-						m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
-					}
-					for _, textID := range m.selectedTexts {
-						m.getCanvas().MoveText(textID, deltaX, deltaY)
-					}
-					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
-					// Calculate cumulative delta for highlight movement
-					var cumulativeDeltaX, cumulativeDeltaY int
-					if len(m.selectedBoxes) > 0 {
-						boxID := m.selectedBoxes[0]
-						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-							currentBox := m.getCanvas().boxes[boxID]
-							originalPos, hasOriginal := m.originalBoxPositions[boxID]
-							if hasOriginal {
-								cumulativeDeltaX = currentBox.X - originalPos.X
-								cumulativeDeltaY = currentBox.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedTexts) > 0 {
-						textID := m.selectedTexts[0]
-						if textID >= 0 && textID < len(m.getCanvas().texts) {
-							currentText := m.getCanvas().texts[textID]
-							originalPos, hasOriginal := m.originalTextPositions[textID]
-							if hasOriginal {
-								cumulativeDeltaX = currentText.X - originalPos.X
-								cumulativeDeltaY = currentText.Y - originalPos.Y
-							}
-						}
-					} else if len(m.selectedConnections) > 0 {
-						connIdx := m.selectedConnections[0]
-						if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-							conn := m.getCanvas().connections[connIdx]
-							originalConn, hasOriginal := m.originalConnections[connIdx]
-							if hasOriginal {
-								cumulativeDeltaX = conn.FromX - originalConn.FromX
-								cumulativeDeltaY = conn.FromY - originalConn.FromY
-							}
-						}
-					} else if len(m.originalHighlights) > 0 {
-						// Only highlights selected, calculate cumulative delta from current position + incremental
-						cumulativeDeltaX = m.highlightMoveDelta.X + deltaX
-						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
-					}
-					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-					m.ensureCursorInBounds()
+					m.handleMultiSelectMove(2, 0)
 				}
 				return m, nil
 			case "k", "up":
@@ -1990,7 +1444,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
 						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -1998,7 +1452,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
 						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
@@ -2011,7 +1465,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
 					}
 					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
+					m.moveContainedConnections(deltaX, deltaY)
 					// Calculate cumulative delta for highlight movement
 					var cumulativeDeltaX, cumulativeDeltaY int
 					if len(m.selectedBoxes) > 0 {
@@ -2050,7 +1504,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
 					}
 					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -2061,7 +1515,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
 						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -2069,7 +1523,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
 						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
@@ -2082,7 +1536,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
 					}
 					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
+					m.moveContainedConnections(deltaX, deltaY)
 					// Calculate cumulative delta for highlight movement
 					var cumulativeDeltaX, cumulativeDeltaY int
 					if len(m.selectedBoxes) > 0 {
@@ -2121,7 +1575,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
 					}
 					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -2132,7 +1586,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
 						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -2140,7 +1594,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
 						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
@@ -2153,7 +1607,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
 					}
 					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
+					m.moveContainedConnections(deltaX, deltaY)
 					// Calculate cumulative delta for highlight movement
 					var cumulativeDeltaX, cumulativeDeltaY int
 					if len(m.selectedBoxes) > 0 {
@@ -2192,7 +1646,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
 					}
 					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					m.ensureCursorInBounds()
 				}
 				return m, nil
@@ -2203,7 +1657,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().boxes[m.selectedBox].X - m.originalMoveX
 						cumulativeDeltaY := m.getCanvas().boxes[m.selectedBox].Y - m.originalMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if m.selectedText != -1 {
@@ -2211,7 +1665,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.originalHighlights) > 0 {
 						cumulativeDeltaX := m.getCanvas().texts[m.selectedText].X - m.originalTextMoveX
 						cumulativeDeltaY := m.getCanvas().texts[m.selectedText].Y - m.originalTextMoveY
-						m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+						m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					}
 					m.ensureCursorInBounds()
 				} else if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
@@ -2224,7 +1678,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().MoveText(textID, deltaX, deltaY)
 					}
 					// Move contained connections as a unit
-					moveContainedConnections(deltaX, deltaY)
+					m.moveContainedConnections(deltaX, deltaY)
 					// Calculate cumulative delta for highlight movement
 					var cumulativeDeltaX, cumulativeDeltaY int
 					if len(m.selectedBoxes) > 0 {
@@ -2263,7 +1717,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cumulativeDeltaY = m.highlightMoveDelta.Y + deltaY
 					}
 					// Move highlights on selected objects (from original positions to new positions)
-					m.highlightMoveDelta = moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+					m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
 					m.ensureCursorInBounds()
 				}
 				return m, nil

@@ -58,6 +58,6 @@ const (
 const (
 	minBoxWidth  = 8
 	minBoxHeight = 3
-	numColors    = 8 // Number of highlight colors
+	numColors    = 8
 )
 
