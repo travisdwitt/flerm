@@ -36,12 +36,14 @@ type model struct {
 	fileOp              FileOperation
 	openInNewBuffer     bool
 	createNewBuffer     bool
+	showingDeleteConfirm bool
 	confirmAction       ConfirmAction
 	confirmBoxID        int
 	confirmTextID       int
 	confirmConnIdx      int
 	confirmHighlightX  int
 	confirmHighlightY  int
+	confirmFileIndex   int
 	originalMoveX       int
 	originalMoveY       int
 	originalTextMoveX   int

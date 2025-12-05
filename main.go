@@ -22,8 +22,6 @@ func main() {
 	}
 }
 
-
-
 func (m *model) renderBufferBar(width int) string {
 	// Only show buffer bar when there is more than one buffer
 	if len(m.buffers) <= 1 {
@@ -73,8 +71,6 @@ func (m *model) renderBufferBar(width int) string {
 	return bar.String()
 }
 
-
-
 func initialModel() model {
 	// Load configuration
 	config := loadConfig()
@@ -87,9 +83,6 @@ func initialModel() model {
 	}
 
 	canvas := NewCanvas()
-	if initialMode == ModeStartup {
-		canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
-	}
 
 	buffer := Buffer{
 		canvas:    canvas,
@@ -101,25 +94,25 @@ func initialModel() model {
 	}
 
 	return model{
-		buffers:            []Buffer{buffer},
-		currentBufferIndex: 0,
-		mode:               initialMode,
-		selectedBox:        -1,
-		selectedText:       -1,
-		connectionFrom:     -1,
-		connectionFromLine:  -1,
-		config:              config,
-		highlightMode:       false,
-		selectedColor:       0,
-		selectionStartX:     -1,
-		selectionStartY:     -1,
-		selectedBoxes:       []int{},
-		selectedTexts:       []int{},
-		selectedConnections: []int{},
-		originalBoxPositions: make(map[int]point),
+		buffers:               []Buffer{buffer},
+		currentBufferIndex:    0,
+		mode:                  initialMode,
+		selectedBox:           -1,
+		selectedText:          -1,
+		connectionFrom:        -1,
+		connectionFromLine:    -1,
+		config:                config,
+		highlightMode:         false,
+		selectedColor:         0,
+		selectionStartX:       -1,
+		selectionStartY:       -1,
+		selectedBoxes:         []int{},
+		selectedTexts:         []int{},
+		selectedConnections:   []int{},
+		originalBoxPositions:  make(map[int]point),
 		originalTextPositions: make(map[int]point),
-		originalConnections: make(map[int]Connection),
-		originalHighlights: make(map[point]int),
+		originalConnections:   make(map[int]Connection),
+		originalHighlights:    make(map[point]int),
 	}
 }
 
@@ -208,14 +201,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.originalHighlights) == 0 {
 			return m.highlightMoveDelta
 		}
-		
+
 		// Clear highlights at their current positions (original + current delta)
 		for origPos := range m.originalHighlights {
 			currentX := origPos.X + m.highlightMoveDelta.X
 			currentY := origPos.Y + m.highlightMoveDelta.Y
 			m.getCanvas().ClearHighlight(currentX, currentY)
 		}
-		
+
 		// Set highlights at their new positions (original + cumulative delta)
 		for origPos, color := range m.originalHighlights {
 			newX := origPos.X + cumulativeDeltaX
@@ -224,7 +217,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.getCanvas().SetHighlight(newX, newY, color)
 			}
 		}
-		
+
 		// Return the new delta to track where highlights are now
 		return point{X: cumulativeDeltaX, Y: cumulativeDeltaY}
 	}
@@ -269,7 +262,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		
+
 		// Move all connection points by the cumulative delta
 		for _, connIdx := range m.selectedConnections {
 			originalConn, hasOriginal := m.originalConnections[connIdx]
@@ -281,7 +274,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				conn.FromY = originalConn.FromY + cumulativeDeltaY
 				conn.ToX = originalConn.ToX + cumulativeDeltaX
 				conn.ToY = originalConn.ToY + cumulativeDeltaY
-				
+
 				// Move waypoints
 				if len(conn.Waypoints) == len(originalConn.Waypoints) {
 					for i := range conn.Waypoints {
@@ -289,7 +282,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						conn.Waypoints[i].Y = originalConn.Waypoints[i].Y + cumulativeDeltaY
 					}
 				}
-				
+
 				// Ensure coordinates don't go negative
 				if conn.FromX < 0 {
 					conn.FromX = 0
@@ -757,7 +750,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				worldX := m.cursorX + panX
 				worldY := m.cursorY + panY
-				
+
 				// First check if cursor is on a highlighted cell
 				highlightColor := m.getCanvas().GetHighlight(worldX, worldY)
 				if highlightColor != -1 {
@@ -790,7 +783,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.recordAction(ActionHighlight, highlightData, inverseData)
 					return m, nil
 				}
-				
+
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 				if lineConnIdx != -1 {
 					if m.config != nil && m.config.Confirmations {
@@ -855,14 +848,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				worldX := m.cursorX + panX
 				worldY := m.cursorY + panY
-				
+
 				highlightedCells := make([]HighlightCell, 0)
-				
+
 				// Check if cursor is on an element (box, text, or connection)
 				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 				textID := m.getCanvas().GetTextAt(worldX, worldY)
 				lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
-				
+
 				if boxID != -1 {
 					// Remove all highlights from the box
 					cells := m.getCanvas().GetBoxCells(boxID)
@@ -928,7 +921,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				
+
 				// Record the action for undo
 				if len(highlightedCells) > 0 {
 					// Create inverse data (restore previous state)
@@ -942,7 +935,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							OldColor: -1,
 						}
 					}
-					
+
 					highlightData := HighlightData{Cells: highlightedCells}
 					inverseData := HighlightData{Cells: inverseCells}
 					m.recordAction(ActionHighlight, highlightData, inverseData)
@@ -1014,7 +1007,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						// Last buffer - return to startup
 						canvas := NewCanvas()
-						canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
 						m.buffers = []Buffer{
 							{
 								canvas:    canvas,
@@ -1134,28 +1126,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					worldX := m.cursorX + panX
 					worldY := m.cursorY + panY
-					
+
 					// Check what's at the cursor position
 					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
 					textID := m.getCanvas().GetTextAt(worldX, worldY)
 					lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
-					
+
 					highlightedCells := make([]HighlightCell, 0)
-					
-			// Helper function to add a cell to the highlight list
-			addHighlightCell := func(x, y int) {
-				oldColor := m.getCanvas().GetHighlight(x, y)
-				hadColor := (oldColor != -1)
-				m.getCanvas().SetHighlight(x, y, m.selectedColor)
-				highlightedCells = append(highlightedCells, HighlightCell{
-					X:        x,
-					Y:        y,
-					Color:    m.selectedColor,
-					HadColor: hadColor,
-					OldColor: oldColor,
-				})
-			}
-					
+
+					// Helper function to add a cell to the highlight list
+					addHighlightCell := func(x, y int) {
+						oldColor := m.getCanvas().GetHighlight(x, y)
+						hadColor := (oldColor != -1)
+						m.getCanvas().SetHighlight(x, y, m.selectedColor)
+						highlightedCells = append(highlightedCells, HighlightCell{
+							X:        x,
+							Y:        y,
+							Color:    m.selectedColor,
+							HadColor: hadColor,
+							OldColor: oldColor,
+						})
+					}
+
 					// Highlight based on what's at cursor
 					if boxID != -1 {
 						// Highlight entire box
@@ -1176,7 +1168,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							addHighlightCell(cell.X, cell.Y)
 						}
 					}
-					
+
 					// Record the highlight action for undo
 					if len(highlightedCells) > 0 {
 						// Create inverse data (restore previous state)
@@ -1194,7 +1186,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								OldColor: cell.Color,
 							}
 						}
-						
+
 						highlightData := HighlightData{Cells: highlightedCells}
 						inverseData := HighlightData{Cells: inverseCells}
 						m.recordAction(ActionHighlight, highlightData, inverseData)
@@ -1244,7 +1236,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err == nil && clipText != "" {
 					// Insert clipboard text at cursor position
 					m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
-					m.editCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					m.editCursorPos += len([]rune(clipText)) // Use rune length for proper cursor positioning
 					// Update box/text in real-time
 					if m.selectedBox != -1 {
 						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
@@ -1259,7 +1251,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err == nil && clipText != "" {
 					// Insert clipboard text at cursor position
 					m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
-					m.editCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					m.editCursorPos += len([]rune(clipText)) // Use rune length for proper cursor positioning
 					// Update box/text in real-time
 					if m.selectedBox != -1 {
 						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
@@ -1367,7 +1359,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err == nil && clipText != "" {
 					// Insert clipboard text at cursor position
 					m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
-					m.textInputCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					m.textInputCursorPos += len([]rune(clipText)) // Use rune length for proper cursor positioning
 				}
 				return m, nil
 			case msg.String() == "ctrl+v":
@@ -1376,7 +1368,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err == nil && clipText != "" {
 					// Insert clipboard text at cursor position
 					m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
-					m.textInputCursorPos += len([]rune(clipText))  // Use rune length for proper cursor positioning
+					m.textInputCursorPos += len([]rune(clipText)) // Use rune length for proper cursor positioning
 				}
 				return m, nil
 			case msg.String() == "left":
@@ -1520,7 +1512,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				selectionEndX := m.cursorX + panX
 				selectionEndY := m.cursorY + panY
-				
+
 				// Calculate selection rectangle bounds
 				minX := m.selectionStartX
 				if selectionEndX < m.selectionStartX {
@@ -1538,7 +1530,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selectionEndY > m.selectionStartY {
 					maxY = selectionEndY
 				}
-				
+
 				// Find all boxes and texts within the selection rectangle
 				m.selectedBoxes = []int{}
 				m.selectedTexts = []int{}
@@ -1546,20 +1538,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.originalBoxPositions = make(map[int]point)
 				m.originalTextPositions = make(map[int]point)
 				m.originalConnections = make(map[int]Connection)
-				
+
 				// Check boxes
 				for i, box := range m.getCanvas().boxes {
 					// Check if box overlaps with selection rectangle
 					// A box is selected if any part of it is within the selection
 					boxRight := box.X + box.Width - 1
 					boxBottom := box.Y + box.Height - 1
-					
+
 					if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
 						m.selectedBoxes = append(m.selectedBoxes, i)
 						m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
 					}
 				}
-				
+
 				// Check texts
 				for i, text := range m.getCanvas().texts {
 					// Check if any part of the text is within the selection
@@ -1573,24 +1565,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(text.Lines) > 0 {
 						textBottom = text.Y + len(text.Lines) - 1
 					}
-					
+
 					if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
 						m.selectedTexts = append(m.selectedTexts, i)
 						m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
 					}
 				}
-				
+
 				// Check connections - find connections that should be included in the selection
 				selectedBoxSet := make(map[int]bool)
 				for _, boxID := range m.selectedBoxes {
 					selectedBoxSet[boxID] = true
 				}
-				
+
 				// Helper function to check if a point is within the selection rectangle
 				pointInSelection := func(x, y int) bool {
 					return x >= minX && x <= maxX && y >= minY && y <= maxY
 				}
-				
+
 				// Helper function to check if a connection should be selected
 				shouldSelectConnection := func(conn Connection) bool {
 					// Case 1: Both endpoints are selected boxes
@@ -1599,7 +1591,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return true
 						}
 					}
-					
+
 					// Case 2: One endpoint is a selected box and the other is a connection point within selection
 					if conn.FromID >= 0 && selectedBoxSet[conn.FromID] {
 						if conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
@@ -1611,19 +1603,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return true
 						}
 					}
-					
+
 					// Case 3: Both endpoints are connection points within selection
 					if conn.FromID == -1 && conn.ToID == -1 {
 						if pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
 							return true
 						}
 					}
-					
+
 					// Case 4: Connection has significant points within selection
 					// Check if endpoints or waypoints are in selection
 					pointsInSelection := 0
 					totalPoints := 2 + len(conn.Waypoints) // endpoints + waypoints
-					
+
 					if pointInSelection(conn.FromX, conn.FromY) {
 						pointsInSelection++
 					}
@@ -1635,15 +1627,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							pointsInSelection++
 						}
 					}
-					
+
 					// If at least half the points are in selection, include it
 					if totalPoints > 0 && pointsInSelection*2 >= totalPoints {
 						return true
 					}
-					
+
 					return false
 				}
-				
+
 				for i, conn := range m.getCanvas().connections {
 					if shouldSelectConnection(conn) {
 						m.selectedConnections = append(m.selectedConnections, i)
@@ -1663,7 +1655,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.originalConnections[i] = connCopy
 					}
 				}
-				
+
 				// Capture all highlights in the selection rectangle
 				m.originalHighlights = make(map[point]int)
 				m.highlightMoveDelta = point{X: 0, Y: 0}
@@ -1675,7 +1667,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				
+
 				// If we have selections (boxes, texts, connections, or highlights), enter move mode
 				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 || len(m.originalHighlights) > 0 {
 					m.mode = ModeMove
@@ -2366,8 +2358,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errorMessage = "" // Clear any error when canceling
 				return m, nil
 			case msg.String() == "up":
-				// Navigate file list (only for FileOpOpen, and only if not typing)
-				if m.fileOp == FileOpOpen && len(m.fileList) > 0 {
+				// Navigate file list (only for FileOpOpen, and only if not typing and not showing delete confirmation)
+				if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm {
 					// Only navigate if filename matches a file in the list (user hasn't started typing)
 					matchesFile := false
 					if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
@@ -2398,8 +2390,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Fall through to treat as regular character if not navigating
 			case msg.String() == "down":
-				// Navigate file list (only for FileOpOpen, and only if not typing)
-				if m.fileOp == FileOpOpen && len(m.fileList) > 0 {
+				// Navigate file list (only for FileOpOpen, and only if not typing and not showing delete confirmation)
+				if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm {
 					// Only navigate if filename matches a file in the list (user hasn't started typing)
 					matchesFile := false
 					if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
@@ -2429,7 +2421,84 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				// Fall through to treat as regular character if not navigating
+			case msg.String() == "d":
+				// Delete selected chart (only for FileOpOpen, and only if a file is selected)
+				if m.fileOp == FileOpOpen && len(m.fileList) > 0 && m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) && !m.showingDeleteConfirm {
+					m.showingDeleteConfirm = true
+					m.confirmFileIndex = m.selectedFileIndex
+					return m, nil
+				}
+			case msg.String() == "y" || msg.String() == "Y":
+				// Confirm delete if we're showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					if m.confirmFileIndex >= 0 && m.confirmFileIndex < len(m.fileList) {
+						filename := m.fileList[m.confirmFileIndex]
+						// Apply save directory from config
+						filepath := filename
+						if m.config != nil {
+							filepath = m.config.GetSavePath(filename)
+						}
+						err := os.Remove(filepath)
+						if err != nil {
+							m.errorMessage = fmt.Sprintf("Error deleting file: %s", err.Error())
+						} else {
+							// Remove file from the file list
+							m.fileList = append(m.fileList[:m.confirmFileIndex], m.fileList[m.confirmFileIndex+1:]...)
+							// Adjust selected index
+							if m.selectedFileIndex >= len(m.fileList) {
+								m.selectedFileIndex = len(m.fileList) - 1
+							}
+							if m.selectedFileIndex < 0 && len(m.fileList) > 0 {
+								m.selectedFileIndex = 0
+							}
+							// Update filename to match new selection if any
+							if len(m.fileList) > 0 && m.selectedFileIndex >= 0 {
+								selectedFile := m.fileList[m.selectedFileIndex]
+								if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
+									m.filename = selectedFile[:len(selectedFile)-4]
+								} else {
+									m.filename = selectedFile
+								}
+							} else {
+								m.filename = ""
+							}
+							displayName := filename
+							if strings.HasSuffix(strings.ToLower(filename), ".sav") {
+								displayName = filename[:len(filename)-4]
+							}
+							m.successMessage = fmt.Sprintf("Deleted %s", displayName)
+						}
+					}
+					m.showingDeleteConfirm = false
+					return m, nil
+				}
+			case msg.String() == "n" || msg.String() == "N":
+				// Cancel delete if we're showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					m.showingDeleteConfirm = false
+					return m, nil
+				}
+			case msg.Type == tea.KeyEscape:
+				// Cancel delete confirmation if active, otherwise handle normal escape
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					m.showingDeleteConfirm = false
+					return m, nil
+				}
+				// Normal escape handling for file input
+				if m.fromStartup {
+					m.mode = ModeStartup
+					m.fromStartup = false
+				} else {
+					m.mode = ModeNormal
+				}
+				m.filename = ""
+				m.errorMessage = "" // Clear any error when canceling
+				return m, nil
 			case msg.Type == tea.KeyEnter:
+				// Don't allow file operations while showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					return m, nil
+				}
 				// Execute the file operation with automatic extension
 				filename := m.filename
 				// If we have a selected file and filename is empty or matches, use selected file
@@ -2471,11 +2540,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						// File doesn't exist or confirmations disabled, save directly
 						buf := m.getCurrentBuffer()
-					panX, panY := 0, 0
-					if buf != nil {
-						panX, panY = buf.panX, buf.panY
-					}
-					err := m.getCanvas().SaveToFileWithPan(savePath, panX, panY)
+						panX, panY := 0, 0
+						if buf != nil {
+							panX, panY = buf.panX, buf.panY
+						}
+						err := m.getCanvas().SaveToFileWithPan(savePath, panX, panY)
 						if err != nil {
 							m.errorMessage = fmt.Sprintf("Error saving file: %s", err.Error())
 							return m, nil
@@ -2505,22 +2574,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 						newCanvas := NewCanvas()
-					panX, panY, err := newCanvas.LoadFromFileWithPan(loadPath)
-					if err != nil {
-						m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
-						return m, nil
-					} else {
-						// Update buffer filename with the actual path used
-						if m.fromStartup {
-							// Replace startup buffer
-							m.buffers[0] = Buffer{
-								canvas:    newCanvas,
-								undoStack: []Action{},
-								redoStack: []Action{},
-								filename:  loadPath,
-								panX:      panX,
-								panY:      panY,
-							}
+						panX, panY, err := newCanvas.LoadFromFileWithPan(loadPath)
+						if err != nil {
+							m.errorMessage = fmt.Sprintf("Error opening file: %s", err.Error())
+							return m, nil
+						} else {
+							// Update buffer filename with the actual path used
+							if m.fromStartup {
+								// Replace startup buffer
+								m.buffers[0] = Buffer{
+									canvas:    newCanvas,
+									undoStack: []Action{},
+									redoStack: []Action{},
+									filename:  loadPath,
+									panX:      panX,
+									panY:      panY,
+								}
 								m.currentBufferIndex = 0
 								m.fromStartup = false
 							} else if m.openInNewBuffer {
@@ -2608,6 +2677,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filename = ""
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
+				// Don't allow editing while showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					return m, nil
+				}
 				if len(m.filename) > 0 {
 					m.filename = m.filename[:len(m.filename)-1]
 					// Clear selection when typing
@@ -2615,12 +2688,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.Type == tea.KeySpace:
+				// Don't allow editing while showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					return m, nil
+				}
 				// Insert space character
 				m.filename += " "
 				// Clear selection when typing
 				m.selectedFileIndex = -1
 				return m, nil
 			default:
+				// Don't allow typing while showing delete confirmation
+				if m.fileOp == FileOpOpen && m.showingDeleteConfirm {
+					return m, nil
+				}
 				// Handle all other keys as regular characters (including hjkl/HJKL)
 				// Use msg.Runes for proper Unicode support and paste handling
 				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
@@ -2734,7 +2815,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						// Last buffer - return to startup
 						canvas := NewCanvas()
-						canvas.AddBox(1, 1, "Welcome to Flerm!\nby Travis\n\n'n' New flowchart\n'o' Open existing chart\n'q' Quit")
 						m.buffers = []Buffer{
 							{
 								canvas:    canvas,
@@ -2868,6 +2948,14 @@ func (m model) View() string {
 		return m.helpView()
 	}
 
+	if m.mode == ModeStartup {
+		return m.renderStartupMenu()
+	}
+
+	if m.mode == ModeFileInput && m.fileOp == FileOpOpen {
+		return m.renderFileMenu()
+	}
+
 	var selectedBox int = -1
 	if m.mode == ModeResize || m.mode == ModeMove {
 		selectedBox = m.selectedBox
@@ -2978,65 +3066,11 @@ func (m model) View() string {
 		result.WriteString("\n")
 	}
 
-	// If in FileOpOpen mode, show file list instead of canvas
-	if m.mode == ModeFileInput && m.fileOp == FileOpOpen {
-		result.WriteString("Select a saved chart:\n")
-		result.WriteString(strings.Repeat("─", renderWidth))
-		result.WriteString("\n")
-
-		if len(m.fileList) == 0 {
-			result.WriteString("(No .sav files found in current directory)\n")
-		} else {
-			// Calculate how many files we can show
-			maxFiles := renderHeight - 4 // Leave room for header, separator, input, and status
-			if maxFiles < 1 {
-				maxFiles = 1
-			}
-
-			// Determine start index for scrolling
-			startIdx := 0
-			if m.selectedFileIndex >= 0 && m.selectedFileIndex >= maxFiles {
-				startIdx = m.selectedFileIndex - maxFiles + 1
-			}
-			endIdx := startIdx + maxFiles
-			if endIdx > len(m.fileList) {
-				endIdx = len(m.fileList)
-			}
-
-			// Display files
-			for i := startIdx; i < endIdx; i++ {
-				file := m.fileList[i]
-				// Remove .sav extension for display
-				displayName := file
-				if strings.HasSuffix(strings.ToLower(file), ".sav") {
-					displayName = file[:len(file)-4]
-				}
-
-				if i == m.selectedFileIndex && m.selectedFileIndex >= 0 {
-					// Highlight selected file
-					result.WriteString("> ")
-					result.WriteString(displayName)
-					result.WriteString(" <")
-				} else {
-					result.WriteString("  ")
-					result.WriteString(displayName)
-				}
-				result.WriteString("\n")
-			}
-		}
-
-		result.WriteString(strings.Repeat("─", renderWidth))
-		result.WriteString("\n")
-		result.WriteString("Filename: ")
-		result.WriteString(m.filename)
-		result.WriteString("█")
-	} else {
-		// Normal canvas display
-		for i, line := range canvas {
-			result.WriteString(line)
-			if i < len(canvas)-1 {
-				result.WriteString("\n")
-			}
+	// Normal canvas display
+	for i, line := range canvas {
+		result.WriteString(line)
+		if i < len(canvas)-1 {
+			result.WriteString("\n")
 		}
 	}
 
@@ -3136,7 +3170,18 @@ func (m model) View() string {
 			}
 		} else {
 			if m.fileOp == FileOpOpen {
-				statusLine = fmt.Sprintf("Mode: FILE | %s filename: %s | ↑/↓=navigate list, Type=enter name, Enter=confirm, Esc=cancel", opStr, m.filename)
+				if m.showingDeleteConfirm {
+					chartName := ""
+					if m.confirmFileIndex >= 0 && m.confirmFileIndex < len(m.fileList) {
+						chartName = m.fileList[m.confirmFileIndex]
+						if strings.HasSuffix(strings.ToLower(chartName), ".sav") {
+							chartName = chartName[:len(chartName)-4]
+						}
+					}
+					statusLine = fmt.Sprintf("Mode: FILE | Are you sure you want to delete %s? (y/n)", chartName)
+				} else {
+					statusLine = fmt.Sprintf("Mode: FILE | %s filename: %s | ↑/↓=navigate list, d=delete, Type=enter name, Enter=confirm, Esc=cancel", opStr, m.filename)
+				}
 			} else {
 				statusLine = fmt.Sprintf("Mode: FILE | %s filename: %s | Enter=confirm, Esc=cancel", opStr, m.filename)
 			}
@@ -3195,10 +3240,208 @@ func (m model) View() string {
 		}
 		statusLine = status
 	}
-	// Only add status line if not in startup mode
-	if m.mode != ModeStartup {
+	// Only add status line if not in startup mode or centered file open mode
+	if m.mode != ModeStartup && !(m.mode == ModeFileInput && m.fileOp == FileOpOpen) {
 		result.WriteString("\n")
 		result.WriteString(statusLine)
+	}
+
+	return result.String()
+}
+
+func (m model) renderStartupMenu() string {
+	logo := []string{
+		"    ___ __                      ",
+		"  .'  _|  |.-----.----.--------.",
+		"  |   _|  ||  -__|   _|        |",
+		"  |__| |__||_____|__| |__|__|__|",
+	}
+
+	menuItems := []string{
+		"  n: New",
+		"  o: Open",
+		"  q: Quit",
+	}
+
+	logoWidth := len(logo[0])
+	menuWidth := 0
+	for _, item := range menuItems {
+		if len(item) > menuWidth {
+			menuWidth = len(item)
+		}
+	}
+
+	contentWidth := logoWidth
+	if menuWidth > contentWidth {
+		contentWidth = menuWidth
+	}
+
+	boxWidth := contentWidth + 4
+	boxHeight := len(logo) + len(menuItems) + 6
+
+	centerX := m.width/2 - boxWidth/2
+	centerY := m.height/2 - boxHeight/2
+
+	var result strings.Builder
+
+	for y := 0; y < m.height; y++ {
+		for x := 0; x < m.width; x++ {
+			if y < centerY || y >= centerY+boxHeight || x < centerX || x >= centerX+boxWidth {
+				result.WriteString(" ")
+			} else {
+				relY := y - centerY
+				relX := x - centerX
+
+				if relY == 0 {
+					if relX == 0 {
+						result.WriteString("┌")
+					} else if relX == boxWidth-1 {
+						result.WriteString("┐")
+					} else {
+						result.WriteString("─")
+					}
+				} else if relY == boxHeight-1 {
+					if relX == 0 {
+						result.WriteString("└")
+					} else if relX == boxWidth-1 {
+						result.WriteString("┘")
+					} else {
+						result.WriteString("─")
+					}
+				} else if relX == 0 || relX == boxWidth-1 {
+					result.WriteString("│")
+				} else if relY == 1 {
+					result.WriteString(" ")
+				} else if relY >= 2 && relY < 2+len(logo) {
+					logoLineIdx := relY - 2
+					logoX := relX - 1 - (contentWidth-logoWidth)/2
+					if logoX >= 0 && logoX < len(logo[logoLineIdx]) {
+						result.WriteString(string(logo[logoLineIdx][logoX]))
+					} else {
+						result.WriteString(" ")
+					}
+				} else if relY == 2+len(logo) || relY == 3+len(logo) {
+					result.WriteString(" ")
+				} else if relY >= 4+len(logo) && relY < 4+len(logo)+len(menuItems) {
+					menuLineIdx := relY - 4 - len(logo)
+					menuX := relX - 1
+					if menuX >= 0 && menuX < len(menuItems[menuLineIdx]) {
+						result.WriteString(string(menuItems[menuLineIdx][menuX]))
+					} else {
+						result.WriteString(" ")
+					}
+				} else {
+					result.WriteString(" ")
+				}
+			}
+		}
+		if y < m.height-1 {
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String()
+}
+
+func (m model) renderFileMenu() string {
+	title := "Select a saved chart:"
+
+	var menuItems []string
+	if len(m.fileList) == 0 {
+		menuItems = []string{"  (No .sav files found in current directory)"}
+	} else {
+		for i, file := range m.fileList {
+			displayName := file
+			if strings.HasSuffix(strings.ToLower(file), ".sav") {
+				displayName = file[:len(file)-4]
+			}
+
+			if i == m.selectedFileIndex {
+				menuItems = append(menuItems, "> "+displayName)
+			} else {
+				menuItems = append(menuItems, "  "+displayName)
+			}
+		}
+	}
+
+	if m.showingDeleteConfirm && m.confirmFileIndex >= 0 && m.confirmFileIndex < len(m.fileList) {
+		chartName := m.fileList[m.confirmFileIndex]
+		if strings.HasSuffix(strings.ToLower(chartName), ".sav") {
+			chartName = chartName[:len(chartName)-4]
+		}
+		menuItems = append(menuItems, "")
+		menuItems = append(menuItems, fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartName))
+	} else if len(m.fileList) > 0 {
+		menuItems = append(menuItems, "")
+		menuItems = append(menuItems, "  Enter: Open  d: Delete  Esc: Cancel")
+	}
+
+	contentWidth := len(title)
+	for _, item := range menuItems {
+		if len(item) > contentWidth {
+			contentWidth = len(item)
+		}
+	}
+
+	boxWidth := contentWidth + 4
+	boxHeight := len(menuItems) + 4
+
+	centerX := m.width/2 - boxWidth/2
+	centerY := m.height/2 - boxHeight/2
+
+	var result strings.Builder
+
+	for y := 0; y < m.height; y++ {
+		for x := 0; x < m.width; x++ {
+			if y < centerY || y >= centerY+boxHeight || x < centerX || x >= centerX+boxWidth {
+				result.WriteString(" ")
+			} else {
+				relY := y - centerY
+				relX := x - centerX
+
+				if relY == 0 {
+					if relX == 0 {
+						result.WriteString("┌")
+					} else if relX == boxWidth-1 {
+						result.WriteString("┐")
+					} else {
+						result.WriteString("─")
+					}
+				} else if relY == boxHeight-1 {
+					if relX == 0 {
+						result.WriteString("└")
+					} else if relX == boxWidth-1 {
+						result.WriteString("┘")
+					} else {
+						result.WriteString("─")
+					}
+				} else if relX == 0 || relX == boxWidth-1 {
+					result.WriteString("│")
+				} else if relY == 1 {
+					titleX := relX - 1 - (contentWidth-len(title))/2
+					if titleX >= 0 && titleX < len(title) {
+						result.WriteString(string(title[titleX]))
+					} else {
+						result.WriteString(" ")
+					}
+				} else if relY == 2 {
+					result.WriteString("─")
+				} else if relY >= 3 && relY < 3+len(menuItems) {
+					itemIdx := relY - 3
+					itemX := relX - 1
+					if itemX >= 0 && itemX < len(menuItems[itemIdx]) {
+						result.WriteString(string(menuItems[itemIdx][itemX]))
+					} else {
+						result.WriteString(" ")
+					}
+				} else {
+					result.WriteString(" ")
+				}
+			}
+		}
+		if y < m.height-1 {
+			result.WriteString("\n")
+		}
 	}
 
 	return result.String()

@@ -36,6 +36,7 @@ const (
 	ConfirmCloseBuffer
 	ConfirmOverwriteFile
 	ConfirmChooseExportType
+	ConfirmDeleteChart
 )
 
 type ActionType int
