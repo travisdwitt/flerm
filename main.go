@@ -488,8 +488,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "t":
 				m.zPanMode = false
 				m.mode = ModeTextInput
-				m.textInputX = m.cursorX
-				m.textInputY = m.cursorY
+				buf := m.getCurrentBuffer()
+				panX, panY := 0, 0
+				if buf != nil {
+					panX, panY = buf.panX, buf.panY
+				}
+				m.textInputX = m.cursorX + panX
+				m.textInputY = m.cursorY + panY
 				m.textInputText = ""
 				m.textInputCursorPos = 0
 				return m, nil
@@ -1340,14 +1345,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case msg.Type == tea.KeyCtrlS:
 				if m.textInputText != "" {
-					buf := m.getCurrentBuffer()
-					panX, panY := 0, 0
-					if buf != nil {
-						panX, panY = buf.panX, buf.panY
-					}
-					worldX := m.textInputX + panX
-					worldY := m.textInputY + panY
-					m.getCanvas().AddText(worldX, worldY, m.textInputText)
+					m.getCanvas().AddText(m.textInputX, m.textInputY, m.textInputText)
 				}
 				m.mode = ModeNormal
 				m.textInputText = ""

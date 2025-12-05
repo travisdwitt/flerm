@@ -1233,7 +1233,12 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 					coloredLine.WriteString(colorReset)
 				}
 				if cellColor != -1 {
-					coloredLine.WriteString(getColorCode(cellColor))
+					// Use text color if there's actual content, background color if it's just space
+					if char != ' ' {
+						coloredLine.WriteString(getTextColorCode(cellColor))
+					} else {
+						coloredLine.WriteString(getColorCode(cellColor))
+					}
 				}
 				currentColor = cellColor
 			}
@@ -2427,6 +2432,19 @@ func getColorCode(colorIndex int) string {
 	// Using standard colors for better terminal compatibility
 	// Colors: Gray (white), Red, Green, Yellow, Blue, Magenta, Cyan, White
 	colors := []int{47, 41, 42, 43, 44, 45, 46, 47}
+	if colorIndex < 0 || colorIndex >= len(colors) {
+		return ""
+	}
+	// Use proper ANSI escape sequence format - ensure it's a valid escape sequence
+	return fmt.Sprintf("\x1b[%dm", colors[colorIndex])
+}
+
+// Helper function to get ANSI color code for text (foreground)
+func getTextColorCode(colorIndex int) string {
+	// ANSI foreground color codes: 30-37 for standard colors
+	// Using standard colors for better terminal compatibility
+	// Colors: Gray (white), Red, Green, Yellow, Blue, Magenta, Cyan, White
+	colors := []int{37, 31, 32, 33, 34, 35, 36, 37}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
 	}
