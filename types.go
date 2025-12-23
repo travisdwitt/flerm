@@ -24,6 +24,8 @@ type model struct {
 	selectedText        int
 	editText            string
 	editCursorPos       int
+	editCursorRow       int
+	editCursorCol       int
 	originalEditText    string
 	connectionFrom      int
 	connectionFromX     int

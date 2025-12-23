@@ -117,6 +117,61 @@ func (m *model) ensureCursorInBounds() {
 	}
 }
 
+// linearToCursorPos converts linear cursor position to 2D row/column coordinates
+func (m *model) linearToCursorPos(pos int, text string) (row, col int) {
+	lines := strings.Split(text, "\n")
+	currentPos := 0
+	for lineIdx, line := range lines {
+		lineLength := len([]rune(line))
+		if pos <= currentPos+lineLength {
+			return lineIdx, pos - currentPos
+		}
+		currentPos += lineLength + 1 // +1 for newline character
+	}
+	// If position is beyond text, place at end of last line
+	if len(lines) > 0 {
+		return len(lines) - 1, len([]rune(lines[len(lines)-1]))
+	}
+	return 0, 0
+}
+
+// cursorPosToLinear converts 2D row/column coordinates to linear cursor position
+func (m *model) cursorPosToLinear(row, col int, text string) int {
+	lines := strings.Split(text, "\n")
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		// Position at end of text
+		pos := 0
+		for _, line := range lines {
+			pos += len([]rune(line)) + 1 // +1 for newline
+		}
+		return pos - 1 // -1 to remove the last newline
+	}
+
+	pos := 0
+	for i := 0; i < row; i++ {
+		pos += len([]rune(lines[i])) + 1 // +1 for newline
+	}
+
+	// Clamp column to line length
+	lineLength := len([]rune(lines[row]))
+	if col < 0 {
+		col = 0
+	}
+	if col > lineLength {
+		col = lineLength
+	}
+
+	return pos + col
+}
+
+// syncCursorPositions keeps linear and 2D cursor positions synchronized
+func (m *model) syncCursorPositions() {
+	m.editCursorRow, m.editCursorCol = m.linearToCursorPos(m.editCursorPos, m.editText)
+}
+
 func (m *model) scanTxtFiles() {
 	m.fileList = []string{}
 	dir := ""
@@ -571,6 +626,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editText = m.getCanvas().GetBoxText(boxID)
 					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
+					m.syncCursorPositions()
 				} else if textID != -1 {
 					m.selectedText = textID
 					m.selectedBox = -1
@@ -578,6 +634,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editText = m.getCanvas().GetTextText(textID)
 					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
+					m.syncCursorPositions()
 				}
 				return m, nil
 			case "A":
@@ -989,6 +1046,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editText = ""
 				m.originalEditText = ""
 				m.editCursorPos = 0
+				m.editCursorRow = 0
+				m.editCursorCol = 0
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
@@ -1008,6 +1067,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editText = ""
 				m.originalEditText = ""
 				m.editCursorPos = 0
+				m.editCursorRow = 0
+				m.editCursorCol = 0
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
@@ -1045,10 +1106,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.editCursorPos > 0 {
 					m.editCursorPos--
 				}
+				m.syncCursorPositions()
 				return m, nil
 			case msg.String() == "right":
 				if m.editCursorPos < len(m.editText) {
 					m.editCursorPos++
+				}
+				m.syncCursorPositions()
+				return m, nil
+			case msg.String() == "up":
+				// Move cursor up one line
+				m.syncCursorPositions() // Ensure 2D position is current
+				if m.editCursorRow > 0 {
+					m.editCursorRow--
+					m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
+				}
+				return m, nil
+			case msg.String() == "down":
+				// Move cursor down one line
+				m.syncCursorPositions() // Ensure 2D position is current
+				lines := strings.Split(m.editText, "\n")
+				if m.editCursorRow < len(lines)-1 {
+					m.editCursorRow++
+					m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
 				}
 				return m, nil
 			case msg.Type == tea.KeyEnter:
