@@ -2697,11 +2697,11 @@ func (m model) View() string {
 			cursorDisplay = string(runes)
 		}
 		if m.selectedBox != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedBox, cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedBox, cursorDisplay)
 		} else if m.selectedText != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedText, cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedText, cursorDisplay)
 		} else {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
 		}
 	case ModeTextInput:
 		displayText := strings.ReplaceAll(m.textInputText, "\n", " ")
