@@ -47,6 +47,7 @@ const (
 	ActionDeleteBox
 	ActionEditBox
 	ActionEditText
+	ActionDeleteText
 	ActionResizeBox
 	ActionMoveBox
 	ActionMoveText
@@ -54,6 +55,16 @@ const (
 	ActionDeleteConnection
 	ActionCycleArrow
 	ActionHighlight
+	ActionChangeBorderStyle
+)
+
+type BorderStyle int
+
+const (
+	BorderStyleASCII BorderStyle = iota
+	BorderStyleSingle
+	BorderStyleDouble
+	BorderStyleRounded
 )
 
 const (

@@ -6,10 +6,28 @@ func (m *model) handleNavigation(key string, speed int) (tea.Model, tea.Cmd) {
 	if m.zPanMode {
 		return m.handlePan(key, speed), nil
 	}
-	return m.handleCursorMove(key, speed), nil
+
+	// Store old tooltip state
+	oldShowTooltip := m.showTooltip
+	oldTooltipText := m.tooltipText
+
+	// Move cursor
+	updatedModel := m.handleCursorMove(key, speed)
+
+	// Update tooltip state after movement
+	updatedModel.updateTooltip()
+
+	// If tooltip state changed, we want to force a re-render
+	if oldShowTooltip != updatedModel.showTooltip ||
+	   (updatedModel.showTooltip && oldTooltipText != updatedModel.tooltipText) {
+		// Return a command to force re-render
+		return updatedModel, func() tea.Msg { return struct{}{} }
+	}
+
+	return updatedModel, nil
 }
 
-func (m *model) handlePan(key string, speed int) tea.Model {
+func (m *model) handlePan(key string, speed int) *model {
 	buf := m.getCurrentBuffer()
 	if buf == nil {
 		return m
@@ -27,7 +45,7 @@ func (m *model) handlePan(key string, speed int) tea.Model {
 	return m
 }
 
-func (m *model) handleCursorMove(key string, speed int) tea.Model {
+func (m *model) handleCursorMove(key string, speed int) *model {
 	oldX := m.cursorX
 	oldY := m.cursorY
 	

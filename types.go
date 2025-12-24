@@ -10,58 +10,58 @@ type Buffer struct {
 }
 
 type model struct {
-	width               int
-	height              int
-	cursorX             int
-	cursorY             int
-	zPanMode            bool
-	buffers             []Buffer
-	currentBufferIndex  int
-	mode                Mode
-	help                bool
-	helpScroll          int
-	selectedBox         int
-	selectedText        int
-	editText            string
-	editCursorPos       int
-	editCursorRow       int
-	editCursorCol       int
-	originalEditText    string
-	connectionFrom      int
-	connectionFromX     int
-	connectionFromY     int
-	connectionFromLine  int
-	connectionWaypoints []point
-	filename            string
-	fileList            []string
-	selectedFileIndex   int
-	fileOp              FileOperation
-	openInNewBuffer     bool
-	createNewBuffer     bool
-	showingDeleteConfirm bool
-	confirmAction       ConfirmAction
-	confirmBoxID        int
-	confirmTextID       int
-	confirmConnIdx      int
-	confirmHighlightX  int
-	confirmHighlightY  int
-	confirmFileIndex   int
-	originalMoveX       int
-	originalMoveY       int
-	originalTextMoveX   int
-	originalTextMoveY   int
-	originalWidth       int
-	originalHeight      int
-	textInputX          int
-	textInputY          int
-	textInputText       string
-	textInputCursorPos  int
-	errorMessage        string
-	successMessage      string
-	fromStartup         bool
-	clipboard           *Box
-	config              *Config
-	highlightMode       bool
+	width                 int
+	height                int
+	cursorX               int
+	cursorY               int
+	zPanMode              bool
+	buffers               []Buffer
+	currentBufferIndex    int
+	mode                  Mode
+	help                  bool
+	helpScroll            int
+	selectedBox           int
+	selectedText          int
+	editText              string
+	editCursorPos         int
+	editCursorRow         int
+	editCursorCol         int
+	originalEditText      string
+	connectionFrom        int
+	connectionFromX       int
+	connectionFromY       int
+	connectionFromLine    int
+	connectionWaypoints   []point
+	filename              string
+	fileList              []string
+	selectedFileIndex     int
+	fileOp                FileOperation
+	openInNewBuffer       bool
+	createNewBuffer       bool
+	showingDeleteConfirm  bool
+	confirmAction         ConfirmAction
+	confirmBoxID          int
+	confirmTextID         int
+	confirmConnIdx        int
+	confirmHighlightX     int
+	confirmHighlightY     int
+	confirmFileIndex      int
+	originalMoveX         int
+	originalMoveY         int
+	originalTextMoveX     int
+	originalTextMoveY     int
+	originalWidth         int
+	originalHeight        int
+	textInputX            int
+	textInputY            int
+	textInputText         string
+	textInputCursorPos    int
+	errorMessage          string
+	successMessage        string
+	fromStartup           bool
+	clipboard             *Box
+	config                *Config
+	highlightMode         bool
 	selectedColor         int
 	selectionStartX       int
 	selectionStartY       int
@@ -74,6 +74,39 @@ type model struct {
 	originalHighlights    map[point]int
 	highlightMoveDelta    point
 	boxJumpInput          string
+	showTooltip           bool
+	tooltipText           string
+	tooltipX              int
+	tooltipY              int
+	tooltipBoxID          int // ID of the box being shown in tooltip, -1 if none
+
+	// Konami Code Easter Egg
+	konamiProgress  int           // How far through the code sequence
+	easterEggActive bool          // Whether the falling animation is running
+	fallingChars    []FallingChar // Characters that are exploding
+	particles       []Particle    // Trail particles
+	piledChars      [][]rune      // Characters that have piled up at the bottom
+	piledColors     [][]int       // Colors of piled characters
+}
+
+// FallingChar represents a character exploding during the easter egg animation
+type FallingChar struct {
+	Char   rune
+	X      float64 // Float for smooth animation
+	Y      float64
+	VelX   float64 // Horizontal velocity
+	VelY   float64 // Vertical velocity
+	Color  int     // -1 for no color
+	Landed bool    // Whether this char has landed
+}
+
+// Particle represents a trail particle
+type Particle struct {
+	Char  rune
+	X     float64
+	Y     float64
+	Life  int // Frames remaining
+	Color int
 }
 
 type point struct {
@@ -92,10 +125,17 @@ type AddBoxData struct {
 	ID   int
 }
 
+type AddTextData struct {
+	X, Y int
+	Text string
+	ID   int
+}
+
 type DeleteBoxData struct {
 	Box         Box
 	ID          int
 	Connections []Connection
+	Highlights  []HighlightCell
 }
 
 type EditBoxData struct {
@@ -108,6 +148,12 @@ type EditTextData struct {
 	ID      int
 	NewText string
 	OldText string
+}
+
+type DeleteTextData struct {
+	Text       Text
+	ID         int
+	Highlights []HighlightCell
 }
 
 type ResizeBoxData struct {
@@ -166,3 +212,8 @@ type HighlightCell struct {
 	OldColor int
 }
 
+type BorderStyleData struct {
+	BoxID    int
+	OldStyle BorderStyle
+	NewStyle BorderStyle
+}

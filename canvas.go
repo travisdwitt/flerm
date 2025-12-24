@@ -38,20 +38,26 @@ func (t *Text) SetText(text string) {
 }
 
 type Box struct {
-	X      int
-	Y      int
-	Width  int
-	Height int
-	Lines  []string
-	ID     int
-	ZLevel int
+	X            int
+	Y            int
+	Width        int
+	Height       int
+	Lines        []string
+	ID           int
+	ZLevel       int
+	BorderStyle  BorderStyle
+	OriginalText string
 }
 
 func (b *Box) GetText() string {
+	if b.OriginalText != "" {
+		return b.OriginalText
+	}
 	return strings.Join(b.Lines, "\n")
 }
 
 func (b *Box) SetText(text string) {
+	b.OriginalText = text
 	b.Lines = strings.Split(text, "\n")
 	b.updateSize()
 }
@@ -69,6 +75,207 @@ func (b *Box) updateSize() {
 	}
 	b.Width = maxWidth
 	b.Height = len(b.Lines) + 2
+}
+
+func (b *Box) getMinimumWidth() int {
+	minWidth := minBoxWidth
+	text := b.GetText()
+	if text == "" {
+		return minWidth
+	}
+
+	// Find the longest line to determine minimum width
+	lines := strings.Split(text, "\n")
+	longestLine := 0
+	for _, line := range lines {
+		if len(line) > longestLine {
+			longestLine = len(line)
+		}
+	}
+
+	// Also find the longest word for absolute minimum
+	words := strings.Fields(text)
+	longestWord := 0
+	for _, word := range words {
+		if len(word) > longestWord {
+			longestWord = len(word)
+		}
+	}
+
+	// Use the shorter of longest line or longest word for minimum
+	requiredWidth := longestWord
+	if requiredWidth < 4 { // Minimum to show "..."
+		requiredWidth = 4
+	}
+
+	if requiredWidth+2 > minWidth {
+		minWidth = requiredWidth + 2
+	}
+
+	return minWidth
+}
+
+func (b *Box) getMinimumHeight() int {
+	text := b.GetText()
+	if text == "" {
+		return minBoxHeight
+	}
+
+	// Minimum height should be enough to show at least one line plus ellipsis
+	// This allows for more flexible resizing
+	minHeight := minBoxHeight
+
+	// If we have text, ensure we can show at least one character
+	if text != "" && minHeight < 3 {
+		minHeight = 3
+	}
+
+	return minHeight
+}
+
+func (b *Box) wrapTextToWidth(text string, width int) []string {
+	if width < 1 {
+		return []string{text}
+	}
+
+	var result []string
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	var currentLine strings.Builder
+	for _, word := range words {
+		// If this is the first word in the line
+		if currentLine.Len() == 0 {
+			currentLine.WriteString(word)
+		} else {
+			// Check if adding this word would exceed the width
+			if currentLine.Len()+1+len(word) <= width {
+				currentLine.WriteString(" " + word)
+			} else {
+				// Start a new line
+				result = append(result, currentLine.String())
+				currentLine.Reset()
+				currentLine.WriteString(word)
+			}
+		}
+
+		// If the current line is longer than the width, break it
+		lineText := currentLine.String()
+		for len(lineText) > width {
+			result = append(result, lineText[:width])
+			lineText = lineText[width:]
+		}
+		if lineText != currentLine.String() {
+			currentLine.Reset()
+			currentLine.WriteString(lineText)
+		}
+	}
+
+	if currentLine.Len() > 0 {
+		result = append(result, currentLine.String())
+	}
+
+	return result
+}
+
+func (b *Box) fitTextToSize(newWidth, newHeight int) {
+	text := b.GetText()
+	if text == "" {
+		b.Lines = []string{""}
+		return
+	}
+
+	contentWidth := newWidth - 2
+	contentHeight := newHeight - 2
+
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	originalLines := strings.Split(text, "\n")
+
+	// Check if original text fits without modification
+	fitsWidth := true
+	for _, line := range originalLines {
+		if len(line) > contentWidth {
+			fitsWidth = false
+			break
+		}
+	}
+
+	fitsHeight := len(originalLines) <= contentHeight
+
+	// If text fits naturally, use original layout
+	if fitsWidth && fitsHeight {
+		b.Lines = originalLines
+		return
+	}
+
+	// Otherwise, we need to truncate/fit the text
+	var resultLines []string
+
+	for i, line := range originalLines {
+		if i >= contentHeight {
+			// No more room for lines
+			break
+		}
+
+		if i == contentHeight-1 && (len(originalLines) > contentHeight || !fitsWidth) {
+			// This is the last line we can show, add ellipsis
+			if len(line) > contentWidth-3 {
+				line = line[:contentWidth-3] + "..."
+			} else if len(originalLines) > contentHeight {
+				// There are more lines below
+				if len(line)+3 <= contentWidth {
+					line = line + "..."
+				} else {
+					line = line[:contentWidth-3] + "..."
+				}
+			}
+		} else if len(line) > contentWidth {
+			// Line is too long, truncate with ellipsis
+			if contentWidth > 3 {
+				line = line[:contentWidth-3] + "..."
+			} else {
+				line = line[:contentWidth]
+			}
+		}
+
+		resultLines = append(resultLines, line)
+	}
+
+	if len(resultLines) == 0 {
+		resultLines = []string{""}
+	}
+
+	b.Lines = resultLines
+}
+
+func (b *Box) isTextTruncated() bool {
+	if b.OriginalText == "" {
+		return false
+	}
+
+	originalLines := strings.Split(b.OriginalText, "\n")
+
+	// Check if we have the same number of lines
+	if len(originalLines) != len(b.Lines) {
+		return true
+	}
+
+	// Check if any line has been truncated (contains ...)
+	for _, line := range b.Lines {
+		if strings.HasSuffix(line, "...") {
+			return true
+		}
+	}
+
+	return false
 }
 
 type Connection struct {
@@ -110,6 +317,19 @@ func (c *Canvas) AddText(x, y int, text string) {
 	}
 	textObj.SetText(text)
 	c.texts = append(c.texts, textObj)
+}
+
+func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
+	textObj := Text{
+		X:  x,
+		Y:  y,
+		ID: id,
+	}
+	textObj.SetText(text)
+	c.texts = append(c.texts, textObj)
+	for i := id + 1; i < len(c.texts); i++ {
+		c.texts[i].ID = i
+	}
 }
 
 func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
@@ -466,6 +686,7 @@ func (c *Canvas) GetTextAt(x, y int) int {
 
 func (c *Canvas) DeleteText(id int) {
 	if id >= 0 && id < len(c.texts) {
+		c.deleteHighlightsForText(id)
 		c.texts = append(c.texts[:id], c.texts[id+1:]...)
 		for i := id; i < len(c.texts); i++ {
 			c.texts[i].ID = i
@@ -501,6 +722,7 @@ func (c *Canvas) SetTextText(id int, text string) {
 
 func (c *Canvas) DeleteBox(id int) {
 	if id >= 0 && id < len(c.boxes) {
+		c.deleteHighlightsForBox(id)
 		c.boxes = append(c.boxes[:id], c.boxes[id+1:]...)
 		for i := id; i < len(c.boxes); i++ {
 			c.boxes[i].ID = i
@@ -526,11 +748,18 @@ func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
 		box := &c.boxes[id]
 		newWidth := box.Width + deltaWidth
 		newHeight := box.Height + deltaHeight
+
+		// Use only the basic minimum constraints
 		if newWidth < minBoxWidth {
 			newWidth = minBoxWidth
 		}
 		if newHeight < minBoxHeight {
 			newHeight = minBoxHeight
+		}
+
+		// Fit text to the new size
+		if newWidth != box.Width || newHeight != box.Height {
+			box.fitTextToSize(newWidth, newHeight)
 		}
 
 		oldBoxX := box.X
@@ -620,56 +849,28 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 		if box.Y < 0 {
 			box.Y = 0
 		}
+
 		for i := range c.connections {
 			conn := &c.connections[i]
+
 			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(id, conn.ToID)
-				conn.FromX, conn.FromY, conn.ToX, conn.ToY = newFromX, newFromY, newToX, newToY
-				conn.Waypoints = nil
+				// Both boxes are valid - recalculate optimal connection
+				c.recalculateConnectionRoute(conn)
 			} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-				newFromX, newFromY, newToX, newToY := c.calculateConnectionPoints(conn.FromID, id)
-				conn.FromX, conn.FromY, conn.ToX, conn.ToY = newFromX, newFromY, newToX, newToY
-				conn.Waypoints = nil
+				// Both boxes are valid - recalculate optimal connection
+				c.recalculateConnectionRoute(conn)
 			} else if conn.FromID == id && conn.ToID < 0 {
-				fromCenterX := box.X + box.Width/2
-				fromCenterY := box.Y + box.Height/2
-				if abs(conn.ToX-fromCenterX) > abs(conn.ToY-fromCenterY) {
-					if conn.ToX > fromCenterX {
-						conn.FromX = box.X + box.Width - 1
-					} else {
-						conn.FromX = box.X
-					}
-					conn.FromY = fromCenterY
-				} else {
-					if conn.ToY > fromCenterY {
-						conn.FromY = box.Y + box.Height - 1
-					} else {
-						conn.FromY = box.Y
-					}
-					conn.FromX = fromCenterX
-				}
+				// Connection from this box to a free point - move with box
+				conn.FromX += deltaX
+				conn.FromY += deltaY
 				for j := range conn.Waypoints {
 					conn.Waypoints[j].X += deltaX
 					conn.Waypoints[j].Y += deltaY
 				}
 			} else if conn.ToID == id && conn.FromID < 0 {
-				toCenterX := box.X + box.Width/2
-				toCenterY := box.Y + box.Height/2
-				if abs(conn.FromX-toCenterX) > abs(conn.FromY-toCenterY) {
-					if conn.FromX > toCenterX {
-						conn.ToX = box.X + box.Width - 1
-					} else {
-						conn.ToX = box.X
-					}
-					conn.ToY = toCenterY
-				} else {
-					if conn.FromY > toCenterY {
-						conn.ToY = box.Y + box.Height - 1
-					} else {
-						conn.ToY = box.Y
-					}
-					conn.ToX = toCenterX
-				}
+				// Connection from a free point to this box - move with box
+				conn.ToX += deltaX
+				conn.ToY += deltaY
 				for j := range conn.Waypoints {
 					conn.Waypoints[j].X += deltaX
 					conn.Waypoints[j].Y += deltaY
@@ -677,6 +878,116 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 			}
 		}
 	}
+}
+
+// recalculateConnectionRoute recalculates connection endpoints and creates clean routing
+func (c *Canvas) recalculateConnectionRoute(conn *Connection) {
+	if conn.FromID < 0 || conn.FromID >= len(c.boxes) ||
+		conn.ToID < 0 || conn.ToID >= len(c.boxes) {
+		return
+	}
+
+	// Calculate optimal endpoints based on box positions
+	conn.FromX, conn.FromY, conn.ToX, conn.ToY = c.calculateConnectionPoints(conn.FromID, conn.ToID)
+
+	// Create clean routing waypoints
+	conn.Waypoints = c.createSmartWaypoints(conn)
+}
+
+// createSmartWaypoints generates waypoints for clean orthogonal routing
+func (c *Canvas) createSmartWaypoints(conn *Connection) []point {
+	if conn.FromID < 0 || conn.ToID < 0 {
+		return nil
+	}
+
+	fromBox := c.boxes[conn.FromID]
+	toBox := c.boxes[conn.ToID]
+
+	// Determine which edges the connection uses
+	fromEdge := c.getConnectionEdge(fromBox, conn.FromX, conn.FromY)
+	toEdge := c.getConnectionEdge(toBox, conn.ToX, conn.ToY)
+
+	// If endpoints are aligned (straight line), no waypoints needed
+	if conn.FromX == conn.ToX || conn.FromY == conn.ToY {
+		return nil
+	}
+
+	// Create routing based on edge combination
+	switch fromEdge {
+	case "right":
+		switch toEdge {
+		case "left":
+			// Horizontal connection - route through middle
+			midX := (conn.FromX + conn.ToX) / 2
+			return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+		case "top", "bottom":
+			// L-path: go horizontal first, then vertical
+			return []point{{X: conn.ToX, Y: conn.FromY}}
+		case "right":
+			// Both on right - go around
+			midX := max(fromBox.X+fromBox.Width, toBox.X+toBox.Width) + 3
+			return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+		}
+	case "left":
+		switch toEdge {
+		case "right":
+			// Horizontal connection - route through middle
+			midX := (conn.FromX + conn.ToX) / 2
+			return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+		case "top", "bottom":
+			// L-path: go horizontal first, then vertical
+			return []point{{X: conn.ToX, Y: conn.FromY}}
+		case "left":
+			// Both on left - go around
+			midX := min(fromBox.X, toBox.X) - 3
+			return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+		}
+	case "bottom":
+		switch toEdge {
+		case "top":
+			// Vertical connection - route through middle
+			midY := (conn.FromY + conn.ToY) / 2
+			return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+		case "left", "right":
+			// L-path: go vertical first, then horizontal
+			return []point{{X: conn.FromX, Y: conn.ToY}}
+		case "bottom":
+			// Both on bottom - go around
+			midY := max(fromBox.Y+fromBox.Height, toBox.Y+toBox.Height) + 2
+			return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+		}
+	case "top":
+		switch toEdge {
+		case "bottom":
+			// Vertical connection - route through middle
+			midY := (conn.FromY + conn.ToY) / 2
+			return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+		case "left", "right":
+			// L-path: go vertical first, then horizontal
+			return []point{{X: conn.FromX, Y: conn.ToY}}
+		case "top":
+			// Both on top - go around
+			midY := min(fromBox.Y, toBox.Y) - 2
+			return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+		}
+	}
+
+	// Fallback: simple L-path
+	return []point{{X: conn.ToX, Y: conn.FromY}}
+}
+
+// getConnectionEdge determines which edge of a box a connection point is on
+func (c *Canvas) getConnectionEdge(box Box, x, y int) string {
+	if x == box.X+box.Width-1 {
+		return "right"
+	} else if x == box.X {
+		return "left"
+	} else if y == box.Y+box.Height-1 {
+		return "bottom"
+	} else if y == box.Y {
+		return "top"
+	}
+	return "unknown"
 }
 
 func (c *Canvas) CycleBoxZLevel(id int) {
@@ -694,8 +1005,9 @@ func (c *Canvas) GetBoxZLevel(id int) int {
 
 func (c *Canvas) SetBoxPosition(id int, x, y int) {
 	if id >= 0 && id < len(c.boxes) {
+		oldX, oldY := c.boxes[id].X, c.boxes[id].Y
+
 		box := &c.boxes[id]
-		oldX, oldY := box.X, box.Y
 		box.X, box.Y = x, y
 		if box.X < 0 {
 			box.X = 0
@@ -703,15 +1015,31 @@ func (c *Canvas) SetBoxPosition(id int, x, y int) {
 		if box.Y < 0 {
 			box.Y = 0
 		}
-		deltaX, deltaY := box.X-oldX, box.Y-oldY
-		if deltaX != 0 || deltaY != 0 {
+
+		if box.X != oldX || box.Y != oldY {
+			deltaX, deltaY := box.X-oldX, box.Y-oldY
+
 			for i := range c.connections {
 				conn := &c.connections[i]
+
 				if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-					conn.FromX, conn.FromY, conn.ToX, conn.ToY = c.calculateConnectionPoints(id, conn.ToID)
-				}
-				if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-					conn.FromX, conn.FromY, conn.ToX, conn.ToY = c.calculateConnectionPoints(conn.FromID, id)
+					c.recalculateConnectionRoute(conn)
+				} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+					c.recalculateConnectionRoute(conn)
+				} else if conn.FromID == id && conn.ToID < 0 {
+					conn.FromX += deltaX
+					conn.FromY += deltaY
+					for j := range conn.Waypoints {
+						conn.Waypoints[j].X += deltaX
+						conn.Waypoints[j].Y += deltaY
+					}
+				} else if conn.ToID == id && conn.FromID < 0 {
+					conn.ToX += deltaX
+					conn.ToY += deltaY
+					for j := range conn.Waypoints {
+						conn.Waypoints[j].X += deltaX
+						conn.Waypoints[j].Y += deltaY
+					}
 				}
 			}
 		}
@@ -868,7 +1196,58 @@ func (c *Canvas) SetBoxSize(id int, width, height int) {
 	}
 }
 
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) []string {
+// RenderResult holds the raw canvas data and color information separately
+// This allows tooltips and overlays to be applied before ANSI codes are added
+type RenderResult struct {
+	Canvas   [][]rune
+	ColorMap [][]int
+	Width    int
+	Height   int
+}
+
+// ApplyColors converts the raw canvas and colorMap into ANSI-colored strings
+// This should be called AFTER all overlays (tooltips, etc.) have been applied
+func (r *RenderResult) ApplyColors() []string {
+	result := make([]string, r.Height)
+	for i, row := range r.Canvas {
+		line := make([]rune, r.Width)
+		copy(line, row)
+		for j := len(row); j < r.Width; j++ {
+			line[j] = ' '
+		}
+		var coloredLine strings.Builder
+		currentColor := -1
+		for j, char := range line {
+			cellColor := -1
+			if i < len(r.ColorMap) && j < len(r.ColorMap[i]) {
+				cellColor = r.ColorMap[i][j]
+			}
+			if cellColor != currentColor {
+				if currentColor != -1 {
+					coloredLine.WriteString(colorReset)
+				}
+				if cellColor != -1 {
+					if char != ' ' {
+						coloredLine.WriteString(getTextColorCode(cellColor))
+					} else {
+						coloredLine.WriteString(getColorCode(cellColor))
+					}
+				}
+				currentColor = cellColor
+			}
+			coloredLine.WriteRune(char)
+		}
+		if currentColor != -1 {
+			coloredLine.WriteString(colorReset)
+		}
+		result[i] = coloredLine.String()
+	}
+	return result
+}
+
+// RenderRaw returns the raw canvas and colorMap without applying ANSI codes
+// Use this when you need to overlay content (like tooltips) before final rendering
+func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) *RenderResult {
 	if height < 1 {
 		height = 1
 	}
@@ -1079,6 +1458,42 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 	for key, colorIndex := range c.highlights {
 		var x, y int
 		fmt.Sscanf(key, "%d,%d", &x, &y)
+
+		// Only show highlights that are inside visible content:
+		// - Inside a box's content area, OR
+		// - Inside a text object's bounds
+		// This ensures highlights from resized boxes don't "leak" onto the canvas
+		isInsideVisibleContent := false
+
+		// Check if inside any box's content area
+		for _, box := range c.boxes {
+			if x >= box.X+1 && x < box.X+box.Width-1 && y >= box.Y+1 && y < box.Y+box.Height-1 {
+				isInsideVisibleContent = true
+				break
+			}
+		}
+
+		// Check if inside any text object's bounds
+		if !isInsideVisibleContent {
+			for _, text := range c.texts {
+				for lineIdx, line := range text.Lines {
+					lineY := text.Y + lineIdx
+					if y == lineY && x >= text.X && x < text.X+len(line) {
+						isInsideVisibleContent = true
+						break
+					}
+				}
+				if isInsideVisibleContent {
+					break
+				}
+			}
+		}
+
+		// Skip highlights that aren't inside visible content
+		if !isInsideVisibleContent {
+			continue
+		}
+
 		screenX := x - panX
 		screenY := y - panY
 		if screenY >= 0 && screenY < height && screenX >= 0 && screenX < width {
@@ -1087,42 +1502,20 @@ func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previe
 			}
 		}
 	}
-	result := make([]string, height)
-	for i, row := range canvas {
-		line := make([]rune, width)
-		copy(line, row)
-		for j := len(row); j < width; j++ {
-			line[j] = ' '
-		}
-		var coloredLine strings.Builder
-		currentColor := -1
-		for j, char := range line {
-			cellColor := -1
-			if i < len(colorMap) && j < len(colorMap[i]) {
-				cellColor = colorMap[i][j]
-			}
-			if cellColor != currentColor {
-				if currentColor != -1 {
-					coloredLine.WriteString(colorReset)
-				}
-				if cellColor != -1 {
-					if char != ' ' {
-						coloredLine.WriteString(getTextColorCode(cellColor))
-					} else {
-						coloredLine.WriteString(getColorCode(cellColor))
-					}
-				}
-				currentColor = cellColor
-			}
-			coloredLine.WriteRune(char)
-		}
-		if currentColor != -1 {
-			coloredLine.WriteString(colorReset)
-		}
-		result[i] = coloredLine.String()
-	}
 
-	return result
+	return &RenderResult{
+		Canvas:   canvas,
+		ColorMap: colorMap,
+		Width:    width,
+		Height:   height,
+	}
+}
+
+// Render returns the canvas with ANSI color codes applied
+// This is a convenience method that calls RenderRaw and ApplyColors
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) []string {
+	result := c.RenderRaw(width, height, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
+	return result.ApplyColors()
 }
 
 func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX, panY int) {
@@ -1169,20 +1562,42 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 }
 
 func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY int) {
-	var corner, horizontal, vertical rune
+	var topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical rune
+
 	if isSelected {
-		corner, horizontal, vertical = '#', '#', '#'
+		topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '#', '#', '#', '#', '#', '#'
 	} else {
-		corner, horizontal, vertical = '+', '-', '|'
+		switch box.BorderStyle {
+		case BorderStyleASCII:
+			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '+', '+', '+', '+', '-', '|'
+		case BorderStyleSingle:
+			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '┌', '┐', '└', '┘', '─', '│'
+		case BorderStyleDouble:
+			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '╔', '╗', '╚', '╝', '═', '║'
+		case BorderStyleRounded:
+			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '╭', '╮', '╰', '╯', '─', '│'
+		default:
+			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '+', '+', '+', '+', '-', '|'
+		}
 	}
 	for y := boxY; y < boxY+box.Height && y < len(canvas) && y >= 0; y++ {
 		if y >= len(canvas) {
 			break
 		}
 		for x := boxX; x < boxX+box.Width && x < len(canvas[y]) && x >= 0; x++ {
-			if y == boxY || y == boxY+box.Height-1 {
-				if x == boxX || x == boxX+box.Width-1 {
-					canvas[y][x] = corner
+			if y == boxY {
+				if x == boxX {
+					canvas[y][x] = topLeft
+				} else if x == boxX+box.Width-1 {
+					canvas[y][x] = topRight
+				} else {
+					canvas[y][x] = horizontal
+				}
+			} else if y == boxY+box.Height-1 {
+				if x == boxX {
+					canvas[y][x] = bottomLeft
+				} else if x == boxX+box.Width-1 {
+					canvas[y][x] = bottomRight
 				} else {
 					canvas[y][x] = horizontal
 				}
@@ -2306,6 +2721,135 @@ func (c *Canvas) GetTextCells(textID int) []point {
 		}
 	}
 	return cells
+}
+
+func (c *Canvas) getHighlightsForBox(boxID int) []HighlightCell {
+	cells := c.GetBoxCells(boxID)
+	highlights := make([]HighlightCell, 0)
+	for _, cell := range cells {
+		key := fmt.Sprintf("%d,%d", cell.X, cell.Y)
+		if colorIndex, exists := c.highlights[key]; exists {
+			highlights = append(highlights, HighlightCell{
+				X:        cell.X,
+				Y:        cell.Y,
+				Color:    colorIndex,
+				HadColor: true,
+				OldColor: colorIndex,
+			})
+		}
+	}
+	return highlights
+}
+
+func (c *Canvas) getHighlightsForText(textID int) []HighlightCell {
+	cells := c.GetTextCells(textID)
+	highlights := make([]HighlightCell, 0)
+	for _, cell := range cells {
+		key := fmt.Sprintf("%d,%d", cell.X, cell.Y)
+		if colorIndex, exists := c.highlights[key]; exists {
+			highlights = append(highlights, HighlightCell{
+				X:        cell.X,
+				Y:        cell.Y,
+				Color:    colorIndex,
+				HadColor: true,
+				OldColor: colorIndex,
+			})
+		}
+	}
+	return highlights
+}
+
+// GetBoxContentHighlights returns a map of character indices to color indices
+// for all highlights in the box's content area. The character index is the
+// position within the box's OriginalText (or Lines joined by newlines).
+// This is used for displaying colored text in tooltips.
+func (c *Canvas) GetBoxContentHighlights(boxID int) map[int]int {
+	result := make(map[int]int)
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return result
+	}
+
+	box := c.boxes[boxID]
+	text := box.GetText()
+	if text == "" {
+		return result
+	}
+
+	lines := strings.Split(text, "\n")
+
+	// For each highlight, check if it's in this box's content area
+	// and map it to a character index
+	for key, colorIndex := range c.highlights {
+		var wx, wy int
+		fmt.Sscanf(key, "%d,%d", &wx, &wy)
+
+		// Calculate position relative to box content area
+		relCol := wx - (box.X + 1)
+		relRow := wy - (box.Y + 1)
+
+		// Check if this position is within valid text bounds
+		if relRow < 0 || relRow >= len(lines) {
+			continue
+		}
+		if relCol < 0 || relCol >= len(lines[relRow]) {
+			continue
+		}
+
+		// Convert (row, col) to character index in the full text
+		charIndex := 0
+		for i := 0; i < relRow; i++ {
+			charIndex += len(lines[i]) + 1 // +1 for newline
+		}
+		charIndex += relCol
+
+		result[charIndex] = colorIndex
+	}
+
+	return result
+}
+
+func (c *Canvas) deleteHighlightsForBox(boxID int) {
+	cells := c.GetBoxCells(boxID)
+	for _, cell := range cells {
+		key := fmt.Sprintf("%d,%d", cell.X, cell.Y)
+		delete(c.highlights, key)
+	}
+}
+
+func (c *Canvas) deleteHighlightsForText(textID int) {
+	cells := c.GetTextCells(textID)
+	for _, cell := range cells {
+		key := fmt.Sprintf("%d,%d", cell.X, cell.Y)
+		delete(c.highlights, key)
+	}
+}
+
+func (c *Canvas) CycleBorderStyle(boxID int) BorderStyle {
+	if boxID >= 0 && boxID < len(c.boxes) {
+		oldStyle := c.boxes[boxID].BorderStyle
+		var newStyle BorderStyle
+		switch oldStyle {
+		case BorderStyleASCII:
+			newStyle = BorderStyleSingle
+		case BorderStyleSingle:
+			newStyle = BorderStyleDouble
+		case BorderStyleDouble:
+			newStyle = BorderStyleRounded
+		case BorderStyleRounded:
+			newStyle = BorderStyleASCII
+		default:
+			newStyle = BorderStyleASCII
+		}
+		c.boxes[boxID].BorderStyle = newStyle
+		return oldStyle
+	}
+	return BorderStyleASCII
+}
+
+func (c *Canvas) SetBorderStyle(boxID int, style BorderStyle) {
+	if boxID >= 0 && boxID < len(c.boxes) {
+		c.boxes[boxID].BorderStyle = style
+	}
 }
 
 func (c *Canvas) GetConnectionCells(connIdx int) []point {

@@ -21,12 +21,22 @@ func (m *model) undo() {
 		for _, connection := range inverse.Connections {
 			m.getCanvas().RestoreConnection(connection)
 		}
+		for _, highlight := range inverse.Highlights {
+			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
+		}
 	case ActionEditBox:
 		data := action.Inverse.(EditBoxData)
 		m.getCanvas().SetBoxText(data.ID, data.NewText)
 	case ActionEditText:
 		data := action.Inverse.(EditTextData)
 		m.getCanvas().SetTextText(data.ID, data.NewText)
+	case ActionDeleteText:
+		data := action.Inverse.(AddTextData)
+		m.getCanvas().AddTextWithID(data.X, data.Y, data.Text, data.ID)
+		inverse := action.Data.(DeleteTextData)
+		for _, highlight := range inverse.Highlights {
+			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
+		}
 	case ActionResizeBox:
 		data := action.Inverse.(OriginalBoxState)
 		m.getCanvas().SetBoxSize(data.ID, data.Width, data.Height)
@@ -56,6 +66,9 @@ func (m *model) undo() {
 				m.getCanvas().ClearHighlight(cell.X, cell.Y)
 			}
 		}
+	case ActionChangeBorderStyle:
+		data := action.Inverse.(BorderStyleData)
+		m.getCanvas().SetBorderStyle(data.BoxID, data.OldStyle)
 	}
 
 	buf.redoStack = append(buf.redoStack, action)
@@ -84,6 +97,9 @@ func (m *model) redo() {
 	case ActionEditText:
 		data := action.Data.(EditTextData)
 		m.getCanvas().SetTextText(data.ID, data.NewText)
+	case ActionDeleteText:
+		data := action.Data.(DeleteTextData)
+		m.getCanvas().DeleteText(data.ID)
 	case ActionResizeBox:
 		data := action.Data.(ResizeBoxData)
 		m.getCanvas().ResizeBox(data.ID, data.DeltaWidth, data.DeltaHeight)
@@ -109,6 +125,9 @@ func (m *model) redo() {
 		for _, cell := range data.Cells {
 			m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
 		}
+	case ActionChangeBorderStyle:
+		data := action.Data.(BorderStyleData)
+		m.getCanvas().SetBorderStyle(data.BoxID, data.NewStyle)
 	}
 
 	buf.undoStack = append(buf.undoStack, action)

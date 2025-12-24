@@ -3,14 +3,28 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// Konami Code sequence: up, up, down, down, left, right, left, right, b, a, enter
+var konamiSequence = []string{"up", "up", "down", "down", "left", "right", "left", "right", "b", "a", "enter"}
+
+// easterEggTickMsg is sent to animate the falling characters
+type easterEggTickMsg time.Time
+
+func easterEggTick() tea.Cmd {
+	return tea.Tick(time.Millisecond*30, func(t time.Time) tea.Msg {
+		return easterEggTickMsg(t)
+	})
+}
 
 func main() {
 	p := tea.NewProgram(
@@ -335,6 +349,16 @@ func forceRefresh() tea.Msg {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case struct{}:
+		// Handle tooltip refresh messages
+		return m, nil
+
+	case easterEggTickMsg:
+		if m.easterEggActive {
+			return m.updateEasterEgg()
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -342,6 +366,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// If easter egg is active, any key stops it
+		if m.easterEggActive {
+			m.easterEggActive = false
+			m.fallingChars = nil
+			m.piledChars = nil
+			m.konamiProgress = 0
+			return m, nil
+		}
+
+		// Check for Konami code sequence
+		keyStr := msg.String()
+		if m.konamiProgress < len(konamiSequence) {
+			expectedKey := konamiSequence[m.konamiProgress]
+			if keyStr == expectedKey {
+				m.konamiProgress++
+				if m.konamiProgress == len(konamiSequence) {
+					// Konami code complete! Trigger easter egg
+					return m.triggerEasterEgg()
+				}
+			} else if keyStr == konamiSequence[0] {
+				// Start over if we hit the first key
+				m.konamiProgress = 1
+			} else {
+				// Reset progress
+				m.konamiProgress = 0
+			}
+		}
+
 		if m.help && m.mode != ModeStartup {
 			switch msg.String() {
 			case "escape", "q", "?":
@@ -500,7 +552,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				worldX, worldY := m.cursorX+panX, m.cursorY+panY
 				m.getCanvas().AddBox(worldX, worldY, "Box")
 				addData := AddBoxData{X: worldX, Y: worldY, Text: "Box", ID: boxID}
-				deleteData := DeleteBoxData{ID: boxID, Connections: nil}
+				deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
 				m.recordAction(ActionAddBox, addData, deleteData)
 				m.successMessage = ""
 				m.ensureCursorInBounds()
@@ -769,7 +821,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 									connectedConnections = append(connectedConnections, connection)
 								}
 							}
-							deleteData := DeleteBoxData{Box: box, ID: boxID, Connections: connectedConnections}
+							highlights := m.getCanvas().getHighlightsForBox(boxID)
+							deleteData := DeleteBoxData{Box: box, ID: boxID, Connections: connectedConnections, Highlights: highlights}
 							addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
 							m.recordAction(ActionDeleteBox, deleteData, addData)
 							m.getCanvas().DeleteBox(boxID)
@@ -783,6 +836,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 						// Confirmations disabled, delete directly
+						if textID >= 0 && textID < len(m.getCanvas().texts) {
+							text := m.getCanvas().texts[textID]
+							highlights := m.getCanvas().getHighlightsForText(textID)
+							deleteData := DeleteTextData{Text: text, ID: textID, Highlights: highlights}
+							addData := AddTextData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID}
+							m.recordAction(ActionDeleteText, deleteData, addData)
+						}
 						m.getCanvas().DeleteText(textID)
 						m.ensureCursorInBounds()
 					}
@@ -950,7 +1010,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.getCanvas().SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
 					}
 					addData := AddBoxData{X: worldX, Y: worldY, Text: text, ID: boxID}
-					deleteData := DeleteBoxData{ID: boxID, Connections: nil}
+					deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
 					m.recordAction(ActionAddBox, addData, deleteData)
 					m.ensureCursorInBounds()
 				}
@@ -966,8 +1026,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedBox = -1
 				return m, nil
 			case "tab":
-				// Cycle through colors
-				m.selectedColor = (m.selectedColor + 1) % numColors
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
+				if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
+					// Cycle border style for the box under cursor
+					oldStyle := m.getCanvas().CycleBorderStyle(boxID)
+					newStyle := m.getCanvas().boxes[boxID].BorderStyle
+					borderData := BorderStyleData{BoxID: boxID, OldStyle: oldStyle, NewStyle: newStyle}
+					m.recordAction(ActionChangeBorderStyle, borderData, borderData)
+				} else {
+					// If not on a box, cycle through colors (original behavior)
+					m.selectedColor = (m.selectedColor + 1) % numColors
+				}
 				return m, nil
 			case "Z":
 				m.zPanMode = false
@@ -2326,14 +2396,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								connectedConnections = append(connectedConnections, connection)
 							}
 						}
-						deleteData := DeleteBoxData{Box: box, ID: m.confirmBoxID, Connections: connectedConnections}
+						highlights := m.getCanvas().getHighlightsForBox(m.confirmBoxID)
+						deleteData := DeleteBoxData{Box: box, ID: m.confirmBoxID, Connections: connectedConnections, Highlights: highlights}
 						addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
 						m.recordAction(ActionDeleteBox, deleteData, addData)
 					}
 					m.getCanvas().DeleteBox(m.confirmBoxID)
 					m.ensureCursorInBounds()
 				case ConfirmDeleteText:
-					// TODO: Add undo support for text deletion
+					if m.confirmTextID >= 0 && m.confirmTextID < len(m.getCanvas().texts) {
+						text := m.getCanvas().texts[m.confirmTextID]
+						highlights := m.getCanvas().getHighlightsForText(m.confirmTextID)
+						deleteData := DeleteTextData{Text: text, ID: m.confirmTextID, Highlights: highlights}
+						addData := AddTextData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID}
+						m.recordAction(ActionDeleteText, deleteData, addData)
+					}
 					m.getCanvas().DeleteText(m.confirmTextID)
 					m.ensureCursorInBounds()
 				case ConfirmDeleteConnection:
@@ -2538,10 +2615,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
 	return m, nil
 }
 
+func (m *model) updateTooltip() {
+	// Only show tooltips in normal mode
+	if m.mode != ModeNormal {
+		m.showTooltip = false
+		m.tooltipBoxID = -1
+		return
+	}
+
+	panX, panY := m.getPanOffset()
+	worldX, worldY := m.cursorX+panX, m.cursorY+panY
+
+	// Check if cursor is over a box
+	if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
+		box := &m.getCanvas().boxes[boxID]
+		if box.isTextTruncated() {
+			// Show tooltip with full text
+			m.showTooltip = true
+			m.tooltipText = box.GetText()
+			m.tooltipX = m.cursorX
+			m.tooltipY = m.cursorY
+			m.tooltipBoxID = boxID
+		} else {
+			m.showTooltip = false
+			m.tooltipBoxID = -1
+		}
+	} else {
+		m.showTooltip = false
+		m.tooltipBoxID = -1
+	}
+}
+
 func (m model) View() string {
+	// Easter egg takes over the entire view
+	if m.easterEggActive {
+		return m.renderEasterEgg()
+	}
+
 	if m.help && m.mode != ModeStartup {
 		return m.helpView()
 	}
@@ -2653,7 +2767,18 @@ func (m model) View() string {
 	}
 
 	showBoxNumbers := (m.mode == ModeBoxJump)
-	canvas := m.getCanvas().Render(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
+
+	// Use RenderRaw to get canvas without ANSI codes, so we can overlay tooltip cleanly
+	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
+
+	// Apply tooltip overlay to raw canvas BEFORE applying ANSI colors
+	// This ensures the tooltip floats above all other elements
+	if m.showTooltip && m.tooltipText != "" {
+		m.overlayTooltipOnRenderResult(renderResult)
+	}
+
+	// Now apply ANSI color codes after tooltip is in place
+	canvas := renderResult.ApplyColors()
 
 	// Build result with proper newlines
 	var result strings.Builder
@@ -2848,6 +2973,221 @@ func (m model) View() string {
 	}
 
 	return result.String()
+}
+
+// tooltipCharInfo tracks the original character index for each character in the tooltip
+type tooltipCharInfo struct {
+	char        rune
+	origCharIdx int // -1 for border/padding characters
+}
+
+// overlayTooltipOnRenderResult draws the tooltip directly onto the raw canvas
+// This is called BEFORE ANSI colors are applied, so it works with clean rune arrays
+// The tooltip will completely overwrite any content underneath it
+// If the tooltip is for a box with highlights, those colors are preserved in the tooltip
+func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
+	if !m.showTooltip || m.tooltipText == "" {
+		return
+	}
+
+	// Get highlights for this box's content (if any)
+	var charHighlights map[int]int
+	if m.tooltipBoxID >= 0 {
+		charHighlights = m.getCanvas().GetBoxContentHighlights(m.tooltipBoxID)
+	}
+
+	maxWidth := 45
+	minWidth := 15
+
+	// Calculate width based on longest word
+	longestWord := 0
+	for _, word := range strings.Fields(m.tooltipText) {
+		if len(word) > longestWord {
+			longestWord = len(word)
+		}
+	}
+
+	tooltipWidth := maxWidth
+	if longestWord+4 < maxWidth {
+		tooltipWidth = longestWord + 4
+	}
+	if tooltipWidth < minWidth {
+		tooltipWidth = minWidth
+	}
+
+	contentWidth := tooltipWidth - 4
+
+	// Build tooltip content with character index tracking
+	// We need to track which original character index each tooltip character came from
+	type wordInfo struct {
+		text     string
+		startIdx int // starting character index in original text
+	}
+
+	// Parse words with their original positions
+	// We track positions by scanning through the original text
+	wordsWithPos := []wordInfo{}
+	origText := m.tooltipText
+	inWord := false
+	wordStart := 0
+
+	for i, ch := range origText {
+		isSpace := ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+		if !isSpace {
+			if !inWord {
+				inWord = true
+				wordStart = i
+			}
+		} else {
+			if inWord {
+				// End of word
+				wordsWithPos = append(wordsWithPos, wordInfo{
+					text:     origText[wordStart:i],
+					startIdx: wordStart,
+				})
+				inWord = false
+			}
+		}
+	}
+	// Don't forget last word if text doesn't end with space
+	if inWord {
+		wordsWithPos = append(wordsWithPos, wordInfo{
+			text:     origText[wordStart:],
+			startIdx: wordStart,
+		})
+	}
+
+	if len(wordsWithPos) == 0 {
+		return
+	}
+
+	// Build tooltip lines with character tracking
+	// Each line is a slice of tooltipCharInfo
+	tooltipLines := [][]tooltipCharInfo{}
+
+	// Top border
+	topBorder := []tooltipCharInfo{}
+	topBorder = append(topBorder, tooltipCharInfo{'┌', -1})
+	for i := 0; i < tooltipWidth-2; i++ {
+		topBorder = append(topBorder, tooltipCharInfo{'─', -1})
+	}
+	topBorder = append(topBorder, tooltipCharInfo{'┐', -1})
+	tooltipLines = append(tooltipLines, topBorder)
+
+	// Wrap words into content lines
+	type lineBuilder struct {
+		chars []tooltipCharInfo
+		width int
+	}
+	currentLineBuilder := lineBuilder{chars: []tooltipCharInfo{}, width: 0}
+	var contentLines [][]tooltipCharInfo
+
+	for _, w := range wordsWithPos {
+		wordLen := len([]rune(w.text))
+
+		if currentLineBuilder.width+wordLen+1 <= contentWidth || currentLineBuilder.width == 0 {
+			// Add space before word if not first word in line
+			if currentLineBuilder.width > 0 {
+				currentLineBuilder.chars = append(currentLineBuilder.chars, tooltipCharInfo{' ', -1})
+				currentLineBuilder.width++
+			}
+			// Add word characters with their original indices
+			for i, ch := range w.text {
+				currentLineBuilder.chars = append(currentLineBuilder.chars, tooltipCharInfo{ch, w.startIdx + i})
+			}
+			currentLineBuilder.width += wordLen
+		} else {
+			// Start new line
+			contentLines = append(contentLines, currentLineBuilder.chars)
+			currentLineBuilder = lineBuilder{chars: []tooltipCharInfo{}, width: 0}
+			// Add word to new line
+			for i, ch := range w.text {
+				currentLineBuilder.chars = append(currentLineBuilder.chars, tooltipCharInfo{ch, w.startIdx + i})
+			}
+			currentLineBuilder.width = wordLen
+		}
+	}
+	// Add last line if not empty
+	if currentLineBuilder.width > 0 {
+		contentLines = append(contentLines, currentLineBuilder.chars)
+	}
+
+	// Build full tooltip lines with borders and padding
+	for _, lineChars := range contentLines {
+		fullLine := []tooltipCharInfo{}
+		fullLine = append(fullLine, tooltipCharInfo{'│', -1})
+		fullLine = append(fullLine, tooltipCharInfo{' ', -1})
+
+		// Add content characters
+		fullLine = append(fullLine, lineChars...)
+
+		// Add padding
+		lineContentWidth := len(lineChars)
+		paddingNeeded := contentWidth - lineContentWidth
+		for i := 0; i < paddingNeeded; i++ {
+			fullLine = append(fullLine, tooltipCharInfo{' ', -1})
+		}
+
+		fullLine = append(fullLine, tooltipCharInfo{' ', -1})
+		fullLine = append(fullLine, tooltipCharInfo{'│', -1})
+		tooltipLines = append(tooltipLines, fullLine)
+	}
+
+	// Bottom border
+	bottomBorder := []tooltipCharInfo{}
+	bottomBorder = append(bottomBorder, tooltipCharInfo{'└', -1})
+	for i := 0; i < tooltipWidth-2; i++ {
+		bottomBorder = append(bottomBorder, tooltipCharInfo{'─', -1})
+	}
+	bottomBorder = append(bottomBorder, tooltipCharInfo{'┘', -1})
+	tooltipLines = append(tooltipLines, bottomBorder)
+
+	// Calculate position - place tooltip to the right of cursor with offset
+	tooltipX := m.tooltipX + 6
+	tooltipY := m.tooltipY
+
+	// If tooltip would go off right edge, place it to the left of cursor
+	if tooltipX+tooltipWidth >= r.Width {
+		tooltipX = m.tooltipX - tooltipWidth - 3
+		if tooltipX < 0 {
+			tooltipX = 1
+		}
+	}
+
+	// If tooltip would go off bottom edge, place it above cursor
+	if tooltipY+len(tooltipLines) >= r.Height {
+		tooltipY = m.tooltipY - len(tooltipLines) - 1
+		if tooltipY < 0 {
+			tooltipY = 0
+		}
+	}
+
+	// Draw tooltip directly onto the raw canvas, overwriting whatever is there
+	// Apply colors from the original text's highlights
+	for i, tooltipLine := range tooltipLines {
+		lineIdx := tooltipY + i
+		if lineIdx >= 0 && lineIdx < r.Height {
+			for j, charInfo := range tooltipLine {
+				posX := tooltipX + j
+				if posX >= 0 && posX < r.Width {
+					// Overwrite the canvas character
+					r.Canvas[lineIdx][posX] = charInfo.char
+
+					// Apply highlight color if this character has one
+					if charInfo.origCharIdx >= 0 && charHighlights != nil {
+						if colorIdx, exists := charHighlights[charInfo.origCharIdx]; exists {
+							r.ColorMap[lineIdx][posX] = colorIdx
+						} else {
+							r.ColorMap[lineIdx][posX] = -1
+						}
+					} else {
+						// Border/padding - no color
+						r.ColorMap[lineIdx][posX] = -1
+					}
+				}
+			}
+		}
+	}
 }
 
 func (m model) renderStartupMenu() string {
@@ -3119,4 +3459,338 @@ func (m model) helpView() string {
 	result += "\n" + statusLine
 
 	return result
+}
+
+// triggerEasterEgg starts the Konami code easter egg animation
+func (m model) triggerEasterEgg() (tea.Model, tea.Cmd) {
+	m.easterEggActive = true
+	m.konamiProgress = 0
+
+	// Get the current canvas render to capture all characters
+	panX, panY := m.getPanOffset()
+	renderWidth := m.width
+	renderHeight := m.height - 1 // Leave room for status line
+
+	if len(m.buffers) > 1 {
+		renderHeight-- // Account for buffer bar
+	}
+
+	// Render the current canvas to get all characters
+	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false)
+
+	// Calculate the center of the screen for explosion origin bias
+	centerX := float64(renderWidth) / 2
+	centerY := float64(renderHeight) / 2
+
+	// Collect all non-space characters with explosive velocities
+	m.fallingChars = []FallingChar{}
+	for y := 0; y < renderResult.Height; y++ {
+		for x := 0; x < renderResult.Width; x++ {
+			char := renderResult.Canvas[y][x]
+			if char != ' ' {
+				// Calculate direction from center (explosion outward)
+				dx := float64(x) - centerX
+				dy := float64(y) - centerY
+				dist := dx*dx + dy*dy
+				if dist < 1 {
+					dist = 1
+				}
+
+				// Random explosive velocity - mix of outward explosion and chaos
+				explosionForce := rand.Float64()*8 + 4
+				angle := rand.Float64() * 2 * 3.14159 // Random angle
+
+				// Combine outward explosion with random direction
+				velX := (dx/dist)*explosionForce*0.3 + (rand.Float64()-0.5)*explosionForce
+				velY := (dy/dist)*explosionForce*0.3 + (rand.Float64()-0.5)*explosionForce - rand.Float64()*5 // Bias upward initially
+
+				// Add some spin/chaos based on position
+				velX += float64(x%7-3) * rand.Float64()
+				velY += float64(y%5-2) * rand.Float64()
+
+				// Extra random boost for some characters
+				if rand.Float64() < 0.2 {
+					velX *= 1.5 + rand.Float64()
+					velY *= 1.5 + rand.Float64()
+				}
+
+				color := -1
+				if y < len(renderResult.ColorMap) && x < len(renderResult.ColorMap[y]) {
+					color = renderResult.ColorMap[y][x]
+				}
+
+				// Assign a random color if the piece doesn't have one
+				// Use bright, vibrant colors for the confetti effect
+				if color == -1 {
+					// Random color index from 1-6 (basic ANSI colors)
+					color = rand.Intn(6) + 1
+				}
+
+				_ = angle // Used for random calculation above
+
+				m.fallingChars = append(m.fallingChars, FallingChar{
+					Char:   char,
+					X:      float64(x),
+					Y:      float64(y),
+					VelX:   velX,
+					VelY:   velY,
+					Color:  color,
+					Landed: false,
+				})
+			}
+		}
+	}
+
+	// Initialize the piled chars grid
+	m.piledChars = make([][]rune, renderHeight)
+	m.piledColors = make([][]int, renderHeight)
+	for i := range m.piledChars {
+		m.piledChars[i] = make([]rune, renderWidth)
+		m.piledColors[i] = make([]int, renderWidth)
+		for j := range m.piledChars[i] {
+			m.piledChars[i][j] = ' '
+			m.piledColors[i][j] = -1
+		}
+	}
+
+	// Initialize particles
+	m.particles = []Particle{}
+
+	return m, easterEggTick()
+}
+
+// updateEasterEgg updates the explosive animation
+func (m model) updateEasterEgg() (tea.Model, tea.Cmd) {
+	if !m.easterEggActive {
+		return m, nil
+	}
+
+	renderWidth := m.width
+	renderHeight := m.height - 1
+	if len(m.buffers) > 1 {
+		renderHeight--
+	}
+
+	gravity := 0.4
+	friction := 0.98
+	bounceDamping := 0.6
+	stillMoving := false
+
+	// Trail particle characters - simple dots and stars
+	trailChars := []rune{'.', '*'}
+
+	// Update each falling character
+	for i := range m.fallingChars {
+		fc := &m.fallingChars[i]
+
+		if fc.Landed {
+			continue
+		}
+
+		// Spawn trail particles behind the piece as it moves
+		speed := abs64(fc.VelX) + abs64(fc.VelY)
+		spawnChance := 0.3 + speed*0.05 // More particles when moving faster
+		if spawnChance > 0.8 {
+			spawnChance = 0.8
+		}
+
+		if rand.Float64() < spawnChance && speed > 0.3 {
+			trailChar := trailChars[rand.Intn(len(trailChars))]
+			// Spawn particle slightly behind the direction of movement
+			offsetX := -fc.VelX * 0.2
+			offsetY := -fc.VelY * 0.2
+			m.particles = append(m.particles, Particle{
+				Char:  trailChar,
+				X:     fc.X + offsetX + (rand.Float64()-0.5)*0.3,
+				Y:     fc.Y + offsetY + (rand.Float64()-0.5)*0.3,
+				Life:  rand.Intn(6) + 4,
+				Color: fc.Color, // Inherit the piece's color
+			})
+		}
+
+		// Apply gravity
+		fc.VelY += gravity
+
+		// Apply air friction
+		fc.VelX *= friction
+		fc.VelY *= friction
+
+		// Update position
+		fc.X += fc.VelX
+		fc.Y += fc.VelY
+
+		// Bounce off walls
+		if fc.X < 0 {
+			fc.X = 0
+			fc.VelX = -fc.VelX * bounceDamping
+		} else if fc.X >= float64(renderWidth) {
+			fc.X = float64(renderWidth - 1)
+			fc.VelX = -fc.VelX * bounceDamping
+		}
+
+		// Check for landing
+		intX := int(fc.X)
+		intY := int(fc.Y)
+
+		if intX < 0 {
+			intX = 0
+		}
+		if intX >= renderWidth {
+			intX = renderWidth - 1
+		}
+
+		landed := false
+
+		// Hit the bottom
+		if intY >= renderHeight-1 {
+			intY = renderHeight - 1
+			landed = true
+		} else if intY >= 0 && intY < renderHeight-1 && intX >= 0 && intX < renderWidth {
+			// Check if there's a piled char below
+			if m.piledChars[intY+1][intX] != ' ' {
+				landed = true
+			}
+		}
+
+		if landed {
+			// Place the character in the pile
+			if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
+				// Find the highest available spot in this column
+				for checkY := intY; checkY >= 0; checkY-- {
+					if m.piledChars[checkY][intX] == ' ' {
+						m.piledChars[checkY][intX] = fc.Char
+						m.piledColors[checkY][intX] = fc.Color
+						break
+					}
+				}
+			}
+			fc.Landed = true
+			fc.VelX = 0
+			fc.VelY = 0
+		} else if abs64(fc.VelX) > 0.1 || abs64(fc.VelY) > 0.1 {
+			stillMoving = true
+		}
+	}
+
+	// Update particles (fade out)
+	newParticles := []Particle{}
+	for _, p := range m.particles {
+		p.Life--
+		if p.Life > 0 {
+			newParticles = append(newParticles, p)
+		}
+	}
+	m.particles = newParticles
+
+	// Check if any chars are still moving
+	if !stillMoving && len(m.particles) == 0 {
+		// Check if all have landed
+		allLanded := true
+		for _, fc := range m.fallingChars {
+			if !fc.Landed {
+				allLanded = false
+				break
+			}
+		}
+		if allLanded {
+			return m, nil // Animation complete
+		}
+	}
+
+	return m, easterEggTick()
+}
+
+func abs64(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// renderEasterEgg renders the explosive animation
+func (m model) renderEasterEgg() string {
+	renderWidth := m.width
+	renderHeight := m.height - 1
+	showBufferBar := len(m.buffers) > 1
+
+	if showBufferBar {
+		renderHeight--
+	}
+
+	// Create canvas
+	canvas := make([][]rune, renderHeight)
+	colorMap := make([][]int, renderHeight)
+	for i := range canvas {
+		canvas[i] = make([]rune, renderWidth)
+		colorMap[i] = make([]int, renderWidth)
+		for j := range canvas[i] {
+			canvas[i][j] = ' '
+			colorMap[i][j] = -1
+		}
+	}
+
+	// Draw piled characters first
+	for y := 0; y < renderHeight && y < len(m.piledChars); y++ {
+		for x := 0; x < renderWidth && x < len(m.piledChars[y]); x++ {
+			if m.piledChars[y][x] != ' ' {
+				canvas[y][x] = m.piledChars[y][x]
+				colorMap[y][x] = m.piledColors[y][x]
+			}
+		}
+	}
+
+	// Draw trail particles
+	for _, p := range m.particles {
+		intX := int(p.X)
+		intY := int(p.Y)
+		if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
+			if canvas[intY][intX] == ' ' {
+				canvas[intY][intX] = p.Char
+				colorMap[intY][intX] = p.Color
+			}
+		}
+	}
+
+	// Draw flying characters on top
+	for _, fc := range m.fallingChars {
+		if fc.Landed {
+			continue
+		}
+		intX := int(fc.X)
+		intY := int(fc.Y)
+		if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
+			canvas[intY][intX] = fc.Char
+			colorMap[intY][intX] = fc.Color
+		}
+	}
+
+	// Convert to strings with ANSI colors
+	result := &RenderResult{
+		Canvas:   canvas,
+		ColorMap: colorMap,
+		Width:    renderWidth,
+		Height:   renderHeight,
+	}
+	lines := result.ApplyColors()
+
+	// Build output
+	var output strings.Builder
+
+	if showBufferBar {
+		output.WriteString(m.renderBufferBar(renderWidth))
+		output.WriteString("\n")
+	}
+
+	for i, line := range lines {
+		output.WriteString(line)
+		if i < len(lines)-1 {
+			output.WriteString("\n")
+		}
+	}
+
+	// Simple status line (no message)
+	output.WriteString("\n")
+	output.WriteString(strings.Repeat(" ", renderWidth))
+
+	return output.String()
 }
