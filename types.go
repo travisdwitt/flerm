@@ -81,23 +81,33 @@ type model struct {
 	tooltipBoxID          int // ID of the box being shown in tooltip, -1 if none
 
 	// Konami Code Easter Egg
-	konamiProgress  int           // How far through the code sequence
-	easterEggActive bool          // Whether the falling animation is running
-	fallingChars    []FallingChar // Characters that are exploding
-	particles       []Particle    // Trail particles
-	piledChars      [][]rune      // Characters that have piled up at the bottom
-	piledColors     [][]int       // Colors of piled characters
+	konamiProgress  int            // How far through the code sequence
+	easterEggActive bool           // Whether the falling animation is running
+	fallingPieces   []FallingPiece // Pieces (boxes, lines) that are exploding
+	particles       []Particle     // Trail particles
+	piledChars      [][]rune       // Characters that have piled up at the bottom
+	piledColors     [][]int        // Colors of piled characters
 }
 
-// FallingChar represents a character exploding during the easter egg animation
-type FallingChar struct {
-	Char   rune
-	X      float64 // Float for smooth animation
-	Y      float64
-	VelX   float64 // Horizontal velocity
-	VelY   float64 // Vertical velocity
-	Color  int     // -1 for no color
-	Landed bool    // Whether this char has landed
+// FallingPiece represents a chunk of characters (box, line segment) exploding together
+type FallingPiece struct {
+	Chars  []PieceChar // Characters in this piece with relative positions
+	X      float64     // Center X position
+	Y      float64     // Center Y position
+	VelX   float64     // Horizontal velocity
+	VelY   float64     // Vertical velocity
+	Rot    float64     // Rotation angle (for visual effect)
+	RotVel float64     // Rotation velocity
+	Color  int         // Piece color for trail
+	Landed bool        // Whether this piece has landed
+}
+
+// PieceChar represents a character within a piece
+type PieceChar struct {
+	Char    rune
+	OffsetX float64 // Offset from piece center
+	OffsetY float64
+	Color   int
 }
 
 // Particle represents a trail particle

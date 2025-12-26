@@ -3,28 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
-
-// Konami Code sequence: up, up, down, down, left, right, left, right, b, a, enter
-var konamiSequence = []string{"up", "up", "down", "down", "left", "right", "left", "right", "b", "a", "enter"}
-
-// easterEggTickMsg is sent to animate the falling characters
-type easterEggTickMsg time.Time
-
-func easterEggTick() tea.Cmd {
-	return tea.Tick(time.Millisecond*30, func(t time.Time) tea.Msg {
-		return easterEggTickMsg(t)
-	})
-}
 
 func main() {
 	p := tea.NewProgram(
@@ -353,12 +339,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle tooltip refresh messages
 		return m, nil
 
-	case easterEggTickMsg:
-		if m.easterEggActive {
-			return m.updateEasterEgg()
-		}
-		return m, nil
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -366,34 +346,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// If easter egg is active, any key stops it
-		if m.easterEggActive {
-			m.easterEggActive = false
-			m.fallingChars = nil
-			m.piledChars = nil
-			m.konamiProgress = 0
-			return m, nil
-		}
-
-		// Check for Konami code sequence
-		keyStr := msg.String()
-		if m.konamiProgress < len(konamiSequence) {
-			expectedKey := konamiSequence[m.konamiProgress]
-			if keyStr == expectedKey {
-				m.konamiProgress++
-				if m.konamiProgress == len(konamiSequence) {
-					// Konami code complete! Trigger easter egg
-					return m.triggerEasterEgg()
-				}
-			} else if keyStr == konamiSequence[0] {
-				// Start over if we hit the first key
-				m.konamiProgress = 1
-			} else {
-				// Reset progress
-				m.konamiProgress = 0
-			}
-		}
-
 		if m.help && m.mode != ModeStartup {
 			switch msg.String() {
 			case "escape", "q", "?":
@@ -2651,11 +2603,6 @@ func (m *model) updateTooltip() {
 }
 
 func (m model) View() string {
-	// Easter egg takes over the entire view
-	if m.easterEggActive {
-		return m.renderEasterEgg()
-	}
-
 	if m.help && m.mode != ModeStartup {
 		return m.helpView()
 	}
@@ -3461,336 +3408,9 @@ func (m model) helpView() string {
 	return result
 }
 
-// triggerEasterEgg starts the Konami code easter egg animation
-func (m model) triggerEasterEgg() (tea.Model, tea.Cmd) {
-	m.easterEggActive = true
-	m.konamiProgress = 0
-
-	// Get the current canvas render to capture all characters
-	panX, panY := m.getPanOffset()
-	renderWidth := m.width
-	renderHeight := m.height - 1 // Leave room for status line
-
-	if len(m.buffers) > 1 {
-		renderHeight-- // Account for buffer bar
-	}
-
-	// Render the current canvas to get all characters
-	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false)
-
-	// Calculate the center of the screen for explosion origin bias
-	centerX := float64(renderWidth) / 2
-	centerY := float64(renderHeight) / 2
-
-	// Collect all non-space characters with explosive velocities
-	m.fallingChars = []FallingChar{}
-	for y := 0; y < renderResult.Height; y++ {
-		for x := 0; x < renderResult.Width; x++ {
-			char := renderResult.Canvas[y][x]
-			if char != ' ' {
-				// Calculate direction from center (explosion outward)
-				dx := float64(x) - centerX
-				dy := float64(y) - centerY
-				dist := dx*dx + dy*dy
-				if dist < 1 {
-					dist = 1
-				}
-
-				// Random explosive velocity - mix of outward explosion and chaos
-				explosionForce := rand.Float64()*8 + 4
-				angle := rand.Float64() * 2 * 3.14159 // Random angle
-
-				// Combine outward explosion with random direction
-				velX := (dx/dist)*explosionForce*0.3 + (rand.Float64()-0.5)*explosionForce
-				velY := (dy/dist)*explosionForce*0.3 + (rand.Float64()-0.5)*explosionForce - rand.Float64()*5 // Bias upward initially
-
-				// Add some spin/chaos based on position
-				velX += float64(x%7-3) * rand.Float64()
-				velY += float64(y%5-2) * rand.Float64()
-
-				// Extra random boost for some characters
-				if rand.Float64() < 0.2 {
-					velX *= 1.5 + rand.Float64()
-					velY *= 1.5 + rand.Float64()
-				}
-
-				color := -1
-				if y < len(renderResult.ColorMap) && x < len(renderResult.ColorMap[y]) {
-					color = renderResult.ColorMap[y][x]
-				}
-
-				// Assign a random color if the piece doesn't have one
-				// Use bright, vibrant colors for the confetti effect
-				if color == -1 {
-					// Random color index from 1-6 (basic ANSI colors)
-					color = rand.Intn(6) + 1
-				}
-
-				_ = angle // Used for random calculation above
-
-				m.fallingChars = append(m.fallingChars, FallingChar{
-					Char:   char,
-					X:      float64(x),
-					Y:      float64(y),
-					VelX:   velX,
-					VelY:   velY,
-					Color:  color,
-					Landed: false,
-				})
-			}
-		}
-	}
-
-	// Initialize the piled chars grid
-	m.piledChars = make([][]rune, renderHeight)
-	m.piledColors = make([][]int, renderHeight)
-	for i := range m.piledChars {
-		m.piledChars[i] = make([]rune, renderWidth)
-		m.piledColors[i] = make([]int, renderWidth)
-		for j := range m.piledChars[i] {
-			m.piledChars[i][j] = ' '
-			m.piledColors[i][j] = -1
-		}
-	}
-
-	// Initialize particles
-	m.particles = []Particle{}
-
-	return m, easterEggTick()
-}
-
-// updateEasterEgg updates the explosive animation
-func (m model) updateEasterEgg() (tea.Model, tea.Cmd) {
-	if !m.easterEggActive {
-		return m, nil
-	}
-
-	renderWidth := m.width
-	renderHeight := m.height - 1
-	if len(m.buffers) > 1 {
-		renderHeight--
-	}
-
-	gravity := 0.4
-	friction := 0.98
-	bounceDamping := 0.6
-	stillMoving := false
-
-	// Trail particle characters - simple dots and stars
-	trailChars := []rune{'.', '*'}
-
-	// Update each falling character
-	for i := range m.fallingChars {
-		fc := &m.fallingChars[i]
-
-		if fc.Landed {
-			continue
-		}
-
-		// Spawn trail particles behind the piece as it moves
-		speed := abs64(fc.VelX) + abs64(fc.VelY)
-		spawnChance := 0.3 + speed*0.05 // More particles when moving faster
-		if spawnChance > 0.8 {
-			spawnChance = 0.8
-		}
-
-		if rand.Float64() < spawnChance && speed > 0.3 {
-			trailChar := trailChars[rand.Intn(len(trailChars))]
-			// Spawn particle slightly behind the direction of movement
-			offsetX := -fc.VelX * 0.2
-			offsetY := -fc.VelY * 0.2
-			m.particles = append(m.particles, Particle{
-				Char:  trailChar,
-				X:     fc.X + offsetX + (rand.Float64()-0.5)*0.3,
-				Y:     fc.Y + offsetY + (rand.Float64()-0.5)*0.3,
-				Life:  rand.Intn(6) + 4,
-				Color: fc.Color, // Inherit the piece's color
-			})
-		}
-
-		// Apply gravity
-		fc.VelY += gravity
-
-		// Apply air friction
-		fc.VelX *= friction
-		fc.VelY *= friction
-
-		// Update position
-		fc.X += fc.VelX
-		fc.Y += fc.VelY
-
-		// Bounce off walls
-		if fc.X < 0 {
-			fc.X = 0
-			fc.VelX = -fc.VelX * bounceDamping
-		} else if fc.X >= float64(renderWidth) {
-			fc.X = float64(renderWidth - 1)
-			fc.VelX = -fc.VelX * bounceDamping
-		}
-
-		// Check for landing
-		intX := int(fc.X)
-		intY := int(fc.Y)
-
-		if intX < 0 {
-			intX = 0
-		}
-		if intX >= renderWidth {
-			intX = renderWidth - 1
-		}
-
-		landed := false
-
-		// Hit the bottom
-		if intY >= renderHeight-1 {
-			intY = renderHeight - 1
-			landed = true
-		} else if intY >= 0 && intY < renderHeight-1 && intX >= 0 && intX < renderWidth {
-			// Check if there's a piled char below
-			if m.piledChars[intY+1][intX] != ' ' {
-				landed = true
-			}
-		}
-
-		if landed {
-			// Place the character in the pile
-			if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
-				// Find the highest available spot in this column
-				for checkY := intY; checkY >= 0; checkY-- {
-					if m.piledChars[checkY][intX] == ' ' {
-						m.piledChars[checkY][intX] = fc.Char
-						m.piledColors[checkY][intX] = fc.Color
-						break
-					}
-				}
-			}
-			fc.Landed = true
-			fc.VelX = 0
-			fc.VelY = 0
-		} else if abs64(fc.VelX) > 0.1 || abs64(fc.VelY) > 0.1 {
-			stillMoving = true
-		}
-	}
-
-	// Update particles (fade out)
-	newParticles := []Particle{}
-	for _, p := range m.particles {
-		p.Life--
-		if p.Life > 0 {
-			newParticles = append(newParticles, p)
-		}
-	}
-	m.particles = newParticles
-
-	// Check if any chars are still moving
-	if !stillMoving && len(m.particles) == 0 {
-		// Check if all have landed
-		allLanded := true
-		for _, fc := range m.fallingChars {
-			if !fc.Landed {
-				allLanded = false
-				break
-			}
-		}
-		if allLanded {
-			return m, nil // Animation complete
-		}
-	}
-
-	return m, easterEggTick()
-}
-
 func abs64(x float64) float64 {
 	if x < 0 {
 		return -x
 	}
 	return x
-}
-
-// renderEasterEgg renders the explosive animation
-func (m model) renderEasterEgg() string {
-	renderWidth := m.width
-	renderHeight := m.height - 1
-	showBufferBar := len(m.buffers) > 1
-
-	if showBufferBar {
-		renderHeight--
-	}
-
-	// Create canvas
-	canvas := make([][]rune, renderHeight)
-	colorMap := make([][]int, renderHeight)
-	for i := range canvas {
-		canvas[i] = make([]rune, renderWidth)
-		colorMap[i] = make([]int, renderWidth)
-		for j := range canvas[i] {
-			canvas[i][j] = ' '
-			colorMap[i][j] = -1
-		}
-	}
-
-	// Draw piled characters first
-	for y := 0; y < renderHeight && y < len(m.piledChars); y++ {
-		for x := 0; x < renderWidth && x < len(m.piledChars[y]); x++ {
-			if m.piledChars[y][x] != ' ' {
-				canvas[y][x] = m.piledChars[y][x]
-				colorMap[y][x] = m.piledColors[y][x]
-			}
-		}
-	}
-
-	// Draw trail particles
-	for _, p := range m.particles {
-		intX := int(p.X)
-		intY := int(p.Y)
-		if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
-			if canvas[intY][intX] == ' ' {
-				canvas[intY][intX] = p.Char
-				colorMap[intY][intX] = p.Color
-			}
-		}
-	}
-
-	// Draw flying characters on top
-	for _, fc := range m.fallingChars {
-		if fc.Landed {
-			continue
-		}
-		intX := int(fc.X)
-		intY := int(fc.Y)
-		if intY >= 0 && intY < renderHeight && intX >= 0 && intX < renderWidth {
-			canvas[intY][intX] = fc.Char
-			colorMap[intY][intX] = fc.Color
-		}
-	}
-
-	// Convert to strings with ANSI colors
-	result := &RenderResult{
-		Canvas:   canvas,
-		ColorMap: colorMap,
-		Width:    renderWidth,
-		Height:   renderHeight,
-	}
-	lines := result.ApplyColors()
-
-	// Build output
-	var output strings.Builder
-
-	if showBufferBar {
-		output.WriteString(m.renderBufferBar(renderWidth))
-		output.WriteString("\n")
-	}
-
-	for i, line := range lines {
-		output.WriteString(line)
-		if i < len(lines)-1 {
-			output.WriteString("\n")
-		}
-	}
-
-	// Simple status line (no message)
-	output.WriteString("\n")
-	output.WriteString(strings.Repeat(" ", renderWidth))
-
-	return output.String()
 }
