@@ -2371,28 +2371,57 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '+', '+', '+', '+', '-', '|'
 		}
 	}
-	for y := boxY; y < boxY+box.Height && y < len(canvas) && y >= 0; y++ {
-		if y >= len(canvas) {
-			break
-		}
-		for x := boxX; x < boxX+box.Width && x < len(canvas[y]) && x >= 0; x++ {
-			if y == boxY {
-				if x == boxX {
+
+	height := len(canvas)
+	width := 0
+	if height > 0 {
+		width = len(canvas[0])
+	}
+
+	// Calculate visible range for the box
+	startY := boxY
+	if startY < 0 {
+		startY = 0
+	}
+	endY := boxY + box.Height
+	if endY > height {
+		endY = height
+	}
+
+	startX := boxX
+	if startX < 0 {
+		startX = 0
+	}
+	endX := boxX + box.Width
+	if endX > width {
+		endX = width
+	}
+
+	for y := startY; y < endY; y++ {
+		for x := startX; x < endX; x++ {
+			// Determine what character should be at this position
+			isTopRow := (y == boxY)
+			isBottomRow := (y == boxY+box.Height-1)
+			isLeftCol := (x == boxX)
+			isRightCol := (x == boxX+box.Width-1)
+
+			if isTopRow {
+				if isLeftCol {
 					canvas[y][x] = topLeft
-				} else if x == boxX+box.Width-1 {
+				} else if isRightCol {
 					canvas[y][x] = topRight
 				} else {
 					canvas[y][x] = horizontal
 				}
-			} else if y == boxY+box.Height-1 {
-				if x == boxX {
+			} else if isBottomRow {
+				if isLeftCol {
 					canvas[y][x] = bottomLeft
-				} else if x == boxX+box.Width-1 {
+				} else if isRightCol {
 					canvas[y][x] = bottomRight
 				} else {
 					canvas[y][x] = horizontal
 				}
-			} else if x == boxX || x == boxX+box.Width-1 {
+			} else if isLeftCol || isRightCol {
 				canvas[y][x] = vertical
 			}
 		}
@@ -2430,7 +2459,15 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 		// Draw divider line below title
 		dividerY := boxY + 1 + len(titleLines)
 		if dividerY >= 0 && dividerY < len(canvas) {
-			for x := boxX + 1; x < boxX+box.Width-1 && x < len(canvas[dividerY]) && x >= 0; x++ {
+			divStartX := boxX + 1
+			if divStartX < 0 {
+				divStartX = 0
+			}
+			divEndX := boxX + box.Width - 1
+			if divEndX > len(canvas[dividerY]) {
+				divEndX = len(canvas[dividerY])
+			}
+			for x := divStartX; x < divEndX; x++ {
 				canvas[dividerY][x] = horizontal
 			}
 		}
@@ -2444,7 +2481,7 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 	for lineIdx, line := range box.Lines {
 		textY := boxY + contentStartLine + lineIdx
 		textX := boxX + 1
-		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 && textX >= 0 {
+		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 {
 			maxWidth := box.Width - 2
 			if maxWidth < 0 {
 				maxWidth = 0
@@ -2453,9 +2490,11 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 			if len(displayText) > maxWidth {
 				displayText = displayText[:maxWidth]
 			}
+			// Draw each character, handling negative starting X
 			for i, char := range displayText {
-				if textX+i >= 0 && textX+i < len(canvas[textY]) && textX+i < boxX+box.Width-1 {
-					canvas[textY][textX+i] = char
+				charX := textX + i
+				if charX >= 0 && charX < len(canvas[textY]) && charX < boxX+box.Width-1 {
+					canvas[textY][charX] = char
 				}
 			}
 		}
@@ -2474,10 +2513,12 @@ func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
 	for lineIdx, line := range text.Lines {
 		lineY := textY + lineIdx
 		lineX := textX
-		if lineY >= 0 && lineY < len(canvas) && lineX >= 0 {
+		if lineY >= 0 && lineY < len(canvas) {
+			// Draw each character, handling negative starting X
 			for i, char := range line {
-				if lineX+i >= 0 && lineX+i < len(canvas[lineY]) {
-					canvas[lineY][lineX+i] = char
+				charX := lineX + i
+				if charX >= 0 && charX < len(canvas[lineY]) {
+					canvas[lineY][charX] = char
 				}
 			}
 		}
