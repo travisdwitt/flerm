@@ -290,40 +290,54 @@ func (m *model) moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDelt
 }
 
 func (m *model) moveContainedConnections(deltaX, deltaY int) {
-	var cumulativeDeltaX, cumulativeDeltaY int
-	if len(m.selectedBoxes) > 0 {
-		boxID := m.selectedBoxes[0]
-		if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-			if originalPos, hasOriginal := m.originalBoxPositions[boxID]; hasOriginal {
-				currentBox := m.getCanvas().boxes[boxID]
-				cumulativeDeltaX, cumulativeDeltaY = currentBox.X-originalPos.X, currentBox.Y-originalPos.Y
-			}
-		}
-	} else if len(m.selectedConnections) > 0 {
-		connIdx := m.selectedConnections[0]
-		if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-			conn := m.getCanvas().connections[connIdx]
-			if originalConn, hasOriginal := m.originalConnections[connIdx]; hasOriginal {
-				cumulativeDeltaX, cumulativeDeltaY = conn.FromX-originalConn.FromX+deltaX, conn.FromY-originalConn.FromY+deltaY
-			} else {
-				cumulativeDeltaX, cumulativeDeltaY = deltaX, deltaY
-			}
-		}
+	// Build a set of selected box IDs for quick lookup
+	selectedBoxSet := make(map[int]bool)
+	for _, boxID := range m.selectedBoxes {
+		selectedBoxSet[boxID] = true
 	}
+
+	// Build a set of explicitly selected connection indices
+	selectedConnSet := make(map[int]bool)
 	for _, connIdx := range m.selectedConnections {
-		if connIdx >= 0 && connIdx < len(m.getCanvas().connections) {
-			conn := &m.getCanvas().connections[connIdx]
-			if conn.FromID == -1 {
-				conn.FromX += cumulativeDeltaX
-				conn.FromY += cumulativeDeltaY
+		selectedConnSet[connIdx] = true
+	}
+
+	// Move connections where BOTH endpoints are in the multi-select (either as boxes or explicit connections)
+	for i := range m.getCanvas().connections {
+		conn := &m.getCanvas().connections[i]
+
+		// For box-to-box connections, both boxes must be selected
+		if conn.FromID >= 0 && conn.ToID >= 0 {
+			if selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
+				// Both endpoint boxes are in the multi-select - move the connection as a unit
+				conn.FromX += deltaX
+				conn.FromY += deltaY
+				conn.ToX += deltaX
+				conn.ToY += deltaY
+				for j := range conn.Waypoints {
+					conn.Waypoints[j].X += deltaX
+					conn.Waypoints[j].Y += deltaY
+				}
 			}
-			if conn.ToID == -1 {
-				conn.ToX += cumulativeDeltaX
-				conn.ToY += cumulativeDeltaY
+			// If only one box is selected, the connection will be handled by normal move logic
+			// (we don't do anything here - MoveBoxOnly was already called)
+			continue
+		}
+
+		// For connections with line endpoints (FromID == -1 or ToID == -1)
+		// Only move if explicitly selected
+		if selectedConnSet[i] {
+			if conn.FromID == -1 || selectedBoxSet[conn.FromID] {
+				conn.FromX += deltaX
+				conn.FromY += deltaY
 			}
-			for i := range conn.Waypoints {
-				conn.Waypoints[i].X += cumulativeDeltaX
-				conn.Waypoints[i].Y += cumulativeDeltaY
+			if conn.ToID == -1 || selectedBoxSet[conn.ToID] {
+				conn.ToX += deltaX
+				conn.ToY += deltaY
+			}
+			for j := range conn.Waypoints {
+				conn.Waypoints[j].X += deltaX
+				conn.Waypoints[j].Y += deltaY
 			}
 		}
 	}
@@ -1025,12 +1039,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if boxID != -1 && boxID < len(m.getCanvas().boxes) {
 					box := m.getCanvas().boxes[boxID]
 					copiedBox := Box{
-						X:      box.X,
-						Y:      box.Y,
-						Width:  box.Width,
-						Height: box.Height,
-						ID:     box.ID,
-						Lines:  make([]string, len(box.Lines)),
+						X:           box.X,
+						Y:           box.Y,
+						Width:       box.Width,
+						Height:      box.Height,
+						ID:          box.ID,
+						Lines:       make([]string, len(box.Lines)),
+						Title:       box.Title,
+						BorderStyle: box.BorderStyle,
 					}
 					copy(copiedBox.Lines, box.Lines)
 					m.clipboard = &copiedBox
@@ -1045,6 +1061,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.getCanvas().AddBox(worldX, worldY, text)
 					if boxID < len(m.getCanvas().boxes) {
 						m.getCanvas().SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
+						// Copy title and border style from clipboard
+						m.getCanvas().boxes[boxID].Title = m.clipboard.Title
+						m.getCanvas().boxes[boxID].BorderStyle = m.clipboard.BorderStyle
+						m.getCanvas().boxes[boxID].updateSize()
 					}
 					addData := AddBoxData{X: worldX, Y: worldY, Text: text, ID: boxID}
 					deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
