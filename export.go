@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 func (m *model) exportVisualTXT(filename string) error {
@@ -16,25 +17,36 @@ func (m *model) exportVisualTXT(filename string) error {
 	if canvas == nil {
 		return fmt.Errorf("no canvas available")
 	}
-	buf := m.getCurrentBuffer()
-	panX, panY := 0, 0
-	if buf != nil {
-		panX, panY = buf.panX, buf.panY
+
+	// Calculate full canvas bounds to export ALL content, not just visible area
+	minX, minY, maxX, maxY := canvas.GetFullBounds()
+	if minX > maxX || minY > maxY {
+		return fmt.Errorf("nothing to export")
 	}
-	showBufferBar := m.mode != ModeStartup && len(m.buffers) > 1
-	width := m.width
-	if width < 1 {
-		width = 80
+
+	// Add small padding around content
+	padding := 1
+	minX -= padding
+	minY -= padding
+	if minX < 0 {
+		minX = 0
 	}
-	height := m.height - 1
-	if showBufferBar {
-		height = m.height - 2
+	if minY < 0 {
+		minY = 0
 	}
-	if height < 1 {
-		height = 24
-	}
-	rendered := canvas.Render(width, height, -1, -1, -1, nil, -1, -1, panX, panY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false)
-	for _, line := range rendered {
+
+	// Calculate dimensions needed to fit all content
+	width := maxX - minX + padding + 1
+	height := maxY - minY + padding + 1
+
+	// Use RenderRaw with pan offset set to minX/minY to capture from the top-left of content
+	// This renders the entire canvas content area
+	renderResult := canvas.RenderRaw(width, height, -1, -1, -1, nil, -1, -1, minX, minY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+
+	// Convert rune canvas to plain text strings (no colors)
+	// Trim trailing whitespace from each line for cleaner output
+	for _, row := range renderResult.Canvas {
+		line := strings.TrimRight(string(row), " ")
 		fmt.Fprintln(file, line)
 	}
 

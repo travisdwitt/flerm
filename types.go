@@ -26,6 +26,8 @@ type model struct {
 	editCursorPos         int
 	editCursorRow         int
 	editCursorCol         int
+	editSelectionStart    int  // Start of text selection (-1 if no selection)
+	editSelectionEnd      int  // End of text selection (-1 if no selection)
 	originalEditText      string
 	connectionFrom        int
 	connectionFromX       int
@@ -70,10 +72,17 @@ type model struct {
 	selectedConnections   []int
 	originalBoxPositions  map[int]point
 	originalTextPositions map[int]point
-	originalConnections   map[int]Connection
-	originalHighlights    map[point]int
-	highlightMoveDelta    point
+	originalConnections       map[int]Connection
+	originalHighlights        map[point]int
+	highlightMoveDelta        point
+	originalBoxConnections    map[int][]Connection // Original states of connections for each box being moved
 	boxJumpInput          string
+	titleEditBoxID        int
+	titleEditText         string
+	titleEditCursorPos    int
+	titleEditCursorRow    int
+	titleEditCursorCol    int
+	originalTitleText     string
 	showTooltip           bool
 	tooltipText           string
 	tooltipX              int
@@ -185,11 +194,13 @@ type MoveTextData struct {
 }
 
 type OriginalBoxState struct {
-	ID     int
-	X      int
-	Y      int
-	Width  int
-	Height int
+	ID          int
+	X           int
+	Y           int
+	Width       int
+	Height      int
+	Connections []Connection  // Original states of connections involving this box
+	Highlights  []HighlightCell // Original highlight positions on this box
 }
 
 type OriginalTextState struct {
@@ -226,4 +237,10 @@ type BorderStyleData struct {
 	BoxID    int
 	OldStyle BorderStyle
 	NewStyle BorderStyle
+}
+
+type EditTitleData struct {
+	BoxID    int
+	NewTitle string
+	OldTitle string
 }

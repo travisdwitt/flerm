@@ -47,6 +47,7 @@ type Box struct {
 	ZLevel       int
 	BorderStyle  BorderStyle
 	OriginalText string
+	Title        string
 }
 
 func (b *Box) GetText() string {
@@ -68,13 +69,33 @@ func (b *Box) updateSize() {
 	}
 
 	maxWidth := minBoxWidth
+
+	// Consider title width (handle multiline titles)
+	titleLines := []string{}
+	if b.Title != "" {
+		titleLines = strings.Split(b.Title, "\n")
+		for _, titleLine := range titleLines {
+			titleWidth := len(titleLine) + 2
+			if titleWidth > maxWidth {
+				maxWidth = titleWidth
+			}
+		}
+	}
+
+	// Consider content width
 	for _, line := range b.Lines {
 		if len(line)+2 > maxWidth {
 			maxWidth = len(line) + 2
 		}
 	}
 	b.Width = maxWidth
-	b.Height = len(b.Lines) + 2
+
+	// Add extra height for title and divider
+	extraHeight := 0
+	if b.Title != "" {
+		extraHeight = len(titleLines) + 1 // N lines for title, 1 for divider line
+	}
+	b.Height = len(b.Lines) + 2 + extraHeight
 }
 
 func (b *Box) getMinimumWidth() int {
@@ -297,6 +318,99 @@ func NewCanvas() *Canvas {
 		texts:       make([]Text, 0),
 		highlights:  make(map[string]int),
 	}
+}
+
+// GetFullBounds returns the bounding box of all content on the canvas
+// Returns minX, minY, maxX, maxY
+func (c *Canvas) GetFullBounds() (int, int, int, int) {
+	minX, minY := 0, 0
+	maxX, maxY := 0, 0
+	hasElements := false
+
+	// Check all boxes
+	for _, box := range c.boxes {
+		if !hasElements {
+			minX, minY = box.X, box.Y
+			maxX, maxY = box.X+box.Width, box.Y+box.Height
+			hasElements = true
+		} else {
+			if box.X < minX {
+				minX = box.X
+			}
+			if box.Y < minY {
+				minY = box.Y
+			}
+			if box.X+box.Width > maxX {
+				maxX = box.X + box.Width
+			}
+			if box.Y+box.Height > maxY {
+				maxY = box.Y + box.Height
+			}
+		}
+	}
+
+	// Check all connections
+	for _, conn := range c.connections {
+		points := []point{{X: conn.FromX, Y: conn.FromY}}
+		points = append(points, conn.Waypoints...)
+		points = append(points, point{X: conn.ToX, Y: conn.ToY})
+
+		for _, pt := range points {
+			if !hasElements {
+				minX, minY = pt.X, pt.Y
+				maxX, maxY = pt.X, pt.Y
+				hasElements = true
+			} else {
+				if pt.X < minX {
+					minX = pt.X
+				}
+				if pt.Y < minY {
+					minY = pt.Y
+				}
+				if pt.X > maxX {
+					maxX = pt.X
+				}
+				if pt.Y > maxY {
+					maxY = pt.Y
+				}
+			}
+		}
+	}
+
+	// Check all text objects
+	for _, text := range c.texts {
+		if !hasElements {
+			minX, minY = text.X, text.Y
+			maxX, maxY = text.X, text.Y
+			hasElements = true
+		} else {
+			if text.X < minX {
+				minX = text.X
+			}
+			if text.Y < minY {
+				minY = text.Y
+			}
+		}
+		// Calculate text extent
+		maxTextX := text.X
+		for _, line := range text.Lines {
+			if text.X+len(line) > maxTextX {
+				maxTextX = text.X + len(line)
+			}
+		}
+		if maxTextX > maxX {
+			maxX = maxTextX
+		}
+		if text.Y+len(text.Lines) > maxY {
+			maxY = text.Y + len(text.Lines)
+		}
+	}
+
+	if !hasElements {
+		return 1, 1, 0, 0 // Return invalid bounds to indicate empty canvas
+	}
+
+	return minX, minY, maxX, maxY
 }
 
 func (c *Canvas) AddBox(x, y int, text string) {
@@ -850,34 +964,185 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 			box.Y = 0
 		}
 
+		// Track which connections were updated and their old paths
+		var updatedConnections []connectionPathInfo
+
 		for i := range c.connections {
 			conn := &c.connections[i]
 
-			if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-				// Both boxes are valid - recalculate optimal connection
-				c.recalculateConnectionRoute(conn)
-			} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-				// Both boxes are valid - recalculate optimal connection
-				c.recalculateConnectionRoute(conn)
-			} else if conn.FromID == id && conn.ToID < 0 {
-				// Connection from this box to a free point - move with box
-				conn.FromX += deltaX
-				conn.FromY += deltaY
-				for j := range conn.Waypoints {
-					conn.Waypoints[j].X += deltaX
-					conn.Waypoints[j].Y += deltaY
+			// Check if this connection involves the moved box
+			isFromThisBox := conn.FromID == id
+			isToThisBox := conn.ToID == id
+
+			if !isFromThisBox && !isToThisBox {
+				continue // Connection doesn't involve this box
+			}
+
+			// Store the old path before updating
+			oldPoints := []point{{X: conn.FromX, Y: conn.FromY}}
+			oldPoints = append(oldPoints, conn.Waypoints...)
+			oldPoints = append(oldPoints, point{X: conn.ToX, Y: conn.ToY})
+			updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
+
+			// Determine the types of endpoints
+			fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
+			toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
+			fromIsLinePoint := conn.FromID < 0
+			toIsLinePoint := conn.ToID < 0
+
+			if isFromThisBox && toIsValidBox {
+				// This box is the "from" box, connected to another valid box
+				c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
+			} else if isToThisBox && fromIsValidBox {
+				// This box is the "to" box, connected from another valid box
+				c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
+			} else if isFromThisBox && toIsLinePoint {
+				// Connection from this box to a free point (on a line)
+				// Keep the free point (ToX, ToY) fixed, adapt the box's anchor
+				conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
+			} else if isToThisBox && fromIsLinePoint {
+				// Connection from a free point (on a line) to this box
+				// Keep the free point (FromX, FromY) fixed, adapt the box's anchor
+				conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
+			} else if isFromThisBox && !toIsValidBox && !toIsLinePoint {
+				// Connection from this box to an invalid/deleted box - update our anchor anyway
+				conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
+			} else if isToThisBox && !fromIsValidBox && !fromIsLinePoint {
+				// Connection to this box from an invalid/deleted box - update our anchor anyway
+				conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
+			}
+		}
+
+		// Now update any connections that branch off from the updated connections
+		c.updateBranchConnections(updatedConnections)
+	}
+}
+
+// connectionPathInfo stores information about a connection's old path for branch updates
+type connectionPathInfo struct {
+	connIdx int
+	points  []point
+}
+
+// updateBranchConnections updates connections that have line-point endpoints on other connections
+// When a parent connection's path changes, branch points need to move with it
+func (c *Canvas) updateBranchConnections(updatedConnections []connectionPathInfo) {
+	for i := range c.connections {
+		conn := &c.connections[i]
+
+		// Check if this connection has a line-point endpoint that might need updating
+		if conn.FromID < 0 {
+			// FromX, FromY is a line point - check if it was on an updated connection's old path
+			for _, updated := range updatedConnections {
+				if updated.connIdx == i {
+					continue // Don't check against ourselves
 				}
-			} else if conn.ToID == id && conn.FromID < 0 {
-				// Connection from a free point to this box - move with box
-				conn.ToX += deltaX
-				conn.ToY += deltaY
-				for j := range conn.Waypoints {
-					conn.Waypoints[j].X += deltaX
-					conn.Waypoints[j].Y += deltaY
+				if c.pointWasOnPath(conn.FromX, conn.FromY, updated.points) {
+					// This branch point was on the updated connection's old path
+					// Find the nearest point on the updated connection's NEW path
+					updatedConn := c.connections[updated.connIdx]
+					newPoints := []point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
+					newPoints = append(newPoints, updatedConn.Waypoints...)
+					newPoints = append(newPoints, point{X: updatedConn.ToX, Y: updatedConn.ToY})
+					conn.FromX, conn.FromY = c.findNearestPointOnPath(conn.FromX, conn.FromY, newPoints)
+
+					// Recalculate waypoints for this branch connection
+					if conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+						toBox := c.boxes[conn.ToID]
+						conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, &toBox)
+					}
+					break
+				}
+			}
+		}
+
+		if conn.ToID < 0 {
+			// ToX, ToY is a line point - check if it was on an updated connection's old path
+			for _, updated := range updatedConnections {
+				if updated.connIdx == i {
+					continue
+				}
+				if c.pointWasOnPath(conn.ToX, conn.ToY, updated.points) {
+					// This branch point was on the updated connection's old path
+					updatedConn := c.connections[updated.connIdx]
+					newPoints := []point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
+					newPoints = append(newPoints, updatedConn.Waypoints...)
+					newPoints = append(newPoints, point{X: updatedConn.ToX, Y: updatedConn.ToY})
+					conn.ToX, conn.ToY = c.findNearestPointOnPath(conn.ToX, conn.ToY, newPoints)
+
+					// Recalculate waypoints for this branch connection
+					if conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+						fromBox := c.boxes[conn.FromID]
+						conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, &fromBox, nil)
+					}
+					break
 				}
 			}
 		}
 	}
+}
+
+// pointWasOnPath checks if a point was on (or very near) a connection path
+func (c *Canvas) pointWasOnPath(x, y int, pathPoints []point) bool {
+	for i := 0; i < len(pathPoints)-1; i++ {
+		if c.pointOnSegment(x, y, pathPoints[i].X, pathPoints[i].Y, pathPoints[i+1].X, pathPoints[i+1].Y) {
+			return true
+		}
+	}
+	return false
+}
+
+// pointOnSegment checks if a point is on (or very near) a line segment
+func (c *Canvas) pointOnSegment(px, py, x1, y1, x2, y2 int) bool {
+	// Check if point is within bounding box of segment (with tolerance)
+	minX, maxX := min(x1, x2), max(x1, x2)
+	minY, maxY := min(y1, y2), max(y1, y2)
+
+	tolerance := 2
+	if px < minX-tolerance || px > maxX+tolerance || py < minY-tolerance || py > maxY+tolerance {
+		return false
+	}
+
+	// For horizontal segment
+	if y1 == y2 {
+		return abs(py-y1) <= tolerance && px >= minX-tolerance && px <= maxX+tolerance
+	}
+
+	// For vertical segment
+	if x1 == x2 {
+		return abs(px-x1) <= tolerance && py >= minY-tolerance && py <= maxY+tolerance
+	}
+
+	// For diagonal segments (rare in this app), use distance to line
+	// Simplified: just check if point is close to either endpoint
+	dist1 := abs(px-x1) + abs(py-y1)
+	dist2 := abs(px-x2) + abs(py-y2)
+	return dist1 <= tolerance*2 || dist2 <= tolerance*2
+}
+
+// findNearestPointOnPath finds the nearest point on a path to the given point
+func (c *Canvas) findNearestPointOnPath(x, y int, pathPoints []point) (int, int) {
+	bestX, bestY := x, y
+	bestDist := -1
+
+	for i := 0; i < len(pathPoints)-1; i++ {
+		segX, segY := c.findClosestPointOnSegment(
+			pathPoints[i].X, pathPoints[i].Y,
+			pathPoints[i+1].X, pathPoints[i+1].Y,
+			x, y,
+		)
+		dist := abs(segX-x) + abs(segY-y)
+		if bestDist == -1 || dist < bestDist {
+			bestDist = dist
+			bestX, bestY = segX, segY
+		}
+	}
+
+	return bestX, bestY
 }
 
 // recalculateConnectionRoute recalculates connection endpoints and creates clean routing
@@ -892,6 +1157,391 @@ func (c *Canvas) recalculateConnectionRoute(conn *Connection) {
 
 	// Create clean routing waypoints
 	conn.Waypoints = c.createSmartWaypoints(conn)
+}
+
+// updateConnectionAfterMove updates a connection after one of its boxes moved
+// The stationary box's anchor stays fixed; the moved box's anchor adapts to create a clean connection
+func (c *Canvas) updateConnectionAfterMove(conn *Connection, movedBoxID int, deltaX, deltaY int) {
+	if conn.FromID < 0 || conn.FromID >= len(c.boxes) ||
+		conn.ToID < 0 || conn.ToID >= len(c.boxes) {
+		return
+	}
+
+	fromBox := c.boxes[conn.FromID]
+	toBox := c.boxes[conn.ToID]
+
+	if movedBoxID == conn.FromID {
+		// The "from" box moved - keep "to" anchor fixed, adapt "from" anchor
+		// The "from" anchor should find the best edge to connect to the fixed "to" anchor
+		conn.FromX, conn.FromY = c.findBestAnchorPoint(fromBox, conn.ToX, conn.ToY)
+	} else if movedBoxID == conn.ToID {
+		// The "to" box moved - keep "from" anchor fixed, adapt "to" anchor
+		// The "to" anchor should find the best edge to connect to the fixed "from" anchor
+		conn.ToX, conn.ToY = c.findBestAnchorPoint(toBox, conn.FromX, conn.FromY)
+	}
+
+	// Recalculate waypoints with improved routing
+	conn.Waypoints = c.createFlexibleWaypoints(conn, fromBox, toBox)
+}
+
+// findBestAnchorPoint finds the best anchor point on a box to connect to a target point
+// It chooses the edge that creates the cleanest orthogonal path
+func (c *Canvas) findBestAnchorPoint(box Box, targetX, targetY int) (int, int) {
+	boxCenterX := box.X + box.Width/2
+	boxCenterY := box.Y + box.Height/2
+
+	// Determine which edge faces the target point most directly
+	// We want an edge that allows a clean orthogonal connection
+
+	// Calculate the direction to the target
+	dx := targetX - boxCenterX
+	dy := targetY - boxCenterY
+
+	// Determine primary direction
+	if abs(dx) > abs(dy) {
+		// Horizontal is primary
+		if dx > 0 {
+			// Target is to the right - use right edge
+			// Y position: try to align with target Y if possible, otherwise use center
+			y := targetY
+			if y < box.Y {
+				y = box.Y
+			} else if y >= box.Y+box.Height {
+				y = box.Y + box.Height - 1
+			}
+			return box.X + box.Width - 1, y
+		} else {
+			// Target is to the left - use left edge
+			y := targetY
+			if y < box.Y {
+				y = box.Y
+			} else if y >= box.Y+box.Height {
+				y = box.Y + box.Height - 1
+			}
+			return box.X, y
+		}
+	} else {
+		// Vertical is primary
+		if dy > 0 {
+			// Target is below - use bottom edge
+			x := targetX
+			if x < box.X {
+				x = box.X
+			} else if x >= box.X+box.Width {
+				x = box.X + box.Width - 1
+			}
+			return x, box.Y + box.Height - 1
+		} else {
+			// Target is above - use top edge
+			x := targetX
+			if x < box.X {
+				x = box.X
+			} else if x >= box.X+box.Width {
+				x = box.X + box.Width - 1
+			}
+			return x, box.Y
+		}
+	}
+}
+
+// createFlexibleWaypoints creates waypoints that handle any anchor/box configuration
+func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) []point {
+	// If endpoints are aligned (straight line), no waypoints needed
+	if conn.FromX == conn.ToX || conn.FromY == conn.ToY {
+		return nil
+	}
+
+	fromEdge := c.getConnectionEdge(fromBox, conn.FromX, conn.FromY)
+	toEdge := c.getConnectionEdge(toBox, conn.ToX, conn.ToY)
+
+	// Calculate midpoints and offsets for routing
+	// We want to route around boxes, not through them
+
+	switch fromEdge {
+	case "right":
+		switch toEdge {
+		case "left":
+			// Standard horizontal: go right, then vertical, then to target
+			if conn.FromX < conn.ToX {
+				// Normal case: fromBox is left of toBox
+				midX := (conn.FromX + conn.ToX) / 2
+				return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+			} else {
+				// Boxes have crossed: need to go around
+				// Go right from source, down/up, then left to target
+				offsetX := max(conn.FromX, conn.ToX) + 3
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "top":
+			// Go right, then down to top of target
+			if conn.FromX < conn.ToX && conn.FromY < conn.ToY {
+				// Target is right and below: L-path
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				// Need to route around
+				offsetX := max(conn.FromX+1, conn.ToX+3)
+				offsetY := min(conn.FromY, conn.ToY) - 2
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "bottom":
+			// Go right, then up to bottom of target
+			if conn.FromX < conn.ToX && conn.FromY > conn.ToY {
+				// Target is right and above: L-path
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				// Need to route around
+				offsetX := max(conn.FromX+1, conn.ToX+3)
+				offsetY := max(conn.FromY, conn.ToY) + 2
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "right":
+			// Both on right edges - go further right and connect
+			offsetX := max(fromBox.X+fromBox.Width, toBox.X+toBox.Width) + 3
+			return []point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
+		default:
+			return []point{{X: conn.ToX, Y: conn.FromY}}
+		}
+
+	case "left":
+		switch toEdge {
+		case "right":
+			if conn.FromX > conn.ToX {
+				// Normal case
+				midX := (conn.FromX + conn.ToX) / 2
+				return []point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
+			} else {
+				// Boxes have crossed
+				offsetX := min(conn.FromX, conn.ToX) - 3
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "top":
+			if conn.FromX > conn.ToX && conn.FromY < conn.ToY {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				offsetX := min(conn.FromX-1, conn.ToX-3)
+				offsetY := min(conn.FromY, conn.ToY) - 2
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "bottom":
+			if conn.FromX > conn.ToX && conn.FromY > conn.ToY {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				offsetX := min(conn.FromX-1, conn.ToX-3)
+				offsetY := max(conn.FromY, conn.ToY) + 2
+				return []point{
+					{X: offsetX, Y: conn.FromY},
+					{X: offsetX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "left":
+			offsetX := min(fromBox.X, toBox.X) - 3
+			return []point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
+		default:
+			return []point{{X: conn.ToX, Y: conn.FromY}}
+		}
+
+	case "bottom":
+		switch toEdge {
+		case "top":
+			if conn.FromY < conn.ToY {
+				// Normal case
+				midY := (conn.FromY + conn.ToY) / 2
+				return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+			} else {
+				// Boxes have crossed
+				offsetY := max(conn.FromY, conn.ToY) + 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "left":
+			if conn.FromY < conn.ToY && conn.FromX < conn.ToX {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := max(conn.FromY+1, conn.ToY+3)
+				offsetX := min(conn.FromX, conn.ToX) - 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: offsetX, Y: offsetY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "right":
+			if conn.FromY < conn.ToY && conn.FromX > conn.ToX {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := max(conn.FromY+1, conn.ToY+3)
+				offsetX := max(conn.FromX, conn.ToX) + 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: offsetX, Y: offsetY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "bottom":
+			offsetY := max(fromBox.Y+fromBox.Height, toBox.Y+toBox.Height) + 2
+			return []point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
+		default:
+			return []point{{X: conn.FromX, Y: conn.ToY}}
+		}
+
+	case "top":
+		switch toEdge {
+		case "bottom":
+			if conn.FromY > conn.ToY {
+				// Normal case
+				midY := (conn.FromY + conn.ToY) / 2
+				return []point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
+			} else {
+				// Boxes have crossed
+				offsetY := min(conn.FromY, conn.ToY) - 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: conn.ToX, Y: offsetY},
+				}
+			}
+		case "left":
+			if conn.FromY > conn.ToY && conn.FromX < conn.ToX {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := min(conn.FromY-1, conn.ToY-3)
+				offsetX := min(conn.FromX, conn.ToX) - 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: offsetX, Y: offsetY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "right":
+			if conn.FromY > conn.ToY && conn.FromX > conn.ToX {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := min(conn.FromY-1, conn.ToY-3)
+				offsetX := max(conn.FromX, conn.ToX) + 2
+				return []point{
+					{X: conn.FromX, Y: offsetY},
+					{X: offsetX, Y: offsetY},
+					{X: offsetX, Y: conn.ToY},
+				}
+			}
+		case "top":
+			offsetY := min(fromBox.Y, toBox.Y) - 2
+			return []point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
+		default:
+			return []point{{X: conn.FromX, Y: conn.ToY}}
+		}
+	}
+
+	// Fallback: simple L-path
+	return []point{{X: conn.ToX, Y: conn.FromY}}
+}
+
+// createFlexibleWaypointsForLineConnection creates waypoints for connections involving a line point
+// fromBox is set if the connection is FROM a box TO a line point
+// toBox is set if the connection is FROM a line point TO a box
+func (c *Canvas) createFlexibleWaypointsForLineConnection(conn *Connection, fromBox, toBox *Box) []point {
+	// If endpoints are aligned (straight line), no waypoints needed
+	if conn.FromX == conn.ToX || conn.FromY == conn.ToY {
+		return nil
+	}
+
+	// Determine direction and create appropriate routing
+	dx := conn.ToX - conn.FromX
+	dy := conn.ToY - conn.FromY
+
+	if fromBox != nil {
+		// Connection FROM box TO line point
+		fromEdge := c.getConnectionEdge(*fromBox, conn.FromX, conn.FromY)
+
+		switch fromEdge {
+		case "right":
+			if dx > 0 {
+				// Target is to the right - simple L-path
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				// Target is to the left - go right first, then route
+				offsetX := conn.FromX + 3
+				return []point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
+			}
+		case "left":
+			if dx < 0 {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				offsetX := conn.FromX - 3
+				return []point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
+			}
+		case "bottom":
+			if dy > 0 {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := conn.FromY + 2
+				return []point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
+			}
+		case "top":
+			if dy < 0 {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				offsetY := conn.FromY - 2
+				return []point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
+			}
+		}
+	} else if toBox != nil {
+		// Connection FROM line point TO box
+		toEdge := c.getConnectionEdge(*toBox, conn.ToX, conn.ToY)
+
+		switch toEdge {
+		case "left":
+			if dx > 0 {
+				// Coming from the left - simple L-path
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				// Coming from the right - route around
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			}
+		case "right":
+			if dx < 0 {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			} else {
+				return []point{{X: conn.FromX, Y: conn.ToY}}
+			}
+		case "top":
+			if dy > 0 {
+				// Coming from above - simple L-path
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			}
+		case "bottom":
+			if dy < 0 {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			} else {
+				return []point{{X: conn.ToX, Y: conn.FromY}}
+			}
+		}
+	}
+
+	// Fallback: simple L-path
+	return []point{{X: conn.ToX, Y: conn.FromY}}
 }
 
 // createSmartWaypoints generates waypoints for clean orthogonal routing
@@ -1019,31 +1669,116 @@ func (c *Canvas) SetBoxPosition(id int, x, y int) {
 		if box.X != oldX || box.Y != oldY {
 			deltaX, deltaY := box.X-oldX, box.Y-oldY
 
+			// Track which connections were updated and their old paths
+			var updatedConnections []connectionPathInfo
+
 			for i := range c.connections {
 				conn := &c.connections[i]
 
-				if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-					c.recalculateConnectionRoute(conn)
-				} else if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-					c.recalculateConnectionRoute(conn)
-				} else if conn.FromID == id && conn.ToID < 0 {
-					conn.FromX += deltaX
-					conn.FromY += deltaY
-					for j := range conn.Waypoints {
-						conn.Waypoints[j].X += deltaX
-						conn.Waypoints[j].Y += deltaY
-					}
-				} else if conn.ToID == id && conn.FromID < 0 {
-					conn.ToX += deltaX
-					conn.ToY += deltaY
-					for j := range conn.Waypoints {
-						conn.Waypoints[j].X += deltaX
-						conn.Waypoints[j].Y += deltaY
-					}
+				// Check if this connection involves the moved box
+				isFromThisBox := conn.FromID == id
+				isToThisBox := conn.ToID == id
+
+				if !isFromThisBox && !isToThisBox {
+					continue // Connection doesn't involve this box
 				}
+
+				// Store the old path before updating
+				oldPoints := []point{{X: conn.FromX, Y: conn.FromY}}
+				oldPoints = append(oldPoints, conn.Waypoints...)
+				oldPoints = append(oldPoints, point{X: conn.ToX, Y: conn.ToY})
+				updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
+
+				// Determine the types of endpoints
+				fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
+				toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
+				fromIsLinePoint := conn.FromID < 0
+				toIsLinePoint := conn.ToID < 0
+
+				if isFromThisBox && toIsValidBox {
+					// This box is the "from" box, connected to another valid box
+					c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
+				} else if isToThisBox && fromIsValidBox {
+					// This box is the "to" box, connected from another valid box
+					c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
+				} else if isFromThisBox && toIsLinePoint {
+					// Connection from this box to a free point (on a line)
+					// Keep the free point (ToX, ToY) fixed, adapt the box's anchor
+					conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
+					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
+				} else if isToThisBox && fromIsLinePoint {
+					// Connection from a free point (on a line) to this box
+					// Keep the free point (FromX, FromY) fixed, adapt the box's anchor
+					conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
+					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
+				} else if isFromThisBox && !toIsValidBox && !toIsLinePoint {
+					// Connection from this box to an invalid/deleted box - update our anchor anyway
+					conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
+					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
+				} else if isToThisBox && !fromIsValidBox && !fromIsLinePoint {
+					// Connection to this box from an invalid/deleted box - update our anchor anyway
+					conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
+					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
+				}
+			}
+
+			// Now update any connections that branch off from the updated connections
+			c.updateBranchConnections(updatedConnections)
+		}
+	}
+}
+
+// SetBoxPositionOnly sets a box position without modifying any connections
+// Used for undo operations where connections are restored separately
+func (c *Canvas) SetBoxPositionOnly(id int, x, y int) {
+	if id >= 0 && id < len(c.boxes) {
+		box := &c.boxes[id]
+		box.X, box.Y = x, y
+		if box.X < 0 {
+			box.X = 0
+		}
+		if box.Y < 0 {
+			box.Y = 0
+		}
+	}
+}
+
+// RestoreConnections restores a list of connections to their original states
+func (c *Canvas) RestoreConnections(connections []Connection) {
+	for _, origConn := range connections {
+		// Find the connection by FromID and ToID
+		for i := range c.connections {
+			if c.connections[i].FromID == origConn.FromID && c.connections[i].ToID == origConn.ToID {
+				// Restore all fields
+				c.connections[i] = origConn
+				break
 			}
 		}
 	}
+}
+
+// GetConnectionsForBox returns copies of all connections involving the specified box
+func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
+	var result []Connection
+	for _, conn := range c.connections {
+		if conn.FromID == boxID || conn.ToID == boxID {
+			// Make a deep copy of the connection
+			connCopy := Connection{
+				FromID:    conn.FromID,
+				ToID:      conn.ToID,
+				FromX:     conn.FromX,
+				FromY:     conn.FromY,
+				ToX:       conn.ToX,
+				ToY:       conn.ToY,
+				ArrowFrom: conn.ArrowFrom,
+				ArrowTo:   conn.ArrowTo,
+				Waypoints: make([]point, len(conn.Waypoints)),
+			}
+			copy(connCopy.Waypoints, conn.Waypoints)
+			result = append(result, connCopy)
+		}
+	}
+	return result
 }
 
 func (c *Canvas) MoveText(id int, deltaX, deltaY int) {
@@ -1247,7 +1982,7 @@ func (r *RenderResult) ApplyColors() []string {
 
 // RenderRaw returns the raw canvas and colorMap without applying ANSI codes
 // Use this when you need to overlay content (like tooltips) before final rendering
-func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) *RenderResult {
+func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) *RenderResult {
 	if height < 1 {
 		height = 1
 	}
@@ -1330,7 +2065,48 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			}
 		}
 	}
-	if editBoxID >= 0 && editBoxID < len(c.boxes) {
+	// Apply edit text selection highlighting
+	if editSelStart >= 0 && editSelEnd >= 0 && editSelStart != editSelEnd {
+		selStart, selEnd := editSelStart, editSelEnd
+		if selStart > selEnd {
+			selStart, selEnd = selEnd, selStart
+		}
+		// Calculate screen positions for each character in the selection
+		for pos := selStart; pos < selEnd; pos++ {
+			var screenX, screenY int
+			if editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes) {
+				// Title editing mode
+				box := c.boxes[editBoxID]
+				screenX, screenY = c.calculateTitleCursorPosition(box, pos, editText, panX, panY)
+			} else if editBoxID >= 0 && editBoxID < len(c.boxes) {
+				box := c.boxes[editBoxID]
+				screenX, screenY = c.calculateTextCursorPosition(box, pos, editText, panX, panY)
+			} else if editTextID >= 0 && editTextID < len(c.texts) {
+				text := c.texts[editTextID]
+				screenX, screenY = c.calculateTextCursorPositionForText(text, pos, editText, panX, panY)
+			} else if editTextX >= 0 && editTextY >= 0 {
+				screenX, screenY = c.calculateTextCursorPositionForNewText(editTextX, editTextY, pos, editText, panX, panY)
+			} else {
+				continue
+			}
+			if screenY >= 0 && screenY < height && screenX >= 0 && screenX < width {
+				if screenY < len(colorMap) && screenX < len(colorMap[screenY]) {
+					colorMap[screenY][screenX] = colorEditSelect
+				}
+			}
+		}
+	}
+
+	if editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes) {
+		// Title editing mode
+		box := c.boxes[editBoxID]
+		editCursorX, editCursorY := c.calculateTitleCursorPosition(box, editCursorPos, editText, panX, panY)
+		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
+			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
+				canvas[editCursorY][editCursorX] = '█'
+			}
+		}
+	} else if editBoxID >= 0 && editBoxID < len(c.boxes) {
 		box := c.boxes[editBoxID]
 		editCursorX, editCursorY := c.calculateTextCursorPosition(box, editCursorPos, editText, panX, panY)
 		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
@@ -1460,16 +2236,31 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		fmt.Sscanf(key, "%d,%d", &x, &y)
 
 		// Only show highlights that are inside visible content:
-		// - Inside a box's content area, OR
+		// - Inside a box's content area (interior), OR
+		// - On a box's border, OR
 		// - Inside a text object's bounds
 		// This ensures highlights from resized boxes don't "leak" onto the canvas
 		isInsideVisibleContent := false
 
-		// Check if inside any box's content area
+		// Check if inside any box's content area OR on the box's border
 		for _, box := range c.boxes {
+			// Check if inside box content area
 			if x >= box.X+1 && x < box.X+box.Width-1 && y >= box.Y+1 && y < box.Y+box.Height-1 {
 				isInsideVisibleContent = true
 				break
+			}
+			// Check if on box border (edge cells)
+			if x >= box.X && x < box.X+box.Width && y >= box.Y && y < box.Y+box.Height {
+				// Check if on top or bottom row
+				if y == box.Y || y == box.Y+box.Height-1 {
+					isInsideVisibleContent = true
+					break
+				}
+				// Check if on left or right edge
+				if x == box.X || x == box.X+box.Width-1 {
+					isInsideVisibleContent = true
+					break
+				}
 			}
 		}
 
@@ -1513,8 +2304,8 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 
 // Render returns the canvas with ANSI color codes applied
 // This is a convenience method that calls RenderRaw and ApplyColors
-func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool) []string {
-	result := c.RenderRaw(width, height, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
+func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) []string {
+	result := c.RenderRaw(width, height, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd)
 	return result.ApplyColors()
 }
 
@@ -1606,8 +2397,52 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 			}
 		}
 	}
+
+	// Draw title and divider if present
+	contentStartLine := 0
+	if box.Title != "" {
+		// Handle multiline titles
+		titleLines := strings.Split(box.Title, "\n")
+		maxWidth := box.Width - 2
+		if maxWidth < 0 {
+			maxWidth = 0
+		}
+
+		// Draw each line of the title (left-aligned like content text)
+		for lineIdx, titleLine := range titleLines {
+			titleY := boxY + 1 + lineIdx
+			if titleY >= 0 && titleY < len(canvas) {
+				titleText := titleLine
+				if len(titleText) > maxWidth {
+					titleText = titleText[:maxWidth]
+				}
+				// Left-align the title (same as content text)
+				titleX := boxX + 1
+
+				for i, char := range titleText {
+					if titleX+i >= 0 && titleX+i < len(canvas[titleY]) && titleX+i < boxX+box.Width-1 {
+						canvas[titleY][titleX+i] = char
+					}
+				}
+			}
+		}
+
+		// Draw divider line below title
+		dividerY := boxY + 1 + len(titleLines)
+		if dividerY >= 0 && dividerY < len(canvas) {
+			for x := boxX + 1; x < boxX+box.Width-1 && x < len(canvas[dividerY]) && x >= 0; x++ {
+				canvas[dividerY][x] = horizontal
+			}
+		}
+
+		contentStartLine = 1 + len(titleLines) + 1 // Content starts after border, title lines, and divider
+	} else {
+		contentStartLine = 1 // Content starts after border
+	}
+
+	// Draw content lines
 	for lineIdx, line := range box.Lines {
-		textY := boxY + 1 + lineIdx
+		textY := boxY + contentStartLine + lineIdx
 		textX := boxX + 1
 		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 && textX >= 0 {
 			maxWidth := box.Width - 2
@@ -1652,10 +2487,38 @@ func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
 func (c *Canvas) calculateTextCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
 	lines := strings.Split(text, "\n")
 	currentPos := 0
+
+	// Calculate content start offset (accounts for title area if present)
+	contentStartY := 1 // After top border
+	if box.Title != "" {
+		titleLines := strings.Split(box.Title, "\n")
+		contentStartY = 1 + len(titleLines) + 1 // After border, title lines, and divider
+	}
+
 	for lineIdx, line := range lines {
 		lineLength := len([]rune(line))
 		if cursorPos <= currentPos+lineLength {
 			posInLine := cursorPos - currentPos
+			return box.X + 1 + posInLine - panX, box.Y + contentStartY + lineIdx - panY
+		}
+		currentPos += lineLength + 1
+	}
+	if len(lines) > 0 {
+		lastLine := lines[len(lines)-1]
+		return box.X + 1 + len([]rune(lastLine)) - panX, box.Y + contentStartY + len(lines) - 1 - panY
+	}
+	return box.X + 1 - panX, box.Y + contentStartY - panY
+}
+
+func (c *Canvas) calculateTitleCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
+	lines := strings.Split(text, "\n")
+	currentPos := 0
+
+	for lineIdx, line := range lines {
+		lineLength := len([]rune(line))
+		if cursorPos <= currentPos+lineLength {
+			posInLine := cursorPos - currentPos
+			// Title is left-aligned like content text
 			return box.X + 1 + posInLine - panX, box.Y + 1 + lineIdx - panY
 		}
 		currentPos += lineLength + 1
@@ -2622,6 +3485,10 @@ func abs(x int) int {
 }
 
 func getColorCode(colorIndex int) string {
+	// Special handling for edit selection color (reverse video cyan background)
+	if colorIndex == colorEditSelect {
+		return "\x1b[7;36m" // Reverse video with cyan
+	}
 	colors := []int{47, 41, 42, 43, 44, 45, 46, 47}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
@@ -2630,6 +3497,10 @@ func getColorCode(colorIndex int) string {
 }
 
 func getTextColorCode(colorIndex int) string {
+	// Special handling for edit selection color (reverse video cyan)
+	if colorIndex == colorEditSelect {
+		return "\x1b[7;36m" // Reverse video with cyan
+	}
 	colors := []int{37, 31, 32, 33, 34, 35, 36, 37}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
@@ -2705,6 +3576,162 @@ func (c *Canvas) GetBoxCells(boxID int) []point {
 			cells = append(cells, point{X: x, Y: y})
 		}
 	}
+	return cells
+}
+
+func (c *Canvas) GetBoxBorderCells(boxID int) []point {
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+	// Top row (entire width)
+	for x := box.X; x < box.X+box.Width; x++ {
+		cells = append(cells, point{X: x, Y: box.Y})
+	}
+	// Bottom row (entire width)
+	for x := box.X; x < box.X+box.Width; x++ {
+		cells = append(cells, point{X: x, Y: box.Y + box.Height - 1})
+	}
+	// Left and right columns (excluding top and bottom corners already added)
+	for y := box.Y + 1; y < box.Y+box.Height-1; y++ {
+		cells = append(cells, point{X: box.X, Y: y})
+		cells = append(cells, point{X: box.X + box.Width - 1, Y: y})
+	}
+	return cells
+}
+
+func (c *Canvas) GetBoxBorderCellsWithoutDivider(boxID int) []point {
+	// Returns border cells excluding the title bar area
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+
+	// If box has a title, exclude the title bar area
+	startY := box.Y + 1
+	if box.Title != "" {
+		titleLines := strings.Split(box.Title, "\n")
+		startY = box.Y + 1 + len(titleLines) + 1 // Skip past title lines and divider
+	}
+
+	// Bottom row (entire width)
+	for x := box.X; x < box.X+box.Width; x++ {
+		cells = append(cells, point{X: x, Y: box.Y + box.Height - 1})
+	}
+
+	// Left and right columns (excluding title bar area and bottom corners)
+	for y := startY; y < box.Y+box.Height-1; y++ {
+		cells = append(cells, point{X: box.X, Y: y})
+		cells = append(cells, point{X: box.X + box.Width - 1, Y: y})
+	}
+
+	return cells
+}
+
+func (c *Canvas) GetBoxTitleDividerCells(boxID int) []point {
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+	// Only return divider cells if box has a title
+	if box.Title != "" {
+		titleLines := strings.Split(box.Title, "\n")
+		dividerY := box.Y + 1 + len(titleLines)
+		for x := box.X + 1; x < box.X+box.Width-1; x++ {
+			cells = append(cells, point{X: x, Y: dividerY})
+		}
+	}
+	return cells
+}
+
+func (c *Canvas) GetBoxTitleBarCells(boxID int) []point {
+	// Returns all cells in the title bar area (top row, sides up to divider, and divider)
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+
+	// Only return title bar cells if box has a title
+	if box.Title == "" {
+		return cells
+	}
+
+	titleLines := strings.Split(box.Title, "\n")
+
+	// Top row (entire width)
+	for x := box.X; x < box.X+box.Width; x++ {
+		cells = append(cells, point{X: x, Y: box.Y})
+	}
+
+	// Left and right edges from row 1 to divider row (up to and including divider row)
+	dividerY := box.Y + 1 + len(titleLines)
+	for y := box.Y + 1; y <= dividerY; y++ {
+		cells = append(cells, point{X: box.X, Y: y})
+		cells = append(cells, point{X: box.X + box.Width - 1, Y: y})
+	}
+
+	// Divider line (interior cells on divider row)
+	for x := box.X + 1; x < box.X+box.Width-1; x++ {
+		cells = append(cells, point{X: x, Y: dividerY})
+	}
+
+	return cells
+}
+
+func (c *Canvas) GetBoxTitleTextCells(boxID int) []point {
+	// Returns cells containing the title text (not the border or divider)
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+
+	if box.Title == "" {
+		return cells
+	}
+
+	titleLines := strings.Split(box.Title, "\n")
+
+	// Title text is inside the box, starting at row box.Y+1
+	for lineIdx, line := range titleLines {
+		titleY := box.Y + 1 + lineIdx
+		// Title is left-aligned, starting at box.X + 1
+		for i := 0; i < len(line) && i < box.Width-2; i++ {
+			cells = append(cells, point{X: box.X + 1 + i, Y: titleY})
+		}
+	}
+
+	return cells
+}
+
+func (c *Canvas) GetBoxContentTextCells(boxID int) []point {
+	// Returns cells containing the box content text (not the title, border, or divider)
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return nil
+	}
+	box := c.boxes[boxID]
+	cells := make([]point, 0)
+
+	// Calculate content start offset (accounts for title area if present)
+	contentStartY := box.Y + 1 // After top border
+	if box.Title != "" {
+		titleLines := strings.Split(box.Title, "\n")
+		contentStartY = box.Y + 1 + len(titleLines) + 1 // After border, title lines, and divider
+	}
+
+	// Content text is inside the box
+	for lineIdx, line := range box.Lines {
+		lineY := contentStartY + lineIdx
+		// Content is left-aligned, starting at box.X + 1
+		for i := 0; i < len(line) && i < box.Width-2; i++ {
+			cells = append(cells, point{X: box.X + 1 + i, Y: lineY})
+		}
+	}
+
 	return cells
 }
 
@@ -2948,8 +3975,12 @@ func (c *Canvas) SaveToFile(filename string) error {
 	fmt.Fprintf(file, "BOXES:%d\n", len(c.boxes))
 	for _, box := range c.boxes {
 		encodedText := strings.ReplaceAll(box.GetText(), "\n", "\\n")
-		// Include ZLevel at the end (defaults to 0 for backwards compatibility)
-		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%s\n", box.X, box.Y, box.Width, box.Height, box.ZLevel, encodedText)
+		// Escape commas in title to prevent parsing issues (title is a fixed field)
+		encodedTitle := strings.ReplaceAll(box.Title, "\n", "\\n")
+		encodedTitle = strings.ReplaceAll(encodedTitle, ",", "\\,")
+		// Format: X,Y,Width,Height,ZLevel,BorderStyle,Title,Text
+		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%d,%s,%s\n",
+			box.X, box.Y, box.Width, box.Height, box.ZLevel, box.BorderStyle, encodedTitle, encodedText)
 	}
 
 	fmt.Fprintf(file, "CONNECTIONS:%d\n", len(c.connections))
@@ -3007,6 +4038,34 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 	return nil
 }
 
+// splitBoxLine splits a box line respecting escaped commas in the title field
+// The format is: X,Y,Width,Height,ZLevel,BorderStyle,Title,Text
+// Title field (index 6) may contain escaped commas (\,)
+func splitBoxLine(line string) []string {
+	var fields []string
+	var current strings.Builder
+	escaped := false
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if escaped {
+			current.WriteByte(ch)
+			escaped = false
+		} else if ch == '\\' && i+1 < len(line) && line[i+1] == ',' {
+			// Escaped comma - write the backslash and let next iteration handle the comma
+			current.WriteByte(ch)
+			escaped = true
+		} else if ch == ',' {
+			fields = append(fields, current.String())
+			current.Reset()
+		} else {
+			current.WriteByte(ch)
+		}
+	}
+	fields = append(fields, current.String())
+	return fields
+}
+
 func (c *Canvas) LoadFromFile(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -3036,37 +4095,69 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		if !scanner.Scan() {
 			return fmt.Errorf("missing box data")
 		}
-		parts := strings.Split(scanner.Text(), ",")
+		line := scanner.Text()
 
-		if len(parts) < 3 {
+		// Parse box data by finding comma positions, respecting escaped commas
+		var x, y, width, height, zLevel int
+		var borderStyle BorderStyle
+		var title, text string
+
+		// Split line into fields, but handle escaped commas in title field
+		// Format: X,Y,Width,Height,ZLevel,BorderStyle,Title,Text
+		// The first 6 fields are numeric, then title (may have escaped commas), then text
+		fields := splitBoxLine(line)
+
+		if len(fields) < 3 {
 			return fmt.Errorf("invalid box format")
 		}
 
-		x, _ := strconv.Atoi(parts[0])
-		y, _ := strconv.Atoi(parts[1])
+		x, _ = strconv.Atoi(fields[0])
+		y, _ = strconv.Atoi(fields[1])
 
-		var width, height, zLevel int
-		var text string
-		if len(parts) >= 6 {
-			width, _ = strconv.Atoi(parts[2])
-			height, _ = strconv.Atoi(parts[3])
-			zLevel, _ = strconv.Atoi(parts[4])
+		// Parse based on number of fields for backward compatibility
+		if len(fields) >= 8 {
+			// New format: X,Y,Width,Height,ZLevel,BorderStyle,Title,Text
+			width, _ = strconv.Atoi(fields[2])
+			height, _ = strconv.Atoi(fields[3])
+			zLevel, _ = strconv.Atoi(fields[4])
 			if zLevel < 0 || zLevel > 3 {
 				zLevel = 0
 			}
-			text = strings.ReplaceAll(strings.Join(parts[5:], ","), "\\n", "\n")
-		} else if len(parts) >= 5 {
-			width, _ = strconv.Atoi(parts[2])
-			height, _ = strconv.Atoi(parts[3])
+			borderStyleInt, _ := strconv.Atoi(fields[5])
+			borderStyle = BorderStyle(borderStyleInt)
+			// Unescape commas and newlines in title
+			title = strings.ReplaceAll(fields[6], "\\,", ",")
+			title = strings.ReplaceAll(title, "\\n", "\n")
+			text = strings.ReplaceAll(strings.Join(fields[7:], ","), "\\n", "\n")
+		} else if len(fields) >= 6 {
+			// Old format: X,Y,Width,Height,ZLevel,Text
+			width, _ = strconv.Atoi(fields[2])
+			height, _ = strconv.Atoi(fields[3])
+			zLevel, _ = strconv.Atoi(fields[4])
+			if zLevel < 0 || zLevel > 3 {
+				zLevel = 0
+			}
+			borderStyle = BorderStyleASCII
+			title = ""
+			text = strings.ReplaceAll(strings.Join(fields[5:], ","), "\\n", "\n")
+		} else if len(fields) >= 5 {
+			// Older format: X,Y,Width,Height,Text
+			width, _ = strconv.Atoi(fields[2])
+			height, _ = strconv.Atoi(fields[3])
 			zLevel = 0
-			text = strings.ReplaceAll(strings.Join(parts[4:], ","), "\\n", "\n")
+			borderStyle = BorderStyleASCII
+			title = ""
+			text = strings.ReplaceAll(strings.Join(fields[4:], ","), "\\n", "\n")
 		} else {
-			text = strings.ReplaceAll(strings.Join(parts[2:], ","), "\\n", "\n")
+			// Oldest format: X,Y,Text
+			text = strings.ReplaceAll(strings.Join(fields[2:], ","), "\\n", "\n")
 			box := Box{
-				X:      x,
-				Y:      y,
-				ID:     i,
-				ZLevel: 0,
+				X:           x,
+				Y:           y,
+				ID:          i,
+				ZLevel:      0,
+				BorderStyle: BorderStyleASCII,
+				Title:       "",
 			}
 			box.SetText(text)
 			c.boxes = append(c.boxes, box)
@@ -3074,10 +4165,12 @@ func (c *Canvas) LoadFromFile(filename string) error {
 		}
 
 		box := Box{
-			X:      x,
-			Y:      y,
-			ID:     i,
-			ZLevel: zLevel,
+			X:           x,
+			Y:           y,
+			ID:          i,
+			ZLevel:      zLevel,
+			BorderStyle: borderStyle,
+			Title:       title,
 		}
 		box.SetText(text)
 		box.Width = width
@@ -3161,20 +4254,27 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				if !scanner.Scan() {
 					break
 				}
-				parts := strings.Split(scanner.Text(), ",")
-				if len(parts) >= 3 {
-					// Format: X,Y,Text (or X,Y,Color,Text for backward compatibility)
-					x, _ := strconv.Atoi(parts[0])
-					y, _ := strconv.Atoi(parts[1])
-					// Skip color field if present (parts[2] might be color)
-					textStart := 2
-					if len(parts) >= 4 {
-						// Has color field, skip it
-						textStart = 3
-					}
-					text := strings.ReplaceAll(strings.Join(parts[textStart:], ","), "\\n", "\n")
-					c.AddText(x, y, text)
+				line := scanner.Text()
+				// Find the first two commas to extract X and Y
+				// Everything after the second comma is the text content
+				// This handles text that contains commas correctly
+				firstComma := strings.Index(line, ",")
+				if firstComma == -1 {
+					continue
 				}
+				secondComma := strings.Index(line[firstComma+1:], ",")
+				if secondComma == -1 {
+					continue
+				}
+				secondComma += firstComma + 1
+
+				x, err1 := strconv.Atoi(line[:firstComma])
+				y, err2 := strconv.Atoi(line[firstComma+1 : secondComma])
+				if err1 != nil || err2 != nil {
+					continue
+				}
+				text := strings.ReplaceAll(line[secondComma+1:], "\\n", "\n")
+				c.AddText(x, y, text)
 			}
 		}
 	}

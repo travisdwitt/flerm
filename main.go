@@ -35,7 +35,8 @@ func (m *model) renderBufferBar(width int) string {
 		}
 		bufName := fmt.Sprintf("%d", i+1)
 		if buf.filename != "" {
-			name := buf.filename
+			// Extract just the filename from the path
+			name := filepath.Base(buf.filename)
 			if strings.HasSuffix(strings.ToLower(name), ".sav") {
 				name = name[:len(name)-4]
 			}
@@ -44,16 +45,22 @@ func (m *model) renderBufferBar(width int) string {
 			bufName = fmt.Sprintf("Buffer %d", i+1)
 		}
 		if i == m.currentBufferIndex {
-			bar.WriteString("[")
+			// Green brackets for selected buffer
+			bar.WriteString("\033[32m[\033[0m")
 			bar.WriteString(bufName)
-			bar.WriteString("]")
+			bar.WriteString("\033[32m]\033[0m")
 		} else {
 			bar.WriteString(bufName)
 		}
 	}
 	currentLen := bar.Len()
-	if currentLen < width {
-		bar.WriteString(strings.Repeat(" ", width-currentLen))
+	// Note: We need to account for ANSI color codes when calculating length
+	// The color codes add characters but don't take up display space
+	// Each \033[32m and \033[0m adds 5 and 4 characters respectively
+	// For the selected buffer, we have 2 * (5 + 4) = 18 extra characters
+	visibleLen := currentLen - (2 * 9) // Subtract color code characters for selected buffer
+	if visibleLen < width {
+		bar.WriteString(strings.Repeat(" ", width-visibleLen))
 	} else {
 		return bar.String()[:width]
 	}
@@ -88,13 +95,14 @@ func initialModel() model {
 		selectedColor:         0,
 		selectionStartX:       -1,
 		selectionStartY:       -1,
-		selectedBoxes:         []int{},
-		selectedTexts:         []int{},
-		selectedConnections:   []int{},
-		originalBoxPositions:  make(map[int]point),
-		originalTextPositions: make(map[int]point),
-		originalConnections:   make(map[int]Connection),
-		originalHighlights:    make(map[point]int),
+		selectedBoxes:          []int{},
+		selectedTexts:          []int{},
+		selectedConnections:    []int{},
+		originalBoxPositions:   make(map[int]point),
+		originalTextPositions:  make(map[int]point),
+		originalConnections:    make(map[int]Connection),
+		originalHighlights:     make(map[point]int),
+		originalBoxConnections: make(map[int][]Connection),
 	}
 }
 
@@ -170,6 +178,62 @@ func (m *model) cursorPosToLinear(row, col int, text string) int {
 // syncCursorPositions keeps linear and 2D cursor positions synchronized
 func (m *model) syncCursorPositions() {
 	m.editCursorRow, m.editCursorCol = m.linearToCursorPos(m.editCursorPos, m.editText)
+}
+
+// clearEditSelection clears any text selection
+func (m *model) clearEditSelection() {
+	m.editSelectionStart = -1
+	m.editSelectionEnd = -1
+}
+
+// hasEditSelection returns true if there's an active text selection
+func (m *model) hasEditSelection() bool {
+	return m.editSelectionStart >= 0 && m.editSelectionEnd >= 0 && m.editSelectionStart != m.editSelectionEnd
+}
+
+// getEditSelectionBounds returns the normalized selection bounds (start <= end)
+func (m *model) getEditSelectionBounds() (int, int) {
+	if m.editSelectionStart <= m.editSelectionEnd {
+		return m.editSelectionStart, m.editSelectionEnd
+	}
+	return m.editSelectionEnd, m.editSelectionStart
+}
+
+// deleteEditSelection deletes the selected text and returns true if something was deleted
+func (m *model) deleteEditSelection() bool {
+	if !m.hasEditSelection() {
+		return false
+	}
+	start, end := m.getEditSelectionBounds()
+	m.editText = m.editText[:start] + m.editText[end:]
+	m.editCursorPos = start
+	m.clearEditSelection()
+	return true
+}
+
+// getLineStartPos returns the position of the start of the current line
+func (m *model) getLineStartPos() int {
+	if m.editCursorPos == 0 {
+		return 0
+	}
+	// Find the previous newline
+	for i := m.editCursorPos - 1; i >= 0; i-- {
+		if m.editText[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// getLineEndPos returns the position of the end of the current line
+func (m *model) getLineEndPos() int {
+	// Find the next newline or end of text
+	for i := m.editCursorPos; i < len(m.editText); i++ {
+		if m.editText[i] == '\n' {
+			return i
+		}
+	}
+	return len(m.editText)
 }
 
 func (m *model) scanTxtFiles() {
@@ -514,6 +578,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeBoxJump
 				m.boxJumpInput = ""
 				return m, nil
+			case "T":
+				// Enter title edit mode
+				m.zPanMode = false
+				panX, panY := m.getPanOffset()
+				worldX, worldY := m.cursorX+panX, m.cursorY+panY
+				boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+				if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+					m.mode = ModeTitleEdit
+					m.titleEditBoxID = boxID
+					m.titleEditText = m.getCanvas().boxes[boxID].Title
+					m.originalTitleText = m.titleEditText
+					m.titleEditCursorPos = len(m.titleEditText)
+				}
+				return m, nil
 			case "t":
 				m.zPanMode = false
 				m.mode = ModeTextInput
@@ -552,10 +630,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.originalTextPositions = make(map[int]point)
 					m.originalConnections = make(map[int]Connection)
 					m.originalHighlights = make(map[point]int)
+					m.originalBoxConnections = make(map[int][]Connection)
 					m.highlightMoveDelta = point{X: 0, Y: 0}
 					if boxID < len(m.getCanvas().boxes) {
 						box := m.getCanvas().boxes[boxID]
 						m.originalMoveX, m.originalMoveY = box.X, box.Y
+						// Capture original connection states for undo
+						m.originalBoxConnections[boxID] = m.getCanvas().GetConnectionsForBox(boxID)
 						for y := box.Y; y < box.Y+box.Height; y++ {
 							for x := box.X; x < box.X+box.Width; x++ {
 								if color := m.getCanvas().GetHighlight(x, y); color != -1 {
@@ -630,6 +711,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editText = m.getCanvas().GetBoxText(boxID)
 					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
+					m.editSelectionStart = -1
+					m.editSelectionEnd = -1
 					m.syncCursorPositions()
 				} else if textID != -1 {
 					m.selectedText = textID
@@ -638,6 +721,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editText = m.getCanvas().GetTextText(textID)
 					m.originalEditText = m.editText
 					m.editCursorPos = len(m.editText)
+					m.editSelectionStart = -1
+					m.editSelectionEnd = -1
 					m.syncCursorPositions()
 				}
 				return m, nil
@@ -978,17 +1063,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedBox = -1
 				return m, nil
 			case "tab":
-				panX, panY := m.getPanOffset()
-				worldX, worldY := m.cursorX+panX, m.cursorY+panY
-				if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
-					// Cycle border style for the box under cursor
-					oldStyle := m.getCanvas().CycleBorderStyle(boxID)
-					newStyle := m.getCanvas().boxes[boxID].BorderStyle
-					borderData := BorderStyleData{BoxID: boxID, OldStyle: oldStyle, NewStyle: newStyle}
-					m.recordAction(ActionChangeBorderStyle, borderData, borderData)
-				} else {
-					// If not on a box, cycle through colors (original behavior)
+				if m.highlightMode {
+					// In highlight mode, cycle through colors
 					m.selectedColor = (m.selectedColor + 1) % numColors
+				} else {
+					// In normal mode, only cycle border style if on a box
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
+						// Cycle border style for the box under cursor
+						oldStyle := m.getCanvas().CycleBorderStyle(boxID)
+						newStyle := m.getCanvas().boxes[boxID].BorderStyle
+						borderData := BorderStyleData{BoxID: boxID, OldStyle: oldStyle, NewStyle: newStyle}
+						m.recordAction(ActionChangeBorderStyle, borderData, borderData)
+					}
 				}
 				return m, nil
 			case "Z":
@@ -1000,7 +1088,151 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case " ":
-				m.highlightMode = !m.highlightMode
+				if m.highlightMode {
+					// If already in highlight mode, check if we're on a box
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+						box := m.getCanvas().boxes[boxID]
+						highlightedCells := make([]HighlightCell, 0)
+
+						// Get cell sets
+						borderCells := m.getCanvas().GetBoxBorderCells(boxID)
+						dividerCells := m.getCanvas().GetBoxTitleDividerCells(boxID)
+
+						// Check current state using cells unique to each set
+						// Border: check bottom row (unique to border, never in title bar)
+						// Title bar: check divider interior (unique to title bar, never in border)
+						borderHighlighted := false
+						titleBarHighlighted := false
+
+						// Check any cell in bottom row for border state
+						bottomY := box.Y + box.Height - 1
+						for _, cell := range borderCells {
+							if cell.Y == bottomY {
+								if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
+									borderHighlighted = true
+									break
+								}
+							}
+						}
+
+						// Check divider for title bar state (only if box has a title)
+						if box.Title != "" && len(dividerCells) > 0 {
+							for _, cell := range dividerCells {
+								if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
+									titleBarHighlighted = true
+									break
+								}
+							}
+						}
+
+						// For boxes without titles, just toggle border
+						if box.Title == "" {
+							if borderHighlighted {
+								// Clear border
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().ClearHighlight(cell.X, cell.Y)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: -1,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							} else {
+								// Highlight border
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: m.selectedColor,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							}
+						} else {
+							// Box has title - cycle through: border → title bar → both → neither
+							if !borderHighlighted && !titleBarHighlighted {
+								// Neither → highlight border only
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: m.selectedColor,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							} else if borderHighlighted && !titleBarHighlighted {
+								// Border only → clear border, highlight title bar only
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().ClearHighlight(cell.X, cell.Y)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: -1,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+								for _, cell := range dividerCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: m.selectedColor,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							} else if !borderHighlighted && titleBarHighlighted {
+								// Divider only → highlight both
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: m.selectedColor,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							} else {
+								// Both → clear both (neither)
+								for _, cell := range borderCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().ClearHighlight(cell.X, cell.Y)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: -1,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+								for _, cell := range dividerCells {
+									oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+									m.getCanvas().ClearHighlight(cell.X, cell.Y)
+									highlightedCells = append(highlightedCells, HighlightCell{
+										X: cell.X, Y: cell.Y, Color: -1,
+										HadColor: oldColor != -1, OldColor: oldColor,
+									})
+								}
+							}
+						}
+
+						if len(highlightedCells) > 0 {
+							inverseCells := make([]HighlightCell, len(highlightedCells))
+							for i, cell := range highlightedCells {
+								oldColorForInverse := cell.OldColor
+								if oldColorForInverse < 0 {
+									oldColorForInverse = -1
+								}
+								inverseCells[i] = HighlightCell{
+									X: cell.X, Y: cell.Y,
+									Color: oldColorForInverse,
+									HadColor: cell.HadColor, OldColor: cell.Color,
+								}
+							}
+							m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
+						}
+					}
+					// Don't toggle off when pressing Space in highlight mode
+				} else {
+					// Not in highlight mode, toggle it on
+					m.highlightMode = true
+				}
 				return m, nil
 			case "enter":
 				if m.highlightMode {
@@ -1010,30 +1242,116 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					textID := m.getCanvas().GetTextAt(worldX, worldY)
 					lineConnIdx, _, _ := m.getCanvas().findNearestPointOnConnection(worldX, worldY)
 					highlightedCells := make([]HighlightCell, 0)
-					addHighlightCell := func(x, y int) {
-						oldColor := m.getCanvas().GetHighlight(x, y)
-						m.getCanvas().SetHighlight(x, y, m.selectedColor)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X:        x,
-							Y:        y,
-							Color:    m.selectedColor,
-							HadColor: oldColor != -1,
-							OldColor: oldColor,
-						})
-					}
+
 					if boxID != -1 {
-						for _, cell := range m.getCanvas().GetBoxCells(boxID) {
-							addHighlightCell(cell.X, cell.Y)
+						// Cycle through: box text only → title text only → both → neither
+						contentTextCells := m.getCanvas().GetBoxContentTextCells(boxID)
+						titleTextCells := m.getCanvas().GetBoxTitleTextCells(boxID)
+
+						// Check current state
+						contentHighlighted := false
+						titleHighlighted := false
+
+						for _, cell := range contentTextCells {
+							if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
+								contentHighlighted = true
+								break
+							}
+						}
+						for _, cell := range titleTextCells {
+							if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
+								titleHighlighted = true
+								break
+							}
+						}
+
+						// Determine next state based on current state
+						// State transitions: neither → content text → title text → both → neither
+						if !contentHighlighted && !titleHighlighted {
+							// Neither → highlight content text only
+							for _, cell := range contentTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: m.selectedColor,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
+						} else if contentHighlighted && !titleHighlighted {
+							// Content only → clear content, highlight title text only
+							for _, cell := range contentTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().ClearHighlight(cell.X, cell.Y)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: -1,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
+							for _, cell := range titleTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: m.selectedColor,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
+						} else if !contentHighlighted && titleHighlighted {
+							// Title only → highlight both
+							for _, cell := range contentTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: m.selectedColor,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
+						} else {
+							// Both → clear both (neither)
+							for _, cell := range contentTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().ClearHighlight(cell.X, cell.Y)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: -1,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
+							for _, cell := range titleTextCells {
+								oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+								m.getCanvas().ClearHighlight(cell.X, cell.Y)
+								highlightedCells = append(highlightedCells, HighlightCell{
+									X: cell.X, Y: cell.Y, Color: -1,
+									HadColor: oldColor != -1, OldColor: oldColor,
+								})
+							}
 						}
 					} else if textID != -1 {
+						// For standalone text, just toggle highlight
 						for _, cell := range m.getCanvas().GetTextCells(textID) {
-							addHighlightCell(cell.X, cell.Y)
+							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+							highlightedCells = append(highlightedCells, HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    m.selectedColor,
+								HadColor: oldColor != -1,
+								OldColor: oldColor,
+							})
 						}
 					} else if lineConnIdx != -1 {
+						// For connections, just toggle highlight
 						for _, cell := range m.getCanvas().GetConnectionCells(lineConnIdx) {
-							addHighlightCell(cell.X, cell.Y)
+							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
+							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
+							highlightedCells = append(highlightedCells, HighlightCell{
+								X:        cell.X,
+								Y:        cell.Y,
+								Color:    m.selectedColor,
+								HadColor: oldColor != -1,
+								OldColor: oldColor,
+							})
 						}
 					}
+
 					if len(highlightedCells) > 0 {
 						inverseCells := make([]HighlightCell, len(highlightedCells))
 						for i, cell := range highlightedCells {
@@ -1070,6 +1388,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editCursorPos = 0
 				m.editCursorRow = 0
 				m.editCursorCol = 0
+				m.clearEditSelection()
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
@@ -1091,10 +1410,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editCursorPos = 0
 				m.editCursorRow = 0
 				m.editCursorCol = 0
+				m.clearEditSelection()
 				m.selectedBox = -1
 				m.selectedText = -1
 				return m, nil
 			case msg.Type == tea.KeyCtrlV:
+				// Delete selection first if any
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+				}
 				// Paste clipboard content at cursor position
 				clipText, err := readClipboardText()
 				if err == nil && clipText != "" {
@@ -1110,6 +1434,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.String() == "ctrl+v":
+				// Delete selection first if any
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+				}
 				// Alternative paste detection (some terminals send this)
 				clipText, err := readClipboardText()
 				if err == nil && clipText != "" {
@@ -1124,13 +1452,78 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
+			case msg.Type == tea.KeyHome:
+				// Move to start of current line
+				m.editCursorPos = m.getLineStartPos()
+				m.clearEditSelection()
+				m.syncCursorPositions()
+				return m, nil
+			case msg.Type == tea.KeyEnd:
+				// Move to end of current line
+				m.editCursorPos = m.getLineEndPos()
+				m.clearEditSelection()
+				m.syncCursorPositions()
+				return m, nil
+			case msg.Type == tea.KeyShiftLeft:
+				// Extend selection left
+				if m.editSelectionStart < 0 {
+					m.editSelectionStart = m.editCursorPos
+					m.editSelectionEnd = m.editCursorPos
+				}
+				if m.editCursorPos > 0 {
+					m.editCursorPos--
+					m.editSelectionEnd = m.editCursorPos
+				}
+				m.syncCursorPositions()
+				return m, nil
+			case msg.Type == tea.KeyShiftRight:
+				// Extend selection right
+				if m.editSelectionStart < 0 {
+					m.editSelectionStart = m.editCursorPos
+					m.editSelectionEnd = m.editCursorPos
+				}
+				if m.editCursorPos < len(m.editText) {
+					m.editCursorPos++
+					m.editSelectionEnd = m.editCursorPos
+				}
+				m.syncCursorPositions()
+				return m, nil
+			case msg.Type == tea.KeyShiftUp:
+				// Extend selection up one line
+				if m.editSelectionStart < 0 {
+					m.editSelectionStart = m.editCursorPos
+					m.editSelectionEnd = m.editCursorPos
+				}
+				m.syncCursorPositions()
+				if m.editCursorRow > 0 {
+					m.editCursorRow--
+					m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
+					m.editSelectionEnd = m.editCursorPos
+				}
+				return m, nil
+			case msg.Type == tea.KeyShiftDown:
+				// Extend selection down one line
+				if m.editSelectionStart < 0 {
+					m.editSelectionStart = m.editCursorPos
+					m.editSelectionEnd = m.editCursorPos
+				}
+				m.syncCursorPositions()
+				lines := strings.Split(m.editText, "\n")
+				if m.editCursorRow < len(lines)-1 {
+					m.editCursorRow++
+					m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
+					m.editSelectionEnd = m.editCursorPos
+				}
+				return m, nil
 			case msg.String() == "left":
+				m.clearEditSelection()
 				if m.editCursorPos > 0 {
 					m.editCursorPos--
 				}
 				m.syncCursorPositions()
 				return m, nil
 			case msg.String() == "right":
+				m.clearEditSelection()
 				if m.editCursorPos < len(m.editText) {
 					m.editCursorPos++
 				}
@@ -1138,6 +1531,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case msg.String() == "up":
 				// Move cursor up one line
+				m.clearEditSelection()
 				m.syncCursorPositions() // Ensure 2D position is current
 				if m.editCursorRow > 0 {
 					m.editCursorRow--
@@ -1146,6 +1540,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case msg.String() == "down":
 				// Move cursor down one line
+				m.clearEditSelection()
 				m.syncCursorPositions() // Ensure 2D position is current
 				lines := strings.Split(m.editText, "\n")
 				if m.editCursorRow < len(lines)-1 {
@@ -1154,6 +1549,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.Type == tea.KeyEnter:
+				// Delete selection first if any
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+				}
 				m.editText = m.editText[:m.editCursorPos] + "\n" + m.editText[m.editCursorPos:]
 				m.editCursorPos++
 				// Update box/text in real-time
@@ -1164,7 +1563,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.Type == tea.KeyBackspace:
-				if m.editCursorPos > 0 {
+				// If there's a selection, delete it
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
+				} else if m.editCursorPos > 0 {
 					m.editText = m.editText[:m.editCursorPos-1] + m.editText[m.editCursorPos:]
 					m.editCursorPos--
 					// Update box/text in real-time
@@ -1176,7 +1584,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.Type == tea.KeyDelete:
-				if m.editCursorPos < len(m.editText) {
+				// If there's a selection, delete it
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+					// Update box/text in real-time
+					if m.selectedBox != -1 {
+						m.getCanvas().SetBoxText(m.selectedBox, m.editText)
+					} else if m.selectedText != -1 {
+						m.getCanvas().SetTextText(m.selectedText, m.editText)
+					}
+				} else if m.editCursorPos < len(m.editText) {
 					m.editText = m.editText[:m.editCursorPos] + m.editText[m.editCursorPos+1:]
 					// Update box/text in real-time
 					if m.selectedBox != -1 {
@@ -1187,6 +1604,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case msg.Type == tea.KeySpace:
+				// Delete selection first if any
+				if m.hasEditSelection() {
+					m.deleteEditSelection()
+				}
 				// Insert space character
 				m.editText = m.editText[:m.editCursorPos] + " " + m.editText[m.editCursorPos:]
 				m.editCursorPos++
@@ -1201,6 +1622,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Handle typed characters - use msg.Runes for proper Unicode support
 				// and to handle multi-character paste events
 				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					// Delete selection first if any
+					if m.hasEditSelection() {
+						m.deleteEditSelection()
+					}
 					runeStr := string(msg.Runes)
 					m.editText = m.editText[:m.editCursorPos] + runeStr + m.editText[m.editCursorPos:]
 					m.editCursorPos += len(msg.Runes)
@@ -1327,6 +1752,151 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case ModeTitleEdit:
+			switch {
+			case msg.Type == tea.KeyEscape:
+				// Cancel and restore original title
+				if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+					m.getCanvas().boxes[m.titleEditBoxID].Title = m.originalTitleText
+					m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+				}
+				m.mode = ModeNormal
+				m.titleEditText = ""
+				m.titleEditCursorPos = 0
+				m.titleEditCursorRow = 0
+				m.titleEditCursorCol = 0
+				m.titleEditBoxID = -1
+				return m, nil
+			case msg.Type == tea.KeyCtrlS:
+				// Save the title
+				if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+					oldTitle := m.originalTitleText
+					newTitle := m.titleEditText
+					// Ensure final size is correct
+					m.getCanvas().boxes[m.titleEditBoxID].Title = newTitle
+					m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					// Record action for undo
+					editData := EditTitleData{BoxID: m.titleEditBoxID, NewTitle: newTitle, OldTitle: oldTitle}
+					inverseData := EditTitleData{BoxID: m.titleEditBoxID, NewTitle: oldTitle, OldTitle: newTitle}
+					m.recordAction(ActionEditTitle, editData, inverseData)
+				}
+				m.mode = ModeNormal
+				m.titleEditText = ""
+				m.titleEditCursorPos = 0
+				m.titleEditCursorRow = 0
+				m.titleEditCursorCol = 0
+				m.titleEditBoxID = -1
+				return m, nil
+			case msg.Type == tea.KeyCtrlV:
+				// Paste clipboard content at cursor position
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + clipText + m.titleEditText[m.titleEditCursorPos:]
+					m.titleEditCursorPos += len([]rune(clipText))
+					// Update title in real-time
+					if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+						m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+						m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					}
+				}
+				return m, nil
+			case msg.String() == "ctrl+v":
+				// Alternative paste detection (some terminals send this)
+				clipText, err := readClipboardText()
+				if err == nil && clipText != "" {
+					m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + clipText + m.titleEditText[m.titleEditCursorPos:]
+					m.titleEditCursorPos += len([]rune(clipText))
+					// Update title in real-time
+					if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+						m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+						m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					}
+				}
+				return m, nil
+			case msg.String() == "left":
+				if m.titleEditCursorPos > 0 {
+					m.titleEditCursorPos--
+				}
+				m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
+				return m, nil
+			case msg.String() == "right":
+				if m.titleEditCursorPos < len(m.titleEditText) {
+					m.titleEditCursorPos++
+				}
+				m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
+				return m, nil
+			case msg.String() == "up":
+				// Move cursor up one line
+				m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
+				if m.titleEditCursorRow > 0 {
+					m.titleEditCursorRow--
+					m.titleEditCursorPos = m.cursorPosToLinear(m.titleEditCursorRow, m.titleEditCursorCol, m.titleEditText)
+				}
+				return m, nil
+			case msg.String() == "down":
+				// Move cursor down one line
+				m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
+				lines := strings.Split(m.titleEditText, "\n")
+				if m.titleEditCursorRow < len(lines)-1 {
+					m.titleEditCursorRow++
+					m.titleEditCursorPos = m.cursorPosToLinear(m.titleEditCursorRow, m.titleEditCursorCol, m.titleEditText)
+				}
+				return m, nil
+			case msg.Type == tea.KeyEnter:
+				m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + "\n" + m.titleEditText[m.titleEditCursorPos:]
+				m.titleEditCursorPos++
+				// Update title in real-time
+				if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+					m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+					m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+				}
+				return m, nil
+			case msg.Type == tea.KeyBackspace:
+				if m.titleEditCursorPos > 0 {
+					m.titleEditText = m.titleEditText[:m.titleEditCursorPos-1] + m.titleEditText[m.titleEditCursorPos:]
+					m.titleEditCursorPos--
+					// Update title in real-time
+					if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+						m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+						m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					}
+				}
+				return m, nil
+			case msg.Type == tea.KeyDelete:
+				if m.titleEditCursorPos < len(m.titleEditText) {
+					m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + m.titleEditText[m.titleEditCursorPos+1:]
+					// Update title in real-time
+					if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+						m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+						m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					}
+				}
+				return m, nil
+			case msg.Type == tea.KeySpace:
+				// Insert space character
+				m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + " " + m.titleEditText[m.titleEditCursorPos:]
+				m.titleEditCursorPos++
+				// Update title in real-time
+				if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+					m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+					m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+				}
+				return m, nil
+			default:
+				// Handle typed characters
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					runeStr := string(msg.Runes)
+					m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + runeStr + m.titleEditText[m.titleEditCursorPos:]
+					m.titleEditCursorPos += len([]rune(runeStr))
+					// Update title in real-time
+					if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().boxes) {
+						m.getCanvas().boxes[m.titleEditBoxID].Title = m.titleEditText
+						m.getCanvas().boxes[m.titleEditBoxID].updateSize()
+					}
+				}
+				return m, nil
+			}
+
 		case ModeResize:
 			switch msg.String() {
 			case "escape":
@@ -1442,11 +2012,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.originalTextPositions = make(map[int]point)
 				m.originalConnections = make(map[int]Connection)
 
+				m.originalBoxConnections = make(map[int][]Connection)
 				for i, box := range m.getCanvas().boxes {
 					boxRight, boxBottom := box.X+box.Width-1, box.Y+box.Height-1
 					if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
 						m.selectedBoxes = append(m.selectedBoxes, i)
 						m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
+						// Capture connection states for undo
+						m.originalBoxConnections[i] = m.getCanvas().GetConnectionsForBox(i)
 					}
 				}
 				for i, text := range m.getCanvas().texts {
@@ -1881,7 +2454,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								deltaY := currentBox.Y - originalPos.Y
 								if deltaX != 0 || deltaY != 0 {
 									moveData := MoveBoxData{ID: boxID, DeltaX: deltaX, DeltaY: deltaY}
-									originalState := OriginalBoxState{ID: boxID, X: originalPos.X, Y: originalPos.Y, Width: currentBox.Width, Height: currentBox.Height}
+									originalState := OriginalBoxState{
+										ID:          boxID,
+										X:           originalPos.X,
+										Y:           originalPos.Y,
+										Width:       currentBox.Width,
+										Height:      currentBox.Height,
+										Connections: m.originalBoxConnections[boxID],
+									}
 									m.recordAction(ActionMoveBox, moveData, originalState)
 								}
 							}
@@ -1915,7 +2495,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Only record if there was an actual change
 					if deltaX != 0 || deltaY != 0 {
 						moveData := MoveBoxData{ID: m.selectedBox, DeltaX: deltaX, DeltaY: deltaY}
-						originalState := OriginalBoxState{ID: m.selectedBox, X: m.originalMoveX, Y: m.originalMoveY, Width: currentBox.Width, Height: currentBox.Height}
+						// Collect original highlight states
+						var highlightCells []HighlightCell
+						for origPos, color := range m.originalHighlights {
+							highlightCells = append(highlightCells, HighlightCell{X: origPos.X, Y: origPos.Y, Color: color})
+						}
+						originalState := OriginalBoxState{
+							ID:          m.selectedBox,
+							X:           m.originalMoveX,
+							Y:           m.originalMoveY,
+							Width:       currentBox.Width,
+							Height:      currentBox.Height,
+							Connections: m.originalBoxConnections[m.selectedBox],
+							Highlights:  highlightCells,
+						}
 						m.recordAction(ActionMoveBox, moveData, originalState)
 					}
 				} else if m.selectedText != -1 && m.selectedText < len(m.getCanvas().texts) {
@@ -2682,7 +3275,7 @@ func (m model) View() string {
 
 	// Determine if we should show the cursor
 	// Determine if we should show the navigation cursor
-	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput)
+	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit)
 
 	// Determine text editing cursor info
 	var editBoxID, editTextID int = -1, -1
@@ -2701,6 +3294,13 @@ func (m model) View() string {
 		editText = m.textInputText
 		editTextX = m.textInputX
 		editTextY = m.textInputY
+	} else if m.mode == ModeTitleEdit {
+		// For title editing, pass the title edit state
+		editBoxID = m.titleEditBoxID
+		editCursorPos = m.titleEditCursorPos
+		editText = m.titleEditText
+		// Use editTextID = -2 as a special flag to indicate title editing
+		editTextID = -2
 	}
 
 	// Calculate selection rectangle parameters for rendering
@@ -2715,8 +3315,14 @@ func (m model) View() string {
 
 	showBoxNumbers := (m.mode == ModeBoxJump)
 
+	// Get edit text selection bounds
+	editSelStart, editSelEnd := -1, -1
+	if m.mode == ModeEditing && m.hasEditSelection() {
+		editSelStart, editSelEnd = m.editSelectionStart, m.editSelectionEnd
+	}
+
 	// Use RenderRaw to get canvas without ANSI codes, so we can overlay tooltip cleanly
-	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers)
+	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd)
 
 	// Apply tooltip overlay to raw canvas BEFORE applying ANSI colors
 	// This ensures the tooltip floats above all other elements
@@ -2756,9 +3362,24 @@ func (m model) View() string {
 		if cursorPos > len(displayText) {
 			cursorPos = len(displayText)
 		}
-		// Replace character at cursor position with cursor, don't insert
+		// Build display with cursor and optional selection highlighting
 		var cursorDisplay string
-		if len(displayText) == 0 {
+		if m.hasEditSelection() {
+			// Show selection with brackets around selected text
+			start, end := m.getEditSelectionBounds()
+			// Adjust for newline replacement (displayText has spaces instead of newlines)
+			runes := []rune(displayText)
+			if start > len(runes) {
+				start = len(runes)
+			}
+			if end > len(runes) {
+				end = len(runes)
+			}
+			before := string(runes[:start])
+			selected := string(runes[start:end])
+			after := string(runes[end:])
+			cursorDisplay = before + "[" + selected + "]" + after
+		} else if len(displayText) == 0 {
 			cursorDisplay = "█"
 		} else if cursorPos >= len(displayText) {
 			cursorDisplay = displayText + "█"
@@ -2768,12 +3389,17 @@ func (m model) View() string {
 			runes[cursorPos] = '█'
 			cursorDisplay = string(runes)
 		}
+		selectionHint := ""
+		if m.hasEditSelection() {
+			start, end := m.getEditSelectionBounds()
+			selectionHint = fmt.Sprintf(" | %d chars selected", end-start)
+		}
 		if m.selectedBox != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedBox, cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", m.selectedBox, cursorDisplay, selectionHint)
 		} else if m.selectedText != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", m.selectedText, cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", m.selectedText, cursorDisplay, selectionHint)
 		} else {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", cursorDisplay, selectionHint)
 		}
 	case ModeTextInput:
 		displayText := strings.ReplaceAll(m.textInputText, "\n", " ")
@@ -2882,6 +3508,25 @@ func (m model) View() string {
 		statusLine = fmt.Sprintf("Mode: CONFIRM | %s", message)
 	case ModeBoxJump:
 		statusLine = fmt.Sprintf("Mode: BOX JUMP | Enter box number: %s | Enter=jump, Esc=cancel", m.boxJumpInput)
+	case ModeTitleEdit:
+		displayText := strings.ReplaceAll(m.titleEditText, "\n", " ")
+		cursorPos := m.titleEditCursorPos
+		if cursorPos > len(displayText) {
+			cursorPos = len(displayText)
+		}
+		// Replace character at cursor position with cursor, don't insert
+		var cursorDisplay string
+		if len(displayText) == 0 {
+			cursorDisplay = "█"
+		} else if cursorPos >= len(displayText) {
+			cursorDisplay = displayText + "█"
+		} else {
+			// Replace the character at cursor position with cursor
+			runes := []rune(displayText)
+			runes[cursorPos] = '█'
+			cursorDisplay = string(runes)
+		}
+		statusLine = fmt.Sprintf("Mode: TITLE EDIT | Title: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
 	default:
 		modeStr := m.modeString()
 		if m.zPanMode {
@@ -3359,6 +4004,8 @@ func (m model) modeString() string {
 		return "CONFIRM"
 	case ModeBoxJump:
 		return "BOX JUMP"
+	case ModeTitleEdit:
+		return "TITLE"
 	default:
 		return "UNKNOWN"
 	}

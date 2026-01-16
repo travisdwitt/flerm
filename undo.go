@@ -42,7 +42,21 @@ func (m *model) undo() {
 		m.getCanvas().SetBoxSize(data.ID, data.Width, data.Height)
 	case ActionMoveBox:
 		data := action.Inverse.(OriginalBoxState)
-		m.getCanvas().SetBoxPosition(data.ID, data.X, data.Y)
+		moveData := action.Data.(MoveBoxData)
+		// Clear highlights at their current (moved) positions before restoring
+		for _, highlight := range data.Highlights {
+			m.getCanvas().ClearHighlight(highlight.X+moveData.DeltaX, highlight.Y+moveData.DeltaY)
+		}
+		// Use SetBoxPositionOnly to move the box without recalculating connections
+		m.getCanvas().SetBoxPositionOnly(data.ID, data.X, data.Y)
+		// Restore connections to their original states
+		if len(data.Connections) > 0 {
+			m.getCanvas().RestoreConnections(data.Connections)
+		}
+		// Restore highlights to their original positions
+		for _, highlight := range data.Highlights {
+			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
+		}
 	case ActionMoveText:
 		data := action.Inverse.(OriginalTextState)
 		m.getCanvas().SetTextPosition(data.ID, data.X, data.Y)
@@ -69,6 +83,12 @@ func (m *model) undo() {
 	case ActionChangeBorderStyle:
 		data := action.Inverse.(BorderStyleData)
 		m.getCanvas().SetBorderStyle(data.BoxID, data.OldStyle)
+	case ActionEditTitle:
+		data := action.Inverse.(EditTitleData)
+		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().boxes) {
+			m.getCanvas().boxes[data.BoxID].Title = data.OldTitle
+			m.getCanvas().boxes[data.BoxID].updateSize()
+		}
 	}
 
 	buf.redoStack = append(buf.redoStack, action)
@@ -128,6 +148,12 @@ func (m *model) redo() {
 	case ActionChangeBorderStyle:
 		data := action.Data.(BorderStyleData)
 		m.getCanvas().SetBorderStyle(data.BoxID, data.NewStyle)
+	case ActionEditTitle:
+		data := action.Data.(EditTitleData)
+		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().boxes) {
+			m.getCanvas().boxes[data.BoxID].Title = data.NewTitle
+			m.getCanvas().boxes[data.BoxID].updateSize()
+		}
 	}
 
 	buf.undoStack = append(buf.undoStack, action)

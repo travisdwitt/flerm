@@ -14,6 +14,7 @@ const (
 	ModeFileInput
 	ModeConfirm
 	ModeBoxJump
+	ModeTitleEdit
 )
 
 type FileOperation int
@@ -56,6 +57,7 @@ const (
 	ActionCycleArrow
 	ActionHighlight
 	ActionChangeBorderStyle
+	ActionEditTitle
 )
 
 type BorderStyle int
@@ -68,8 +70,9 @@ const (
 )
 
 const (
-	minBoxWidth  = 8
-	minBoxHeight = 3
-	numColors    = 8
+	minBoxWidth      = 8
+	minBoxHeight     = 3
+	numColors        = 8
+	colorEditSelect  = 100 // Special color index for edit text selection
 )
 

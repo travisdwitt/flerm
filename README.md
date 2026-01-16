@@ -45,12 +45,17 @@ confirmations=true
 
 ### Box Operations
 - `b` - Create new box at cursor position
+- `T` - Add/edit title on box under cursor
 - `e` - Edit text in box under cursor
 - `r` - Resize box under cursor
 - `m` - Move box under cursor
 - `d` - Delete box under cursor
 - `c` - Copy box under cursor
 - `p` - Paste copied box at cursor position
+- `Z` - Cycle box z-level (0-3) for drop shadow effect
+- `Tab` - Cycle border style for box under cursor (ASCII, Single, Double, Rounded)
+- `B` - Box jump - quickly jump to any box by entering its number
+- `M` - Enter multi-select mode to select and move multiple boxes
 
 ### Text Operations
 - `t` - Enter text mode at cursor position
@@ -71,10 +76,11 @@ confirmations=true
 - `Escape` - Cancel connection (if started but not finished)
 
 ### Highlight Mode
-- `Space` - Toggle highlight mode on/off
+- `Space` - Enter highlight mode
+  - When in highlight mode on a box: cycle highlighting (divider → border → both → clear)
 - `Tab` - Cycle through 8 highlight colors (Gray, Red, Green, Yellow, Blue, Magenta, Cyan, White)
-- `h/←/j/↓/k/↑/l/→` - Move cursor and leave colored trail 
-- `Shift+h/j/k/l` - Move cursor faster 
+- `h/←/j/↓/k/↑/l/→` - Move cursor and leave colored trail
+- `Shift+h/j/k/l` - Move cursor faster
 - `d` - remove hightlight from under the cursor
 - `D` - remove ALL highlight from the element under the cursor
 - `Enter` - Highlight entire element at cursor position
@@ -117,6 +123,7 @@ confirmations=true
 ### General
 - `u` - Undo last action
 - `U` - Redo last undone action
+- `z` - Toggle pan mode (scroll the canvas instead of moving cursor)
 - `Esc` - Clear selection/cancel current operation
 - `?` - Toggle help screen
 - `q` - Quit Flerm
@@ -126,18 +133,23 @@ Flowcharts are saved in a text (.sav) format:
 ```
 FLOWCHART
 BOXES:2
-10,5,12,3,Start
-25,10,14,3,Process
+10,5,12,3,0,0,,Start
+25,10,14,3,0,0,,Process
 CONNECTIONS:1
 0,1,10,7,25,10,0
 TEXTS:0
 ```
 
-- **BOXES**: Format is `X,Y,Width,Height,Text` 
+- **BOXES**: Format is `X,Y,Width,Height,ZLevel,BorderStyle,Title,Text`
+  - ZLevel: 0-3 (for drop shadow effect)
+  - BorderStyle: 0=ASCII, 1=Single, 2=Double, 3=Rounded
+  - Title: Optional centered title with divider (can be empty)
 - **CONNECTIONS**: Format is `FromID,ToID,FromX,FromY,ToX,ToY,WaypointCount|waypoints`
   - Waypoints format: `X:Y,X:Y,...`
   - FromID/ToID can be -1 for line-to-line connections
 - **TEXTS**: Format is `X,Y,Text`
+
+**Note:** The format is backward-compatible. Older files without ZLevel, BorderStyle, or Title fields will load correctly with default values.
 
 ## Dependencies
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
