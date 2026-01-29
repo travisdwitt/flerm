@@ -41,7 +41,7 @@ func (m *model) exportVisualTXT(filename string) error {
 
 	// Use RenderRaw with pan offset set to minX/minY to capture from the top-left of content
 	// This renders the entire canvas content area
-	renderResult := canvas.RenderRaw(width, height, -1, -1, -1, nil, -1, -1, minX, minY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+	renderResult := canvas.RenderRaw(width, height, -1, -1, -1, nil, -1, -1, minX, minY, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1, false, nil)
 
 	// Convert rune canvas to plain text strings (no colors)
 	// Trim trailing whitespace from each line for cleaner output

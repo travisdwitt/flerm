@@ -15,6 +15,8 @@ const (
 	ModeConfirm
 	ModeBoxJump
 	ModeTitleEdit
+	ModeModePrompt    // Shows F/M prompt to choose Flerm or Mind Map mode
+	ModeMindMapInput  // Entering text for a new mind map node
 )
 
 type FileOperation int
@@ -67,6 +69,7 @@ const (
 	BorderStyleSingle
 	BorderStyleDouble
 	BorderStyleRounded
+	BorderStyleNone // No border - used in mind map mode
 )
 
 const (

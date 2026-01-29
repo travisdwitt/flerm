@@ -423,6 +423,36 @@ func (c *Canvas) AddBox(x, y int, text string) {
 	c.boxes = append(c.boxes, box)
 }
 
+// AddMindMapNode adds a box with no border (for mind map mode)
+func (c *Canvas) AddMindMapNode(x, y int, text string) int {
+	box := Box{
+		X:           x,
+		Y:           y,
+		ID:          len(c.boxes),
+		BorderStyle: BorderStyleNone,
+	}
+	// For borderless nodes, set text directly without border padding
+	box.Lines = strings.Split(text, "\n")
+	// Calculate width and height for borderless node
+	maxWidth := 0
+	for _, line := range box.Lines {
+		if len(line) > maxWidth {
+			maxWidth = len(line)
+		}
+	}
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	box.Width = maxWidth
+	box.Height = len(box.Lines)
+	if box.Height < 1 {
+		box.Height = 1
+	}
+	box.OriginalText = text
+	c.boxes = append(c.boxes, box)
+	return box.ID
+}
+
 func (c *Canvas) AddText(x, y int, text string) {
 	textObj := Text{
 		X:  x,
@@ -1982,7 +2012,7 @@ func (r *RenderResult) ApplyColors() []string {
 
 // RenderRaw returns the raw canvas and colorMap without applying ANSI codes
 // Use this when you need to overlay content (like tooltips) before final rendering
-func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) *RenderResult {
+func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int, mindMapMode bool, mindMapParents map[int]int) *RenderResult {
 	if height < 1 {
 		height = 1
 	}
@@ -2000,8 +2030,12 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		}
 	}
 
-	for _, connection := range c.connections {
-		c.drawConnectionWithPan(canvas, connection, panX, panY)
+	if mindMapMode && mindMapParents != nil {
+		c.drawMindMapTreeConnections(canvas, panX, panY, mindMapParents)
+	} else {
+		for _, connection := range c.connections {
+			c.drawConnectionWithPan(canvas, connection, panX, panY)
+		}
 	}
 	if previewFromX >= 0 && previewFromY >= 0 {
 		previewConnection := Connection{
@@ -2305,7 +2339,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 // Render returns the canvas with ANSI color codes applied
 // This is a convenience method that calls RenderRaw and ApplyColors
 func (c *Canvas) Render(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) []string {
-	result := c.RenderRaw(width, height, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd)
+	result := c.RenderRaw(width, height, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd, false, nil)
 	return result.ApplyColors()
 }
 
@@ -2353,6 +2387,25 @@ func (c *Canvas) drawBox(canvas [][]rune, box Box, isSelected bool) {
 }
 
 func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY int) {
+	// Handle BorderStyleNone - just draw content without borders
+	if box.BorderStyle == BorderStyleNone && !isSelected {
+		height := len(canvas)
+		// Draw content lines directly at the box position (no border offset)
+		for lineIdx, line := range box.Lines {
+			textY := boxY + lineIdx
+			textX := boxX
+			if textY >= 0 && textY < height {
+				for i, char := range line {
+					charX := textX + i
+					if charX >= 0 && charX < len(canvas[textY]) {
+						canvas[textY][charX] = char
+					}
+				}
+			}
+		}
+		return
+	}
+
 	var topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical rune
 
 	if isSelected {
@@ -3126,6 +3179,234 @@ func (c *Canvas) drawCorner(canvas [][]rune, cornerX, cornerY int, prevX, prevY,
 	}
 
 	canvas[cornerY][cornerX] = cornerChar
+}
+
+// drawMindMapTreeConnections draws connections in tree style with ├─, │, └─ characters
+func (c *Canvas) drawMindMapTreeConnections(canvas [][]rune, panX, panY int, mindMapParents map[int]int) {
+	// Group children by parent
+	childrenByParent := make(map[int][]int)
+	for childID, parentID := range mindMapParents {
+		if parentID >= 0 {
+			childrenByParent[parentID] = append(childrenByParent[parentID], childID)
+		}
+	}
+
+	// Sort children by Y position for each parent
+	for parentID := range childrenByParent {
+		children := childrenByParent[parentID]
+		// Sort by Y position
+		for i := 0; i < len(children)-1; i++ {
+			for j := i + 1; j < len(children); j++ {
+				if children[i] < len(c.boxes) && children[j] < len(c.boxes) {
+					if c.boxes[children[i]].Y > c.boxes[children[j]].Y {
+						children[i], children[j] = children[j], children[i]
+					}
+				}
+			}
+		}
+		childrenByParent[parentID] = children
+	}
+
+	// Draw tree structure for each parent
+	for parentID, children := range childrenByParent {
+		if parentID < 0 || parentID >= len(c.boxes) || len(children) == 0 {
+			continue
+		}
+
+		parentBox := c.boxes[parentID]
+		parentRightX := parentBox.X + parentBox.Width - panX
+		parentCenterY := parentBox.Y + parentBox.Height/2 - panY
+
+		// Special case: single child - just draw a straight horizontal line
+		if len(children) == 1 && children[0] < len(c.boxes) {
+			childBox := c.boxes[children[0]]
+			childLeftX := childBox.X - panX
+			childCenterY := childBox.Y + childBox.Height/2 - panY
+
+			// If child is at same Y as parent, draw straight line (leave space before child)
+			if childCenterY == parentCenterY {
+				for x := parentRightX; x < childLeftX-1; x++ {
+					if c.isValidPos(canvas, x, parentCenterY) {
+						canvas[parentCenterY][x] = '─'
+					}
+				}
+				continue
+			}
+
+			// Child is at different Y - draw corner and lines
+			cornerX := (parentRightX + childLeftX) / 2
+			// Draw horizontal from parent to corner
+			for x := parentRightX; x <= cornerX; x++ {
+				if c.isValidPos(canvas, x, parentCenterY) {
+					canvas[parentCenterY][x] = '─'
+				}
+			}
+			// Draw vertical from corner to child Y
+			startY, endY := parentCenterY, childCenterY
+			if startY > endY {
+				startY, endY = endY, startY
+			}
+			for y := startY; y <= endY; y++ {
+				if c.isValidPos(canvas, cornerX, y) {
+					canvas[y][cornerX] = '│'
+				}
+			}
+			// Draw corner character
+			if c.isValidPos(canvas, cornerX, parentCenterY) {
+				if childCenterY > parentCenterY {
+					canvas[parentCenterY][cornerX] = '┐'
+				} else {
+					canvas[parentCenterY][cornerX] = '┘'
+				}
+			}
+			// Draw horizontal from corner to child (leave space before child)
+			for x := cornerX + 1; x < childLeftX-1; x++ {
+				if c.isValidPos(canvas, x, childCenterY) {
+					canvas[childCenterY][x] = '─'
+				}
+			}
+			continue
+		}
+
+		// Multiple children case - use tree structure
+		// Find the trunk X position (midway between parent and first child)
+		var trunkX int
+		if children[0] < len(c.boxes) {
+			firstChildBox := c.boxes[children[0]]
+			trunkX = (parentRightX + (firstChildBox.X - panX)) / 2
+		} else {
+			trunkX = parentRightX + 2
+		}
+
+		// Find min and max Y for the trunk
+		minY, maxY := -1, -1
+		childYPositions := make([]int, 0, len(children))
+		for _, childID := range children {
+			if childID < 0 || childID >= len(c.boxes) {
+				continue
+			}
+			childBox := c.boxes[childID]
+			childY := childBox.Y + childBox.Height/2 - panY
+			childYPositions = append(childYPositions, childY)
+			if minY == -1 || childY < minY {
+				minY = childY
+			}
+			if maxY == -1 || childY > maxY {
+				maxY = childY
+			}
+		}
+
+		// Draw horizontal line from parent to trunk
+		for x := parentRightX; x <= trunkX; x++ {
+			if c.isValidPos(canvas, x, parentCenterY) {
+				canvas[parentCenterY][x] = '─'
+			}
+		}
+
+		// Draw vertical trunk line
+		for y := minY; y <= maxY; y++ {
+			if c.isValidPos(canvas, trunkX, y) {
+				canvas[y][trunkX] = '│'
+			}
+		}
+
+		// Track which Y positions have children (for junction logic)
+		childYSet := make(map[int]bool)
+		for _, cy := range childYPositions {
+			childYSet[cy] = true
+		}
+
+		// Draw branch characters and horizontal lines to each child
+		for i, childID := range children {
+			if childID < 0 || childID >= len(c.boxes) || i >= len(childYPositions) {
+				continue
+			}
+			childBox := c.boxes[childID]
+			childY := childYPositions[i]
+			childLeftX := childBox.X - panX
+
+			// Determine branch character based on position
+			var branchChar rune
+			if i == 0 && i == len(children)-1 {
+				// Only child - shouldn't happen here (handled in single child case above)
+				branchChar = '─'
+			} else if i == 0 {
+				// First child - corner going right and down
+				branchChar = '┌'
+			} else if i == len(children)-1 {
+				// Last child - corner going right and up
+				branchChar = '└'
+			} else {
+				// Middle child - trunk continues up and down, branch right
+				branchChar = '├'
+			}
+
+			// If parent line meets trunk at this child's Y level, adjust character
+			if parentCenterY == childY {
+				if i == 0 {
+					// Parent at first child: left, right, down
+					branchChar = '┬'
+				} else if i == len(children)-1 {
+					// Parent at last child: left, right, up
+					branchChar = '┴'
+				} else {
+					// Parent at middle child: all four directions
+					branchChar = '┼'
+				}
+			}
+
+			// Draw branch character at trunk
+			if c.isValidPos(canvas, trunkX, childY) {
+				canvas[childY][trunkX] = branchChar
+			}
+
+			// Draw horizontal line from trunk to child (leave 1 space before child)
+			for x := trunkX + 1; x < childLeftX-1; x++ {
+				if c.isValidPos(canvas, x, childY) {
+					canvas[childY][x] = '─'
+				}
+			}
+		}
+
+		// Fix the junction at parent level
+		if c.isValidPos(canvas, trunkX, parentCenterY) {
+			if _, isChildY := childYSet[parentCenterY]; isChildY {
+				// Already handled above with ┼
+			} else if parentCenterY > minY && parentCenterY < maxY {
+				// Parent is between children (not at a child's Y) - use ┤
+				canvas[parentCenterY][trunkX] = '┤'
+			} else if parentCenterY < minY {
+				// Parent is above all children - use ┐
+				canvas[parentCenterY][trunkX] = '┐'
+				// Draw vertical line from parent to first child
+				for y := parentCenterY + 1; y < minY; y++ {
+					if c.isValidPos(canvas, trunkX, y) {
+						canvas[y][trunkX] = '│'
+					}
+				}
+			} else if parentCenterY > maxY {
+				// Parent is below all children - use ┘
+				canvas[parentCenterY][trunkX] = '┘'
+				// Draw vertical line from last child to parent
+				for y := maxY + 1; y < parentCenterY; y++ {
+					if c.isValidPos(canvas, trunkX, y) {
+						canvas[y][trunkX] = '│'
+					}
+				}
+			} else if parentCenterY == minY {
+				// Parent at same level as first child - already a ┼ or needs ┬
+				// If not already set to ┼ (no child at this Y), set to ┬
+				if !childYSet[parentCenterY] {
+					canvas[parentCenterY][trunkX] = '┬'
+				}
+			} else if parentCenterY == maxY {
+				// Parent at same level as last child
+				if !childYSet[parentCenterY] {
+					canvas[parentCenterY][trunkX] = '┴'
+				}
+			}
+		}
+	}
 }
 
 func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, panX, panY int) {
@@ -3904,6 +4185,8 @@ func (c *Canvas) CycleBorderStyle(boxID int) BorderStyle {
 		case BorderStyleDouble:
 			newStyle = BorderStyleRounded
 		case BorderStyleRounded:
+			newStyle = BorderStyleNone
+		case BorderStyleNone:
 			newStyle = BorderStyleASCII
 		default:
 			newStyle = BorderStyleASCII
@@ -3912,6 +4195,51 @@ func (c *Canvas) CycleBorderStyle(boxID int) BorderStyle {
 		return oldStyle
 	}
 	return BorderStyleASCII
+}
+
+// CycleBorderStyleMindMap cycles through border styles starting from None (for mind map mode)
+func (c *Canvas) CycleBorderStyleMindMap(boxID int) BorderStyle {
+	if boxID >= 0 && boxID < len(c.boxes) {
+		oldStyle := c.boxes[boxID].BorderStyle
+		var newStyle BorderStyle
+		switch oldStyle {
+		case BorderStyleNone:
+			newStyle = BorderStyleASCII
+		case BorderStyleASCII:
+			newStyle = BorderStyleSingle
+		case BorderStyleSingle:
+			newStyle = BorderStyleDouble
+		case BorderStyleDouble:
+			newStyle = BorderStyleRounded
+		case BorderStyleRounded:
+			newStyle = BorderStyleNone
+		default:
+			newStyle = BorderStyleNone
+		}
+
+		// Adjust box dimensions when transitioning between bordered and borderless
+		box := &c.boxes[boxID]
+		if oldStyle == BorderStyleNone && newStyle != BorderStyleNone {
+			// Going from no border to bordered: increase size by 2 for border chars
+			box.Width += 2
+			box.Height += 2
+		} else if oldStyle != BorderStyleNone && newStyle == BorderStyleNone {
+			// Going from bordered to no border: decrease size by 2
+			box.Width -= 2
+			box.Height -= 2
+			// Ensure minimum size
+			if box.Width < 1 {
+				box.Width = 1
+			}
+			if box.Height < 1 {
+				box.Height = 1
+			}
+		}
+
+		box.BorderStyle = newStyle
+		return oldStyle
+	}
+	return BorderStyleNone
 }
 
 func (c *Canvas) SetBorderStyle(boxID int, style BorderStyle) {

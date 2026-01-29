@@ -89,6 +89,20 @@ type model struct {
 	tooltipY              int
 	tooltipBoxID          int // ID of the box being shown in tooltip, -1 if none
 
+	// Mind Map Mode
+	mindMapMode              bool           // Whether we're in mind map mode vs regular flerm mode
+	mindMapParents           map[int]int    // Maps box ID to parent box ID (-1 for root nodes)
+	mindMapSiblingOrder      map[int][]int  // Maps parent ID to ordered list of child IDs
+	selectedMindMapNode      int            // Currently selected/hovered node in mind map mode
+	mindMapInputText         string         // Text being entered for new mind map node
+	mindMapInputCursorPos    int            // Cursor position in mind map input
+	mindMapInputX            int            // X position where new node will be created
+	mindMapInputY            int            // Y position where new node will be created
+	mindMapInputParent       int            // Parent box ID for new node (-1 for root, -2 for sibling)
+	mindMapInputSibling      int            // Sibling box ID when creating sibling node
+	mindMapYankedNode        int            // ID of yanked/copied node
+	mindMapYankedWithChildren bool          // Whether to include children when pasting
+
 	// Konami Code Easter Egg
 	konamiProgress  int            // How far through the code sequence
 	easterEggActive bool           // Whether the falling animation is running

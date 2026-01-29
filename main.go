@@ -505,6 +505,270 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Mind Map Mode - completely separate keybindings from Flerm mode
+			if m.mindMapMode {
+				switch msg.String() {
+				// === Insert new sibling: o, enter ===
+				case "o", "enter":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+						m.startMindMapSiblingInput(boxID)
+					}
+					return m, nil
+
+				// === Insert new child: O, tab ===
+				case "O", "tab":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+						m.startMindMapChildInput(boxID)
+					}
+					return m, nil
+
+				// === Insert root node: i (when not on a node) ===
+				case "i":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID == -1 {
+						// Not on a node, create root
+						m.mindMapInputX = worldX
+						m.mindMapInputY = worldY
+						m.mindMapInputText = ""
+						m.mindMapInputCursorPos = 0
+						m.mindMapInputParent = -1
+						m.mindMapInputSibling = -1
+						m.mode = ModeMindMapInput
+					}
+					return m, nil
+
+				// === Edit node (append): a, e ===
+				case "a", "e":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.selectedBox = boxID
+						m.selectedText = -1
+						m.mode = ModeEditing
+						m.editText = m.getCanvas().GetBoxText(boxID)
+						m.originalEditText = m.editText
+						m.editCursorPos = len(m.editText) // Cursor at end (append)
+						m.editSelectionStart = -1
+						m.editSelectionEnd = -1
+						m.syncCursorPositions()
+					}
+					return m, nil
+
+				// === Edit node (replace/beginning): A, E, I ===
+				case "A", "E", "I":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.selectedBox = boxID
+						m.selectedText = -1
+						m.mode = ModeEditing
+						m.editText = m.getCanvas().GetBoxText(boxID)
+						m.originalEditText = m.editText
+						m.editCursorPos = 0 // Cursor at beginning
+						m.editSelectionStart = -1
+						m.editSelectionEnd = -1
+						m.syncCursorPositions()
+					}
+					return m, nil
+
+				// === Delete node: d ===
+				case "d":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.deleteMindMapNode(boxID)
+					}
+					return m, nil
+
+				// === Delete children: D ===
+				case "D":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.deleteMindMapChildren(boxID)
+					}
+					return m, nil
+
+				// === Toggle symbol/border: t ===
+				case "t":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						oldStyle := m.getCanvas().CycleBorderStyleMindMap(boxID)
+						newStyle := m.getCanvas().boxes[boxID].BorderStyle
+						borderData := BorderStyleData{BoxID: boxID, OldStyle: oldStyle, NewStyle: newStyle}
+						m.recordAction(ActionChangeBorderStyle, borderData, borderData)
+						// Relayout tree to re-center after size change
+						m.relayoutMindMapTree()
+					}
+					return m, nil
+
+				// === Move node up: K ===
+				case "K":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.moveMindMapNodeUp(boxID)
+					}
+					return m, nil
+
+				// === Move node down: J ===
+				case "J":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.moveMindMapNodeDown(boxID)
+					}
+					return m, nil
+
+				// === Yank (copy) node: y ===
+				case "y":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+						m.mindMapYankedNode = boxID
+						m.mindMapYankedWithChildren = false
+					}
+					return m, nil
+
+				// === Yank (copy) node with children: Y ===
+				case "Y":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 && boxID < len(m.getCanvas().boxes) {
+						m.mindMapYankedNode = boxID
+						m.mindMapYankedWithChildren = true
+					}
+					return m, nil
+
+				// === Paste as children: p ===
+				case "p":
+					if m.mindMapYankedNode != -1 {
+						panX, panY := m.getPanOffset()
+						worldX, worldY := m.cursorX+panX, m.cursorY+panY
+						boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+						if boxID != -1 {
+							m.pasteMindMapAsChild(boxID)
+						}
+					}
+					return m, nil
+
+				// === Paste as siblings: P ===
+				case "P":
+					if m.mindMapYankedNode != -1 {
+						panX, panY := m.getPanOffset()
+						worldX, worldY := m.cursorX+panX, m.cursorY+panY
+						boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+						if boxID != -1 {
+							m.pasteMindMapAsSibling(boxID)
+						}
+					}
+					return m, nil
+
+				// === Go to root: m, ~ ===
+				case "m", "~":
+					m.goToMindMapRoot()
+					return m, nil
+
+				// === Go to top sibling: g ===
+				case "g":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.goToFirstSibling(boxID)
+					}
+					return m, nil
+
+				// === Go to bottom sibling: G ===
+				case "G":
+					panX, panY := m.getPanOffset()
+					worldX, worldY := m.cursorX+panX, m.cursorY+panY
+					boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+					if boxID != -1 {
+						m.goToLastSibling(boxID)
+					}
+					return m, nil
+
+				// === Navigation: h/j/k/l and arrows (free cursor movement) ===
+				case "left", "h", "right", "l", "up", "k", "down", "j":
+					return m.handleNavigation(msg.String(), 1)
+				case "H", "shift+left", "L", "shift+right", "shift+up", "shift+down":
+					// Fast cursor movement
+					return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
+
+				// === Jump to node by number: n or B ===
+				case "n", "B":
+					// Show node numbers and allow jumping to a node (like 'B' in Flerm mode)
+					m.mode = ModeBoxJump
+					m.boxJumpInput = ""
+					return m, nil
+
+				// === Common actions ===
+				case "ctrl+c", "q":
+					if m.config != nil && m.config.Confirmations {
+						m.mode = ModeConfirm
+						m.confirmAction = ConfirmQuit
+						return m, nil
+					}
+					return m, tea.Quit
+				case "?":
+					m.help = !m.help
+					return m, nil
+				case " ":
+					// Show mode prompt to switch modes
+					m.mode = ModeModePrompt
+					return m, nil
+				case "z":
+					m.zPanMode = !m.zPanMode
+					return m, nil
+				case "u":
+					m.undo()
+					return m, nil
+				case "ctrl+r":
+					m.redo()
+					return m, nil
+				case "s":
+					m.mode = ModeFileInput
+					m.fileOp = FileOpSave
+					if buf := m.getCurrentBuffer(); buf != nil && buf.filename != "" {
+						m.filename = buf.filename
+					} else {
+						m.filename = ""
+					}
+					m.errorMessage = ""
+					return m, nil
+				case "ctrl+o":
+					// Open file (ctrl+o since 'o' is insert sibling)
+					m.mode = ModeFileInput
+					m.fileOp = FileOpOpen
+					m.filename = ""
+					m.errorMessage = ""
+					m.openInNewBuffer = false
+					m.scanTxtFiles()
+					return m, nil
+				default:
+					return m, nil
+				}
+			}
+
 			switch msg.String() {
 			case "ctrl+c", "q":
 				if m.config != nil && m.config.Confirmations {
@@ -1250,7 +1514,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Don't toggle off when pressing Space in highlight mode
 				} else {
-					// Not in highlight mode, toggle it on
+					// Not in highlight mode, show mode prompt (F for Flerm, M for Mind Map)
+					m.mode = ModeModePrompt
+				}
+				return m, nil
+			case "g":
+				// 'g' enters highlight mode (since Space now shows mode prompt)
+				if !m.highlightMode {
 					m.highlightMode = true
 				}
 				return m, nil
@@ -1392,6 +1662,130 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+
+		case ModeModePrompt:
+			// Mode selection prompt: F for Flerm mode, M for Mind Map mode
+			if msg.Type == tea.KeyEscape || msg.Type == tea.KeyCtrlC {
+				// Cancel, return to previous mode
+				m.mode = ModeNormal
+				return m, nil
+			}
+			switch msg.String() {
+			case "f", "F":
+				// Switch to Flerm mode (regular flowchart mode)
+				m.mindMapMode = false
+				m.mode = ModeNormal
+				return m, nil
+			case "m", "M":
+				// Switch to Mind Map mode
+				m.mindMapMode = true
+				m.mindMapParents = make(map[int]int)
+				m.mindMapSiblingOrder = make(map[int][]int)
+				m.selectedMindMapNode = -1
+				m.mindMapYankedNode = -1
+				m.mindMapYankedWithChildren = false
+				m.mode = ModeNormal
+				return m, nil
+			}
+			return m, nil
+
+		case ModeMindMapInput:
+			// Text input for mind map node (works like ModeTextInput)
+			switch {
+			case msg.Type == tea.KeyEscape:
+				// Cancel node creation
+				m.mode = ModeNormal
+				m.mindMapInputText = ""
+				m.mindMapInputCursorPos = 0
+				return m, nil
+			case msg.Type == tea.KeyCtrlS:
+				// Create the node (Ctrl+S to save, like regular editing)
+				if m.mindMapInputText != "" {
+					nodeID := m.getCanvas().AddMindMapNode(m.mindMapInputX, m.mindMapInputY, m.mindMapInputText)
+
+					// Initialize sibling order map if needed
+					if m.mindMapSiblingOrder == nil {
+						m.mindMapSiblingOrder = make(map[int][]int)
+					}
+
+					// Record parent relationship and sibling order
+					if m.mindMapInputParent >= 0 {
+						// Creating a child node
+						m.mindMapParents[nodeID] = m.mindMapInputParent
+						m.addMindMapNodeToOrder(nodeID, m.mindMapInputParent, -1)
+						m.createMindMapConnection(m.mindMapInputParent, nodeID)
+						// Relayout children to center them around parent
+						m.relayoutMindMapSiblings(m.mindMapInputParent)
+					} else if m.mindMapInputParent == -2 && m.mindMapInputSibling >= 0 {
+						// Creating a sibling node - inherit parent from sibling
+						siblingParent, hasSiblingParent := m.mindMapParents[m.mindMapInputSibling]
+						if hasSiblingParent {
+							m.mindMapParents[nodeID] = siblingParent
+							m.addMindMapNodeToOrder(nodeID, siblingParent, m.mindMapInputSibling)
+							m.createMindMapConnection(siblingParent, nodeID)
+							// Relayout siblings to center them around parent
+							m.relayoutMindMapSiblings(siblingParent)
+						} else {
+							// Root level sibling
+							m.addMindMapNodeToOrder(nodeID, -1, m.mindMapInputSibling)
+						}
+					} else {
+						// Root node (no parent)
+						m.addMindMapNodeToOrder(nodeID, -1, -1)
+					}
+
+					m.selectedMindMapNode = nodeID
+
+					// Move cursor to new node
+					box := m.getCanvas().boxes[nodeID]
+					panX, panY := m.getPanOffset()
+					m.cursorX = box.X + box.Width/2 - panX
+					m.cursorY = box.Y + box.Height/2 - panY
+					m.ensureCursorInBounds()
+				}
+				m.mode = ModeNormal
+				m.mindMapInputText = ""
+				m.mindMapInputCursorPos = 0
+				return m, nil
+			case msg.Type == tea.KeyEnter:
+				// Enter adds a newline (like regular editing)
+				runes := []rune(m.mindMapInputText)
+				runes = append(runes[:m.mindMapInputCursorPos], append([]rune{'\n'}, runes[m.mindMapInputCursorPos:]...)...)
+				m.mindMapInputText = string(runes)
+				m.mindMapInputCursorPos++
+				return m, nil
+			case msg.Type == tea.KeyBackspace:
+				if m.mindMapInputCursorPos > 0 && len(m.mindMapInputText) > 0 {
+					runes := []rune(m.mindMapInputText)
+					if m.mindMapInputCursorPos <= len(runes) {
+						runes = append(runes[:m.mindMapInputCursorPos-1], runes[m.mindMapInputCursorPos:]...)
+						m.mindMapInputText = string(runes)
+						m.mindMapInputCursorPos--
+					}
+				}
+				return m, nil
+			case msg.Type == tea.KeyLeft:
+				if m.mindMapInputCursorPos > 0 {
+					m.mindMapInputCursorPos--
+				}
+				return m, nil
+			case msg.Type == tea.KeyRight:
+				if m.mindMapInputCursorPos < len([]rune(m.mindMapInputText)) {
+					m.mindMapInputCursorPos++
+				}
+				return m, nil
+			case msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace:
+				runes := []rune(m.mindMapInputText)
+				char := msg.Runes
+				if msg.Type == tea.KeySpace {
+					char = []rune{' '}
+				}
+				runes = append(runes[:m.mindMapInputCursorPos], append(char, runes[m.mindMapInputCursorPos:]...)...)
+				m.mindMapInputText = string(runes)
+				m.mindMapInputCursorPos += len(char)
+				return m, nil
+			}
+			return m, nil
 
 		case ModeEditing:
 			switch {
@@ -3295,7 +3689,7 @@ func (m model) View() string {
 
 	// Determine if we should show the cursor
 	// Determine if we should show the navigation cursor
-	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit)
+	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit && m.mode != ModeMindMapInput)
 
 	// Determine text editing cursor info
 	var editBoxID, editTextID int = -1, -1
@@ -3321,6 +3715,13 @@ func (m model) View() string {
 		editText = m.titleEditText
 		// Use editTextID = -2 as a special flag to indicate title editing
 		editTextID = -2
+	} else if m.mode == ModeMindMapInput {
+		// For mind map node input, show text at the input position
+		editTextID = -1 // Creating new node, not editing existing
+		editCursorPos = m.mindMapInputCursorPos
+		editText = m.mindMapInputText
+		editTextX = m.mindMapInputX
+		editTextY = m.mindMapInputY
 	}
 
 	// Calculate selection rectangle parameters for rendering
@@ -3342,7 +3743,7 @@ func (m model) View() string {
 	}
 
 	// Use RenderRaw to get canvas without ANSI codes, so we can overlay tooltip cleanly
-	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd)
+	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd, m.mindMapMode, m.mindMapParents)
 
 	// Apply tooltip overlay to raw canvas BEFORE applying ANSI colors
 	// This ensures the tooltip floats above all other elements
@@ -3361,6 +3762,11 @@ func (m model) View() string {
 		bufferBar := m.renderBufferBar(renderWidth)
 		result.WriteString(bufferBar)
 		result.WriteString("\n")
+	}
+
+	// Overlay mode prompt if in ModeModePrompt
+	if m.mode == ModeModePrompt {
+		canvas = m.overlayModePrompt(canvas)
 	}
 
 	// Normal canvas display
@@ -3547,8 +3953,30 @@ func (m model) View() string {
 			cursorDisplay = string(runes)
 		}
 		statusLine = fmt.Sprintf("Mode: TITLE EDIT | Title: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
+	case ModeModePrompt:
+		statusLine = "Select mode: F = Flerm (flowchart), M = Mind Map | Esc = cancel"
+	case ModeMindMapInput:
+		displayText := strings.ReplaceAll(m.mindMapInputText, "\n", " ")
+		cursorPos := m.mindMapInputCursorPos
+		if cursorPos > len(displayText) {
+			cursorPos = len(displayText)
+		}
+		var cursorDisplay string
+		if len(displayText) == 0 {
+			cursorDisplay = "█"
+		} else if cursorPos >= len(displayText) {
+			cursorDisplay = displayText + "█"
+		} else {
+			runes := []rune(displayText)
+			runes[cursorPos] = '█'
+			cursorDisplay = string(runes)
+		}
+		statusLine = fmt.Sprintf("Mode: MIND MAP INPUT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
 	default:
 		modeStr := m.modeString()
+		if m.mindMapMode {
+			modeStr = "MIND MAP"
+		}
 		if m.zPanMode {
 			modeStr = "PAN"
 		}
@@ -3574,7 +4002,11 @@ func (m model) View() string {
 		if m.errorMessage != "" {
 			status += fmt.Sprintf(" | ERROR: %s", m.errorMessage)
 		} else if m.successMessage == "" {
-			status += " | ? for help | q to quit"
+			if m.mindMapMode {
+				status += " | o=sibling, O=child, a/e=edit, d=del, t=border, y/p=copy/paste | Space=switch mode"
+			} else {
+				status += " | ? for help | q to quit"
+			}
 		}
 		statusLine = status
 	}
@@ -4026,9 +4458,93 @@ func (m model) modeString() string {
 		return "BOX JUMP"
 	case ModeTitleEdit:
 		return "TITLE"
+	case ModeModePrompt:
+		return "MODE SELECT"
+	case ModeMindMapInput:
+		return "MIND MAP INPUT"
 	default:
 		return "UNKNOWN"
 	}
+}
+
+// overlayModePrompt renders a centered mode selection prompt over the canvas
+func (m model) overlayModePrompt(canvas []string) []string {
+	promptLines := []string{
+		"┌─────────────────────────┐",
+		"│    Select Mode          │",
+		"│                         │",
+		"│   F - Flerm (flowchart) │",
+		"│   M - Mind Map          │",
+		"│                         │",
+		"│   Esc - Cancel          │",
+		"└─────────────────────────┘",
+	}
+
+	promptWidth := 27
+	promptHeight := len(promptLines)
+
+	// Calculate center position
+	canvasHeight := len(canvas)
+	canvasWidth := 0
+	if canvasHeight > 0 {
+		// Get width from first line (without ANSI codes)
+		canvasWidth = len(stripAnsi(canvas[0]))
+	}
+
+	centerX := canvasWidth/2 - promptWidth/2
+	centerY := canvasHeight/2 - promptHeight/2
+
+	if centerX < 0 {
+		centerX = 0
+	}
+	if centerY < 0 {
+		centerY = 0
+	}
+
+	// Overlay the prompt on the canvas
+	result := make([]string, len(canvas))
+	copy(result, canvas)
+
+	for i, promptLine := range promptLines {
+		lineY := centerY + i
+		if lineY >= 0 && lineY < len(result) {
+			// Replace part of the canvas line with the prompt line
+			canvasLine := []rune(stripAnsi(result[lineY]))
+			promptRunes := []rune(promptLine)
+
+			// Ensure canvas line is long enough
+			for len(canvasLine) < centerX+promptWidth {
+				canvasLine = append(canvasLine, ' ')
+			}
+
+			// Overlay prompt
+			for j, r := range promptRunes {
+				if centerX+j < len(canvasLine) {
+					canvasLine[centerX+j] = r
+				}
+			}
+
+			result[lineY] = string(canvasLine)
+		}
+	}
+
+	return result
+}
+
+// stripAnsi removes ANSI escape codes from a string
+func stripAnsi(s string) string {
+	var result strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\033' {
+			inEscape = true
+		} else if inEscape && r == 'm' {
+			inEscape = false
+		} else if !inEscape {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }
 
 func (m model) helpView() string {

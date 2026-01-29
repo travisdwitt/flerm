@@ -134,3 +134,136 @@ func (m *model) getMoveSpeed(key string) int {
 	}
 }
 
+// mindMapNavigate handles navigation between mind map nodes
+// Returns true if navigation happened, false if caller should fall through to regular movement
+func (m *model) mindMapNavigate(direction string) bool {
+	panX, panY := m.getPanOffset()
+	worldX, worldY := m.cursorX+panX, m.cursorY+panY
+	currentBoxID := m.getCanvas().GetBoxAt(worldX, worldY)
+
+	// If not on a node, try to find nearest node first
+	if currentBoxID == -1 {
+		currentBoxID = m.findNearestMindMapNode(worldX, worldY)
+		if currentBoxID != -1 && currentBoxID < len(m.getCanvas().boxes) {
+			// Move to the nearest node
+			targetBox := m.getCanvas().boxes[currentBoxID]
+			m.cursorX = targetBox.X + targetBox.Width/2 - panX
+			m.cursorY = targetBox.Y + targetBox.Height/2 - panY
+			m.ensureCursorInBounds()
+			m.selectedMindMapNode = currentBoxID
+			return true
+		}
+		return false
+	}
+
+	var targetBoxID int = -1
+
+	switch direction {
+	case "left":
+		// Navigate to parent
+		if parent, ok := m.mindMapParents[currentBoxID]; ok && parent >= 0 {
+			targetBoxID = parent
+		}
+	case "right":
+		// Navigate to first child
+		targetBoxID = m.findFirstChild(currentBoxID)
+	case "up":
+		// Navigate to previous sibling
+		targetBoxID = m.findPreviousSibling(currentBoxID)
+	case "down":
+		// Navigate to next sibling
+		targetBoxID = m.findNextSibling(currentBoxID)
+	}
+
+	if targetBoxID != -1 && targetBoxID < len(m.getCanvas().boxes) {
+		// Move cursor to target node
+		targetBox := m.getCanvas().boxes[targetBoxID]
+		// Position cursor at the center of the target node
+		newWorldX := targetBox.X + targetBox.Width/2
+		newWorldY := targetBox.Y + targetBox.Height/2
+		m.cursorX = newWorldX - panX
+		m.cursorY = newWorldY - panY
+		m.ensureCursorInBounds()
+		m.selectedMindMapNode = targetBoxID
+		return true
+	}
+
+	// No target found, don't move
+	return false
+}
+
+// findNearestMindMapNode finds the nearest node to the given position
+func (m *model) findNearestMindMapNode(worldX, worldY int) int {
+	canvas := m.getCanvas()
+	if len(canvas.boxes) == 0 {
+		return -1
+	}
+
+	nearestID := -1
+	nearestDist := -1
+
+	for _, box := range canvas.boxes {
+		// Calculate distance to box center
+		centerX := box.X + box.Width/2
+		centerY := box.Y + box.Height/2
+		dist := abs(worldX-centerX) + abs(worldY-centerY)
+		if nearestDist == -1 || dist < nearestDist {
+			nearestDist = dist
+			nearestID = box.ID
+		}
+	}
+
+	return nearestID
+}
+
+// findFirstChild finds the first child of the given node
+func (m *model) findFirstChild(nodeID int) int {
+	children := m.getMindMapChildren(nodeID)
+	if len(children) == 0 {
+		return -1
+	}
+	return children[0]
+}
+
+// findPreviousSibling finds the sibling above the current node
+func (m *model) findPreviousSibling(nodeID int) int {
+	parentID, hasParent := m.mindMapParents[nodeID]
+	if !hasParent {
+		parentID = -1
+	}
+
+	siblings := m.getSiblings(nodeID, parentID)
+	if len(siblings) <= 1 {
+		return -1
+	}
+
+	// Find current position in sibling order
+	for i, sibID := range siblings {
+		if sibID == nodeID && i > 0 {
+			return siblings[i-1]
+		}
+	}
+	return -1
+}
+
+// findNextSibling finds the sibling below the current node
+func (m *model) findNextSibling(nodeID int) int {
+	parentID, hasParent := m.mindMapParents[nodeID]
+	if !hasParent {
+		parentID = -1
+	}
+
+	siblings := m.getSiblings(nodeID, parentID)
+	if len(siblings) <= 1 {
+		return -1
+	}
+
+	// Find current position in sibling order
+	for i, sibID := range siblings {
+		if sibID == nodeID && i < len(siblings)-1 {
+			return siblings[i+1]
+		}
+	}
+	return -1
+}
+
