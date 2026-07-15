@@ -1,10 +1,9 @@
-package main
+package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// sign returns -1, 0, or 1 depending on the sign of n.
 func sign(n int) int {
 	switch {
 	case n > 0:
@@ -16,10 +15,6 @@ func sign(n int) int {
 	}
 }
 
-// bufferBarOffset returns the number of screen rows occupied above the canvas
-// (the buffer bar, when more than one buffer is open). Mouse Y coordinates are
-// reported relative to the terminal's top-left, so we subtract this to get the
-// canvas row that matches m.cursorY.
 func (m *model) bufferBarOffset() int {
 	if m.mode != ModeStartup && len(m.buffers) > 1 {
 		return 1
@@ -27,9 +22,6 @@ func (m *model) bufferBarOffset() int {
 	return 0
 }
 
-// handleMouse is the entry point for all mouse events. It only acts in the
-// modes where mouse interaction makes sense; everything else is ignored so the
-// keyboard-driven flows stay untouched.
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.mode {
@@ -45,9 +37,6 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleMoveMouse lets the selected group be dragged with the mouse: press
-// grabs, motion moves the whole group live, release commits the move (undoable)
-// and returns to normal mode.
 func (m *model) handleMoveMouse(msg tea.MouseMsg) tea.Cmd {
 	canvasX := msg.X
 	canvasY := msg.Y - m.bufferBarOffset()
@@ -70,9 +59,6 @@ func (m *model) handleMoveMouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// handleMultiSelectMouse lets the user drag out the selection rectangle: press
-// sets the corner, motion drags the opposite corner (the cursor), release
-// finalizes. Right-click cancels back to normal mode.
 func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) tea.Cmd {
 	canvasX := msg.X
 	canvasY := msg.Y - m.bufferBarOffset()
@@ -100,10 +86,8 @@ func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// handleNormalMouse handles clicks, motion, and the scroll wheel while in the
-// normal editing mode.
 func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
-	// Scroll wheel pans the canvas.
+
 	if tea.MouseEvent(msg).IsWheel() {
 		if buf := m.getCurrentBuffer(); buf != nil {
 			switch msg.Button {
@@ -127,9 +111,6 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 	}
 	panX, panY := m.getPanOffset()
 
-	// A box drag is in progress: motion moves the box, release finalizes it.
-	// Any other event (e.g. a stray press) finalizes the drag first, then is
-	// processed normally below.
 	if m.draggingBox {
 		switch msg.Action {
 		case tea.MouseActionMotion:
@@ -143,7 +124,6 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 	}
 
-	// A text drag is in progress: motion moves the text, release finalizes it.
 	if m.draggingText {
 		switch msg.Action {
 		case tea.MouseActionMotion:
@@ -157,8 +137,6 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 	}
 
-	// Dragging an empty area pans the view; a release without movement instead
-	// clears the selection (handled in the empty-press branch below).
 	if m.panningView {
 		switch msg.Action {
 		case tea.MouseActionMotion:
@@ -175,8 +153,6 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 	}
 
-	// While drawing a line from the context menu, the preview follows the mouse
-	// until the user clicks a target (box or line) or an empty cell (waypoint).
 	if m.mouseLineDrawing && (m.connectionFrom != -1 || m.connectionFromLine != -1) {
 		m.cursorX = canvasX
 		m.cursorY = canvasY
@@ -194,8 +170,6 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 
 	worldX, worldY := canvasX+panX, canvasY+panY
 
-	// In highlight mode, left click-drag paints cells in the selected color.
-	// Right-click still opens the context menu (handled below).
 	if m.highlightMode {
 		switch {
 		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
@@ -216,13 +190,11 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 
 	switch msg.Button {
 	case tea.MouseButtonLeft:
-		// Keep the keyboard cursor in sync with where the user clicked.
+
 		m.cursorX = canvasX
 		m.cursorY = canvasY
 		m.ensureCursorInBounds()
-		// Pressing on a box (or text) begins a drag (and selects it); the drag
-		// becomes a plain selection if released without moving. Boxes take
-		// priority over text when they overlap.
+
 		if canvas := m.getCanvas(); canvas != nil {
 			if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
 				m.beginBoxDrag(boxID, worldX, worldY)
@@ -233,8 +205,7 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 				return nil
 			}
 		}
-		// Empty area: begin a pan-drag. A release without movement clears the
-		// selection instead (see the panningView block above).
+
 		m.panningView = true
 		m.panLastX, m.panLastY = canvasX, canvasY
 		m.panMoved = false
@@ -244,14 +215,12 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// beginBoxDrag starts dragging the given box, recording the state needed to
-// move it (and its connections) and to undo the move later.
 func (m *model) beginBoxDrag(boxID, worldX, worldY int) {
 	canvas := m.getCanvas()
-	if canvas == nil || boxID < 0 || boxID >= len(canvas.boxes) {
+	if canvas == nil || boxID < 0 || boxID >= len(canvas.Boxes()) {
 		return
 	}
-	box := canvas.boxes[boxID]
+	box := canvas.Boxes()[boxID]
 	m.draggingBox = true
 	m.dragBoxID = boxID
 	m.dragGrabOffsetX = box.X - worldX
@@ -259,17 +228,11 @@ func (m *model) beginBoxDrag(boxID, worldX, worldY int) {
 	m.originalMoveX = box.X
 	m.originalMoveY = box.Y
 
-	// Capture original connection states so undo can restore rerouted lines.
 	m.originalBoxConnections = make(map[int][]Connection)
 	m.originalBoxConnections[boxID] = canvas.GetConnectionsForBox(boxID)
 
-	// Snapshot ALL connections so each pointer move re-routes from the original
-	// state rather than the previous step's result. This keeps the drag
-	// idempotent: dragging around and back to the start restores the diagram
-	// exactly, and a sweeping line can't progressively corrupt other lines.
 	m.dragConnSnapshot = canvas.SnapshotConnections()
 
-	// Capture highlights on the box so they travel with it (like keyboard move).
 	m.originalHighlights = make(map[point]int)
 	for y := box.Y; y < box.Y+box.Height; y++ {
 		for x := box.X; x < box.X+box.Width; x++ {
@@ -280,17 +243,14 @@ func (m *model) beginBoxDrag(boxID, worldX, worldY int) {
 	}
 	m.highlightMoveDelta = point{X: 0, Y: 0}
 
-	// Reflect the drag as a selection.
 	m.selBox = boxID
 	m.selText = -1
 	m.selConn = -1
 }
 
-// dragMoveTo moves the dragged box so the grabbed point tracks the pointer.
-// Connections attached to the box are re-routed by MoveBox.
 func (m *model) dragMoveTo(canvasX, canvasY int) {
 	canvas := m.getCanvas()
-	if canvas == nil || m.dragBoxID < 0 || m.dragBoxID >= len(canvas.boxes) {
+	if canvas == nil || m.dragBoxID < 0 || m.dragBoxID >= len(canvas.Boxes()) {
 		m.draggingBox = false
 		return
 	}
@@ -300,21 +260,15 @@ func (m *model) dragMoveTo(canvasX, canvasY int) {
 	desiredX := worldX + m.dragGrabOffsetX
 	desiredY := worldY + m.dragGrabOffsetY
 
-	// Re-derive routing from the drag-start snapshot each time: restore the
-	// original connections, put the box back at its origin, then apply the total
-	// move in one step. This makes the drag idempotent — no per-step snapping
-	// error accumulates, so a box dragged around and back lands exactly where it
-	// started with its lines intact.
 	if m.dragConnSnapshot != nil {
 		canvas.RestoreConnectionsSnapshot(m.dragConnSnapshot)
 	}
 	canvas.SetBoxPositionOnly(m.dragBoxID, m.originalMoveX, m.originalMoveY)
 	canvas.MoveBox(m.dragBoxID, desiredX-m.originalMoveX, desiredY-m.originalMoveY)
-	// Re-place highlights by the cumulative offset (idempotent): this also
-	// resets them when the box has returned to its origin.
+
 	if len(m.originalHighlights) > 0 {
-		cumX := canvas.boxes[m.dragBoxID].X - m.originalMoveX
-		cumY := canvas.boxes[m.dragBoxID].Y - m.originalMoveY
+		cumX := canvas.Boxes()[m.dragBoxID].X - m.originalMoveX
+		cumY := canvas.Boxes()[m.dragBoxID].Y - m.originalMoveY
 		m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumX, cumY)
 	}
 
@@ -323,12 +277,10 @@ func (m *model) dragMoveTo(canvasX, canvasY int) {
 	m.ensureCursorInBounds()
 }
 
-// finishBoxDrag ends a drag, recording an undoable move if the box actually
-// changed position.
 func (m *model) finishBoxDrag() {
 	canvas := m.getCanvas()
-	if canvas != nil && m.dragBoxID >= 0 && m.dragBoxID < len(canvas.boxes) {
-		cur := canvas.boxes[m.dragBoxID]
+	if canvas != nil && m.dragBoxID >= 0 && m.dragBoxID < len(canvas.Boxes()) {
+		cur := canvas.Boxes()[m.dragBoxID]
 		deltaX := cur.X - m.originalMoveX
 		deltaY := cur.Y - m.originalMoveY
 		if deltaX != 0 || deltaY != 0 {
@@ -356,14 +308,12 @@ func (m *model) finishBoxDrag() {
 	m.highlightMoveDelta = point{X: 0, Y: 0}
 }
 
-// beginTextDrag starts dragging the given text object. Text has no attached
-// connections, so this is simpler than a box drag.
 func (m *model) beginTextDrag(textID, worldX, worldY int) {
 	canvas := m.getCanvas()
-	if canvas == nil || textID < 0 || textID >= len(canvas.texts) {
+	if canvas == nil || textID < 0 || textID >= len(canvas.Texts()) {
 		return
 	}
-	text := canvas.texts[textID]
+	text := canvas.Texts()[textID]
 	m.draggingText = true
 	m.dragTextID = textID
 	m.dragGrabOffsetX = text.X - worldX
@@ -375,10 +325,9 @@ func (m *model) beginTextDrag(textID, worldX, worldY int) {
 	m.selConn = -1
 }
 
-// dragTextMoveTo moves the dragged text so the grabbed point tracks the pointer.
 func (m *model) dragTextMoveTo(canvasX, canvasY int) {
 	canvas := m.getCanvas()
-	if canvas == nil || m.dragTextID < 0 || m.dragTextID >= len(canvas.texts) {
+	if canvas == nil || m.dragTextID < 0 || m.dragTextID >= len(canvas.Texts()) {
 		m.draggingText = false
 		return
 	}
@@ -386,18 +335,17 @@ func (m *model) dragTextMoveTo(canvasX, canvasY int) {
 	worldX, worldY := canvasX+panX, canvasY+panY
 	desiredX := worldX + m.dragGrabOffsetX
 	desiredY := worldY + m.dragGrabOffsetY
-	cur := canvas.texts[m.dragTextID]
+	cur := canvas.Texts()[m.dragTextID]
 	canvas.MoveText(m.dragTextID, desiredX-cur.X, desiredY-cur.Y)
 	m.cursorX = canvasX
 	m.cursorY = canvasY
 	m.ensureCursorInBounds()
 }
 
-// finishTextDrag ends a text drag, recording an undoable move if it moved.
 func (m *model) finishTextDrag() {
 	canvas := m.getCanvas()
-	if canvas != nil && m.dragTextID >= 0 && m.dragTextID < len(canvas.texts) {
-		cur := canvas.texts[m.dragTextID]
+	if canvas != nil && m.dragTextID >= 0 && m.dragTextID < len(canvas.Texts()) {
+		cur := canvas.Texts()[m.dragTextID]
 		deltaX := cur.X - m.originalTextMoveX
 		deltaY := cur.Y - m.originalTextMoveY
 		if deltaX != 0 || deltaY != 0 {
@@ -409,7 +357,6 @@ func (m *model) finishTextDrag() {
 	m.draggingText = false
 }
 
-// panViewTo pans the view so the grabbed empty cell tracks the pointer.
 func (m *model) panViewTo(canvasX, canvasY int) {
 	buf := m.getCurrentBuffer()
 	if buf == nil {
@@ -421,7 +368,6 @@ func (m *model) panViewTo(canvasX, canvasY int) {
 	m.panMoved = true
 }
 
-// beginHighlightPaint starts a paint stroke at a cell.
 func (m *model) beginHighlightPaint(worldX, worldY int) {
 	if m.getCanvas() == nil {
 		return
@@ -433,9 +379,8 @@ func (m *model) beginHighlightPaint(worldX, worldY int) {
 	m.paintHighlightCell(worldX, worldY)
 }
 
-// paintHighlightCell paints one cell in the selected color, once per stroke.
 func (m *model) paintHighlightCell(x, y int) {
-	p := point{x, y}
+	p := point{X: x, Y: y}
 	if x < 0 || y < 0 || m.paintedSeen[p] {
 		return
 	}
@@ -445,8 +390,6 @@ func (m *model) paintHighlightCell(x, y int) {
 	m.paintedCells = append(m.paintedCells, HighlightCell{X: x, Y: y, Color: m.selectedColor, HadColor: old != -1, OldColor: old})
 }
 
-// paintHighlightTo paints along the line from the last painted cell to (x,y) so
-// fast drags leave no gaps.
 func (m *model) paintHighlightTo(worldX, worldY int) {
 	x, y := m.lastPaintX, m.lastPaintY
 	dx, dy := abs(worldX-x), -abs(worldY-y)
@@ -470,7 +413,6 @@ func (m *model) paintHighlightTo(worldX, worldY int) {
 	m.lastPaintX, m.lastPaintY = worldX, worldY
 }
 
-// finishHighlightPaint records the stroke as one undoable action.
 func (m *model) finishHighlightPaint() {
 	if len(m.paintedCells) > 0 {
 		inverse := make([]HighlightCell, len(m.paintedCells))
@@ -484,8 +426,6 @@ func (m *model) finishHighlightPaint() {
 	m.paintedSeen = nil
 }
 
-// selectAtMouse selects (persistently highlights) the box, text, or line under
-// the given world coordinates. Clicking empty space clears any selection.
 func (m *model) selectAtMouse(worldX, worldY int) {
 	canvas := m.getCanvas()
 	m.selBox, m.selText, m.selConn = -1, -1, -1
@@ -500,12 +440,11 @@ func (m *model) selectAtMouse(worldX, worldY int) {
 		m.selText = textID
 		return
 	}
-	if connIdx, _, _ := canvas.findNearestPointOnConnection(worldX, worldY); connIdx != -1 {
+	if connIdx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); connIdx != -1 {
 		m.selConn = connIdx
 	}
 }
 
-// cancelMouseLine aborts an in-progress mouse line draw.
 func (m *model) cancelMouseLine() {
 	m.mouseLineDrawing = false
 	m.connectionFrom = -1
@@ -515,9 +454,6 @@ func (m *model) cancelMouseLine() {
 	m.connectionWaypoints = nil
 }
 
-// completeMouseLine finishes (or extends) a line being drawn with the mouse.
-// Clicking a box or existing line creates the connection; clicking empty space
-// drops a waypoint so the user can route the line around obstacles.
 func (m *model) completeMouseLine() {
 	canvas := m.getCanvas()
 	if canvas == nil {
@@ -527,11 +463,11 @@ func (m *model) completeMouseLine() {
 	worldX, worldY := m.cursorX+panX, m.cursorY+panY
 
 	boxID := canvas.GetBoxAt(worldX, worldY)
-	lineConnIdx, lineX, lineY := canvas.findNearestPointOnConnection(worldX, worldY)
+	lineConnIdx, lineX, lineY := canvas.FindNearestPointOnConnection(worldX, worldY)
 
 	if boxID != -1 {
-		toBox := canvas.boxes[boxID]
-		toX, toY := canvas.findNearestEdgePoint(toBox, worldX, worldY)
+		toBox := canvas.Boxes()[boxID]
+		toX, toY := canvas.FindNearestEdgePoint(toBox, worldX, worldY)
 		connection := Connection{
 			FromID:    m.connectionFrom,
 			ToID:      boxID,
@@ -564,13 +500,11 @@ func (m *model) completeMouseLine() {
 		m.cancelMouseLine()
 		m.successMessage = ""
 	} else {
-		// Empty space: add a waypoint and keep drawing.
-		m.connectionWaypoints = append(m.connectionWaypoints, point{worldX, worldY})
+
+		m.connectionWaypoints = append(m.connectionWaypoints, point{X: worldX, Y: worldY})
 	}
 }
 
-// openContextMenu builds and opens the right-click menu at the given canvas
-// (screen-relative) coordinates.
 func (m *model) openContextMenu(canvasX, canvasY int) {
 	canvas := m.getCanvas()
 	if canvas == nil {
@@ -586,7 +520,7 @@ func (m *model) openContextMenu(canvasX, canvasY int) {
 	if m.menuTargetBox == -1 {
 		m.menuTargetText = canvas.GetTextAt(worldX, worldY)
 		if m.menuTargetText == -1 {
-			m.menuTargetConn, _, _ = canvas.findNearestPointOnConnection(worldX, worldY)
+			m.menuTargetConn, _, _ = canvas.FindNearestPointOnConnection(worldX, worldY)
 		}
 	}
 
@@ -598,7 +532,6 @@ func (m *model) openContextMenu(canvasX, canvasY int) {
 	m.mode = ModeContextMenu
 }
 
-// colorSubmenu returns the palette color choices ("None" clears the color).
 func colorSubmenu() []MenuItem {
 	names := []string{"Gray", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"}
 	items := []MenuItem{{Label: "None", Action: MenuSetColor, Arg: -1}}
@@ -608,7 +541,6 @@ func colorSubmenu() []MenuItem {
 	return items
 }
 
-// borderStyleSubmenu returns the four border-style choices.
 func borderStyleSubmenu() []MenuItem {
 	return []MenuItem{
 		{Label: "ASCII", Action: MenuSetBorderStyle, Arg: int(BorderStyleASCII)},
@@ -618,7 +550,6 @@ func borderStyleSubmenu() []MenuItem {
 	}
 }
 
-// buildMenuItems assembles the context menu based on what was clicked.
 func buildMenuItems(box, text, conn int) []MenuItem {
 	var items []MenuItem
 	switch {
@@ -665,14 +596,12 @@ func firstSelectableMenuIndex(items []MenuItem) int {
 	return 0
 }
 
-// allMenuLevels returns every open menu level, root first, focused level last.
 func (m *model) allMenuLevels() []menuLevel {
 	levels := []menuLevel{{items: m.menuItems, index: m.menuIndex, x: m.menuX, y: m.menuY}}
 	levels = append(levels, m.menuStack...)
 	return levels
 }
 
-// focusedItems / focusedIndex / setFocusedIndex operate on the deepest open level.
 func (m *model) focusedItems() []MenuItem {
 	if len(m.menuStack) > 0 {
 		return m.menuStack[len(m.menuStack)-1].items
@@ -695,8 +624,6 @@ func (m *model) setFocusedIndex(idx int) {
 	m.menuIndex = idx
 }
 
-// menuMoveSelection moves the highlighted item on the focused level by dir
-// (+1/-1), skipping separators and wrapping around.
 func (m *model) menuMoveSelection(dir int) {
 	items := m.focusedItems()
 	n := len(items)
@@ -713,8 +640,6 @@ func (m *model) menuMoveSelection(dir int) {
 	}
 }
 
-// menuDescend opens the focused item's submenu (if it has one), positioned to
-// the right of its parent row.
 func (m *model) menuDescend() {
 	items := m.focusedItems()
 	idx := m.focusedIndex()
@@ -732,7 +657,6 @@ func (m *model) menuDescend() {
 	m.menuStack = append(m.menuStack, child)
 }
 
-// menuAscend closes the deepest submenu, or the whole menu at the root.
 func (m *model) menuAscend() {
 	if len(m.menuStack) > 0 {
 		m.menuStack = m.menuStack[:len(m.menuStack)-1]
@@ -741,14 +665,12 @@ func (m *model) menuAscend() {
 	m.closeContextMenu()
 }
 
-// closeContextMenu dismisses the context menu without taking an action.
 func (m *model) closeContextMenu() {
 	m.mode = ModeNormal
 	m.menuItems = nil
 	m.menuStack = nil
 }
 
-// handleMenuMouse handles hover and clicks while the context menu is open.
 func (m *model) handleMenuMouse(msg tea.MouseMsg) tea.Cmd {
 	canvasX := msg.X
 	canvasY := msg.Y - m.bufferBarOffset()
@@ -780,13 +702,11 @@ func (m *model) handleMenuMouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// focusMenuLevel makes level `levelIdx` the focused level (truncating deeper
-// levels), selects `itemIdx` on it, and opens that item's submenu if it has one.
 func (m *model) focusMenuLevel(levelIdx, itemIdx int) {
 	if levelIdx < 0 {
 		return
 	}
-	// levels: 0 = root, 1.. = menuStack[0..]. Keep levels 0..levelIdx.
+
 	if levelIdx < len(m.menuStack)+1 {
 		m.menuStack = m.menuStack[:levelIdx]
 	}
@@ -809,8 +729,6 @@ func (m *model) focusMenuLevel(levelIdx, itemIdx int) {
 	}
 }
 
-// menuHitTest returns the (levelIdx, itemIdx, inside) at a canvas coordinate,
-// checking the deepest open level first. itemIdx is -1 on a border/separator.
 func (m *model) menuHitTest(canvasX, canvasY int) (int, int, bool) {
 	levels := m.allMenuLevels()
 	for li := len(levels) - 1; li >= 0; li-- {
@@ -827,8 +745,6 @@ func (m *model) menuHitTest(canvasX, canvasY int) (int, int, bool) {
 	return -1, -1, false
 }
 
-// levelBounds returns a menu level's rectangle (x, y, width, height) clamped to
-// stay on screen.
 func (m *model) levelBounds(level menuLevel) (int, int, int, int) {
 	inner := menuInnerWidth(level.items)
 	w := inner + 2
@@ -857,13 +773,10 @@ func (m *model) levelBounds(level menuLevel) (int, int, int, int) {
 	return x, y, w, h
 }
 
-// menuBounds returns the root menu's rectangle (used by tests and hit-testing).
 func (m *model) menuBounds() (int, int, int, int) {
 	return m.levelBounds(menuLevel{items: m.menuItems, index: m.menuIndex, x: m.menuX, y: m.menuY})
 }
 
-// menuInnerWidth returns the interior width of the menu (label column) in cells,
-// reserving space for the submenu marker when any item has a submenu.
 func menuInnerWidth(items []MenuItem) int {
 	maxLabel := 0
 	hasSubmenu := false
@@ -878,32 +791,29 @@ func menuInnerWidth(items []MenuItem) int {
 			hasSubmenu = true
 		}
 	}
-	// One space of padding on each side of the label.
+
 	inner := maxLabel + 2
 	if hasSubmenu {
-		inner += 2 // room for a trailing " ▸"
+		inner += 2
 	}
 	return inner
 }
 
-// activateMenuItem performs the action for the chosen (leaf) menu entry and
-// closes the menu (unless the action enters another mode). arg carries an
-// action-specific value (color index, border-style value).
 func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 	canvas := m.getCanvas()
 	if canvas == nil {
 		m.closeContextMenu()
 		return nil
 	}
-	// Any leaf action dismisses the whole cascade.
+
 	m.menuStack = nil
 
 	switch action {
 	case MenuSubmenu:
-		// Not a leaf; nothing to do (submenu opening is handled before this).
+
 		return nil
 	case MenuNewBox:
-		boxID := len(canvas.boxes)
+		boxID := len(canvas.Boxes())
 		canvas.AddBox(m.menuWorldX, m.menuWorldY, "Box")
 		addData := AddBoxData{X: m.menuWorldX, Y: m.menuWorldY, Text: "Box", ID: boxID}
 		deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
@@ -920,7 +830,7 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.menuItems = nil
 
 	case MenuEditBox:
-		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.boxes) {
+		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()) {
 			m.selectedBox = m.menuTargetBox
 			m.selectedText = -1
 			m.mode = ModeEditing
@@ -936,7 +846,7 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.menuItems = nil
 
 	case MenuEditText:
-		if m.menuTargetText >= 0 && m.menuTargetText < len(canvas.texts) {
+		if m.menuTargetText >= 0 && m.menuTargetText < len(canvas.Texts()) {
 			m.selectedText = m.menuTargetText
 			m.selectedBox = -1
 			m.mode = ModeEditing
@@ -952,17 +862,17 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.menuItems = nil
 
 	case MenuNewLine:
-		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.boxes) {
-			fromBox := canvas.boxes[m.menuTargetBox]
+		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()) {
+			fromBox := canvas.Boxes()[m.menuTargetBox]
 			m.connectionFrom = m.menuTargetBox
 			m.connectionFromLine = -1
-			m.connectionFromX, m.connectionFromY = canvas.findNearestEdgePoint(fromBox, m.menuWorldX, m.menuWorldY)
+			m.connectionFromX, m.connectionFromY = canvas.FindNearestEdgePoint(fromBox, m.menuWorldX, m.menuWorldY)
 			m.connectionWaypoints = nil
 			m.mouseLineDrawing = true
 			m.cursorX, m.cursorY = m.menuX, m.menuY
 			m.ensureCursorInBounds()
-		} else if m.menuTargetConn >= 0 && m.menuTargetConn < len(canvas.connections) {
-			_, px, py := canvas.findNearestPointOnConnection(m.menuWorldX, m.menuWorldY)
+		} else if m.menuTargetConn >= 0 && m.menuTargetConn < len(canvas.Connections()) {
+			_, px, py := canvas.FindNearestPointOnConnection(m.menuWorldX, m.menuWorldY)
 			m.connectionFrom = -1
 			m.connectionFromLine = m.menuTargetConn
 			m.connectionFromX, m.connectionFromY = px, py
@@ -993,10 +903,10 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.menuItems = nil
 
 	case MenuEditTitle:
-		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.boxes) {
+		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()) {
 			m.mode = ModeTitleEdit
 			m.titleEditBoxID = m.menuTargetBox
-			m.titleEditText = canvas.boxes[m.menuTargetBox].Title
+			m.titleEditText = canvas.Boxes()[m.menuTargetBox].Title
 			m.originalTitleText = m.titleEditText
 			m.titleEditCursorPos = len(m.titleEditText)
 		} else {
@@ -1005,8 +915,8 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.menuItems = nil
 
 	case MenuSetBorderStyle:
-		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.boxes) {
-			oldStyle := canvas.boxes[m.menuTargetBox].BorderStyle
+		if m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()) {
+			oldStyle := canvas.Boxes()[m.menuTargetBox].BorderStyle
 			newStyle := BorderStyle(arg)
 			canvas.SetBorderStyle(m.menuTargetBox, newStyle)
 			borderData := BorderStyleData{BoxID: m.menuTargetBox, OldStyle: oldStyle, NewStyle: newStyle}
@@ -1024,8 +934,6 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 	return nil
 }
 
-// applyMenuColor sets the color (arg, or -1 for none) of whichever object the
-// menu targets, recording the change for undo.
 func (m *model) applyMenuColor(color int) {
 	canvas := m.getCanvas()
 	if canvas == nil {
@@ -1033,17 +941,17 @@ func (m *model) applyMenuColor(color int) {
 	}
 	var kind, id, old int
 	switch {
-	case m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.boxes):
+	case m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()):
 		kind, id = ColorKindBox, m.menuTargetBox
-		old = canvas.boxes[id].Color
+		old = canvas.Boxes()[id].Color
 		canvas.SetBoxColor(id, color)
-	case m.menuTargetConn >= 0 && m.menuTargetConn < len(canvas.connections):
+	case m.menuTargetConn >= 0 && m.menuTargetConn < len(canvas.Connections()):
 		kind, id = ColorKindLine, m.menuTargetConn
-		old = canvas.connections[id].Color
+		old = canvas.Connections()[id].Color
 		canvas.SetLineColor(id, color)
-	case m.menuTargetText >= 0 && m.menuTargetText < len(canvas.texts):
+	case m.menuTargetText >= 0 && m.menuTargetText < len(canvas.Texts()):
 		kind, id = ColorKindText, m.menuTargetText
-		old = canvas.texts[id].Color
+		old = canvas.Texts()[id].Color
 		canvas.SetTextColor(id, color)
 	default:
 		return
@@ -1054,20 +962,19 @@ func (m *model) applyMenuColor(color int) {
 	}
 }
 
-// deleteBoxByID removes a box and records the action for undo.
 func (m *model) deleteBoxByID(boxID int) {
 	canvas := m.getCanvas()
-	if canvas == nil || boxID < 0 || boxID >= len(canvas.boxes) {
+	if canvas == nil || boxID < 0 || boxID >= len(canvas.Boxes()) {
 		return
 	}
-	box := canvas.boxes[boxID]
+	box := canvas.Boxes()[boxID]
 	connectedConnections := make([]Connection, 0)
-	for _, connection := range canvas.connections {
+	for _, connection := range canvas.Connections() {
 		if connection.FromID == boxID || connection.ToID == boxID {
 			connectedConnections = append(connectedConnections, connection)
 		}
 	}
-	highlights := canvas.getHighlightsForBox(boxID)
+	highlights := canvas.GetHighlightsForBox(boxID)
 	deleteData := DeleteBoxData{Box: box, ID: boxID, Connections: connectedConnections, Highlights: highlights}
 	addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
 	m.recordAction(ActionDeleteBox, deleteData, addData)
@@ -1075,14 +982,13 @@ func (m *model) deleteBoxByID(boxID int) {
 	m.ensureCursorInBounds()
 }
 
-// deleteTextByID removes a text object and records the action for undo.
 func (m *model) deleteTextByID(textID int) {
 	canvas := m.getCanvas()
-	if canvas == nil || textID < 0 || textID >= len(canvas.texts) {
+	if canvas == nil || textID < 0 || textID >= len(canvas.Texts()) {
 		return
 	}
-	text := canvas.texts[textID]
-	highlights := canvas.getHighlightsForText(textID)
+	text := canvas.Texts()[textID]
+	highlights := canvas.GetHighlightsForText(textID)
 	deleteData := DeleteTextData{Text: text, ID: textID, Highlights: highlights}
 	addData := AddTextData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID}
 	m.recordAction(ActionDeleteText, deleteData, addData)
@@ -1090,20 +996,17 @@ func (m *model) deleteTextByID(textID int) {
 	m.ensureCursorInBounds()
 }
 
-// deleteConnByIdx removes a connection and records the action for undo.
 func (m *model) deleteConnByIdx(connIdx int) {
 	canvas := m.getCanvas()
-	if canvas == nil || connIdx < 0 || connIdx >= len(canvas.connections) {
+	if canvas == nil || connIdx < 0 || connIdx >= len(canvas.Connections()) {
 		return
 	}
-	conn := canvas.connections[connIdx]
+	conn := canvas.Connections()[connIdx]
 	deleteData := AddConnectionData{FromID: conn.FromID, ToID: conn.ToID, Connection: conn}
 	canvas.RemoveSpecificConnection(conn)
 	m.recordAction(ActionDeleteConnection, deleteData, deleteData)
 }
 
-// overlaySelection tints the currently mouse-selected element on the raw render
-// result so it stands out. Called before ANSI colors are applied.
 func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	canvas := m.getCanvas()
 	if canvas == nil {
@@ -1111,26 +1014,26 @@ func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	}
 	var cells []point
 	switch {
-	case m.selBox >= 0 && m.selBox < len(canvas.boxes):
+	case m.selBox >= 0 && m.selBox < len(canvas.Boxes()):
 		cells = canvas.GetBoxBorderCells(m.selBox)
-	case m.selText >= 0 && m.selText < len(canvas.texts):
+	case m.selText >= 0 && m.selText < len(canvas.Texts()):
 		cells = canvas.GetTextCells(m.selText)
-	case m.selConn >= 0 && m.selConn < len(canvas.connections):
+	case m.selConn >= 0 && m.selConn < len(canvas.Connections()):
 		cells = canvas.GetConnectionCells(m.selConn)
 	}
-	// A multi-select group (in ModeMove) tints every selected element.
+
 	for _, id := range m.selectedBoxes {
-		if id >= 0 && id < len(canvas.boxes) {
+		if id >= 0 && id < len(canvas.Boxes()) {
 			cells = append(cells, canvas.GetBoxBorderCells(id)...)
 		}
 	}
 	for _, id := range m.selectedTexts {
-		if id >= 0 && id < len(canvas.texts) {
+		if id >= 0 && id < len(canvas.Texts()) {
 			cells = append(cells, canvas.GetTextCells(id)...)
 		}
 	}
 	for _, id := range m.selectedConnections {
-		if id >= 0 && id < len(canvas.connections) {
+		if id >= 0 && id < len(canvas.Connections()) {
 			cells = append(cells, canvas.GetConnectionCells(id)...)
 		}
 	}
@@ -1143,8 +1046,6 @@ func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	}
 }
 
-// overlayContextMenu draws the right-click menu (and any open submenus) onto the
-// raw render result, cascading each level to the right of its parent.
 func (m model) overlayContextMenu(r *RenderResult) {
 	if len(m.menuItems) == 0 {
 		return
@@ -1154,7 +1055,6 @@ func (m model) overlayContextMenu(r *RenderResult) {
 	}
 }
 
-// drawMenuLevel renders a single (sub)menu box.
 func (m model) drawMenuLevel(r *RenderResult, level menuLevel) {
 	x, y, w, h := m.levelBounds(level)
 	inner := w - 2
@@ -1169,7 +1069,6 @@ func (m model) drawMenuLevel(r *RenderResult, level menuLevel) {
 		}
 	}
 
-	// The menu frame (borders, corners, separators) is drawn in green.
 	for row := 0; row < h; row++ {
 		py := y + row
 		switch {
@@ -1201,7 +1100,7 @@ func (m model) drawMenuLevel(r *RenderResult, level menuLevel) {
 				rowColor = colorMenuSelect
 			}
 			setCell(x, py, '│', colorMenuBorder)
-			// Interior: " label" left-aligned; a "▸" on the far right marks a submenu.
+
 			label := []rune(" " + item.Label)
 			for i := 0; i < inner; i++ {
 				ch := ' '

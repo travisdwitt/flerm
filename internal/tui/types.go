@@ -1,4 +1,4 @@
-package main
+package tui
 
 type Buffer struct {
 	canvas    *Canvas
@@ -26,8 +26,8 @@ type model struct {
 	editCursorPos          int
 	editCursorRow          int
 	editCursorCol          int
-	editSelectionStart     int // Start of text selection (-1 if no selection)
-	editSelectionEnd       int // End of text selection (-1 if no selection)
+	editSelectionStart     int
+	editSelectionEnd       int
 	originalEditText       string
 	connectionFrom         int
 	connectionFromX        int
@@ -75,7 +75,7 @@ type model struct {
 	originalConnections    map[int]Connection
 	originalHighlights     map[point]int
 	highlightMoveDelta     point
-	originalBoxConnections map[int][]Connection // Original states of connections for each box being moved
+	originalBoxConnections map[int][]Connection
 	boxJumpInput           string
 	titleEditBoxID         int
 	titleEditText          string
@@ -87,118 +87,59 @@ type model struct {
 	tooltipText            string
 	tooltipX               int
 	tooltipY               int
-	tooltipBoxID           int // ID of the box being shown in tooltip, -1 if none
+	tooltipBoxID           int
 
-	// Mouse selection (persistent highlight of a clicked element; -1 = none)
 	selBox  int
 	selText int
 	selConn int
 
-	// Mouse line drawing: true while a connection started from a right-click
-	// menu is following the mouse until the user clicks a target.
 	mouseLineDrawing bool
 
-	// Box dragging: true while the left button is held over a box.
-	// The grab offset keeps the originally-grabbed point under the pointer.
-	draggingBox     bool
-	dragBoxID       int
-	dragGrabOffsetX int
-	dragGrabOffsetY int
-	// Connections snapshot taken at drag start, so each pointer move re-derives
-	// routing from the original state (idempotent) instead of accumulating.
+	draggingBox      bool
+	dragBoxID        int
+	dragGrabOffsetX  int
+	dragGrabOffsetY  int
 	dragConnSnapshot []Connection
 
-	// Text dragging: true while the left button is held over a text object.
 	draggingText bool
 	dragTextID   int
 
-	// View panning: true while dragging an empty area to pan. panMoved
-	// distinguishes a drag (pan) from a plain click (clear selection).
 	panningView        bool
 	panLastX, panLastY int
 	panMoved           bool
 
-	// Group dragging: true while dragging a multi-select group in ModeMove.
 	draggingGroup          bool
 	groupLastX, groupLastY int
 
-	// Highlight painting: click-drag stroke state. paintedCells accumulates the
-	// stroke (with prior colors) so the whole stroke undoes as one action.
 	paintingHighlight      bool
 	paintedCells           []HighlightCell
 	paintedSeen            map[point]bool
 	lastPaintX, lastPaintY int
 
-	// Context menu state (ModeContextMenu)
 	menuItems      []MenuItem
 	menuIndex      int
-	menuX          int // canvas column of the menu's top-left corner
-	menuY          int // canvas row of the menu's top-left corner
-	menuTargetBox  int // element under the cursor when the menu opened (-1 = none)
+	menuX          int
+	menuY          int
+	menuTargetBox  int
 	menuTargetText int
 	menuTargetConn int
-	menuWorldX     int // world coords of the right-click (for New Box/Text placement)
+	menuWorldX     int
 	menuWorldY     int
-	menuStack      []menuLevel // open cascading submenus (level 0 = root menuItems)
-
-	// Konami Code Easter Egg
-	konamiProgress  int            // How far through the code sequence
-	easterEggActive bool           // Whether the falling animation is running
-	fallingPieces   []FallingPiece // Pieces (boxes, lines) that are exploding
-	particles       []Particle     // Trail particles
-	piledChars      [][]rune       // Characters that have piled up at the bottom
-	piledColors     [][]int        // Colors of piled characters
+	menuStack      []menuLevel
 }
 
-// FallingPiece represents a chunk of characters (box, line segment) exploding together
-type FallingPiece struct {
-	Chars  []PieceChar // Characters in this piece with relative positions
-	X      float64     // Center X position
-	Y      float64     // Center Y position
-	VelX   float64     // Horizontal velocity
-	VelY   float64     // Vertical velocity
-	Rot    float64     // Rotation angle (for visual effect)
-	RotVel float64     // Rotation velocity
-	Color  int         // Piece color for trail
-	Landed bool        // Whether this piece has landed
-}
-
-// PieceChar represents a character within a piece
-type PieceChar struct {
-	Char    rune
-	OffsetX float64 // Offset from piece center
-	OffsetY float64
-	Color   int
-}
-
-// Particle represents a trail particle
-type Particle struct {
-	Char  rune
-	X     float64
-	Y     float64
-	Life  int // Frames remaining
-	Color int
-}
-
-type point struct {
-	X, Y int
-}
-
-// MenuItem is a single entry in the right-click context menu. An item with a
-// non-empty Submenu opens a cascading child menu instead of firing an action.
 type MenuItem struct {
 	Label     string
 	Action    MenuAction
 	Separator bool
 	Submenu   []MenuItem
-	Arg       int // action argument (e.g. color index or border-style value)
+	Arg       int
 }
 
-// menuLevel is one open (sub)menu in the cascading context menu.
 type menuLevel struct {
 	items []MenuItem
 	index int
-	x, y  int // top-left canvas coords
+	x, y  int
 }
 
 type Action struct {
@@ -268,8 +209,8 @@ type OriginalBoxState struct {
 	Y           int
 	Width       int
 	Height      int
-	Connections []Connection    // Original states of connections involving this box
-	Highlights  []HighlightCell // Original highlight positions on this box
+	Connections []Connection
+	Highlights  []HighlightCell
 }
 
 type OriginalTextState struct {
@@ -294,14 +235,6 @@ type HighlightData struct {
 	Cells []HighlightCell
 }
 
-type HighlightCell struct {
-	X        int
-	Y        int
-	Color    int
-	HadColor bool
-	OldColor int
-}
-
 type BorderStyleData struct {
 	BoxID    int
 	OldStyle BorderStyle
@@ -314,7 +247,6 @@ type EditTitleData struct {
 	OldTitle string
 }
 
-// ColorKind identifies which object list a ColorData refers to.
 const (
 	ColorKindBox = iota
 	ColorKindLine
@@ -322,8 +254,8 @@ const (
 )
 
 type ColorData struct {
-	Kind     int // ColorKindBox / ColorKindLine / ColorKindText
-	ID       int // index into the corresponding slice
+	Kind     int
+	ID       int
 	OldColor int
 	NewColor int
 }

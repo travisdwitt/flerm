@@ -1,4 +1,4 @@
-package main
+package tui
 
 var helpText = []string{
 	"Fl(ow)(T)erm Help",

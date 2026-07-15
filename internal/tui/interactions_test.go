@@ -1,7 +1,9 @@
-package main
+package tui
 
 import (
 	"testing"
+
+	cv "flerm/internal/canvas"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -19,7 +21,7 @@ func TestDragText(t *testing.T) {
 	m := newTestModel()
 	c := m.getCanvas()
 	c.AddText(60, 10, "hello")
-	sx, sy := c.texts[0].X, c.texts[0].Y
+	sx, sy := c.Texts()[0].X, c.Texts()[0].Y
 
 	out, _ := m.Update(press(tea.MouseButtonLeft, 61, 10))
 	m = out.(model)
@@ -32,11 +34,11 @@ func TestDragText(t *testing.T) {
 	m = out.(model)
 
 	c = m.getCanvas()
-	if c.texts[0].X != sx+10 || c.texts[0].Y != sy+5 {
-		t.Fatalf("expected text moved by (10,5), got (%d,%d)", c.texts[0].X-sx, c.texts[0].Y-sy)
+	if c.Texts()[0].X != sx+10 || c.Texts()[0].Y != sy+5 {
+		t.Fatalf("expected text moved by (10,5), got (%d,%d)", c.Texts()[0].X-sx, c.Texts()[0].Y-sy)
 	}
 	m.undo()
-	if m.getCanvas().texts[0].X != sx || m.getCanvas().texts[0].Y != sy {
+	if m.getCanvas().Texts()[0].X != sx || m.getCanvas().Texts()[0].Y != sy {
 		t.Fatal("expected undo to restore text position")
 	}
 }
@@ -56,7 +58,7 @@ func TestNewLineFromLine(t *testing.T) {
 	c := m.getCanvas()
 	// Connection box0 -> box1 with an explicit vertical segment at x=25.
 	c.AddConnectionWithWaypoints(0, 1, 11, 4, 40, 21, []point{{X: 25, Y: 4}, {X: 25, Y: 21}})
-	connsBefore := len(c.connections)
+	connsBefore := len(c.Connections())
 
 	// Right-click a point on the vertical segment (not over any box).
 	out, _ := m.Update(press(tea.MouseButtonRight, 25, 10))
@@ -77,10 +79,10 @@ func TestNewLineFromLine(t *testing.T) {
 	out, _ = m.Update(press(tea.MouseButtonLeft, 42, 21))
 	m = out.(model)
 	c = m.getCanvas()
-	if len(c.connections) != connsBefore+1 {
-		t.Fatalf("expected a new connection, before=%d after=%d", connsBefore, len(c.connections))
+	if len(c.Connections()) != connsBefore+1 {
+		t.Fatalf("expected a new connection, before=%d after=%d", connsBefore, len(c.Connections()))
 	}
-	nc := c.connections[len(c.connections)-1]
+	nc := c.Connections()[len(c.Connections())-1]
 	if nc.FromID != -1 || nc.ToID != 1 {
 		t.Fatalf("expected new line from a line point (-1) to box 1, got %d->%d", nc.FromID, nc.ToID)
 	}
@@ -100,13 +102,13 @@ func TestNewLineNodeBend(t *testing.T) {
 	// Click an empty cell to drop a node, then click box 1 to finish.
 	out, _ = m.Update(press(tea.MouseButtonLeft, 8, 15))
 	m = out.(model)
-	if len(m.connectionWaypoints) != 1 || m.connectionWaypoints[0] != (point{8, 15}) {
+	if len(m.connectionWaypoints) != 1 || m.connectionWaypoints[0] != (point{X: 8, Y: 15}) {
 		t.Fatalf("expected a node at (8,15), got %v", m.connectionWaypoints)
 	}
 	out, _ = m.Update(press(tea.MouseButtonLeft, 42, 21))
 	m = out.(model)
 	c := m.getCanvas()
-	nc := c.connections[len(c.connections)-1]
+	nc := c.Connections()[len(c.Connections())-1]
 	if len(nc.Waypoints) == 0 {
 		t.Fatal("expected the finished line to keep its node/bend")
 	}
@@ -188,7 +190,7 @@ func TestGroupDragMovesAndHighlights(t *testing.T) {
 	}
 
 	c := m.getCanvas()
-	b0, b1 := c.boxes[0], c.boxes[1]
+	b0, b1 := c.Boxes()[0], c.Boxes()[1]
 
 	// The whole group is highlighted.
 	rr := c.RenderRaw(120, 40, -1, -1, -1, nil, -1, -1, 0, 0, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
@@ -205,8 +207,8 @@ func TestGroupDragMovesAndHighlights(t *testing.T) {
 	out, _ = m.Update(release(11, 6))
 	m = out.(model)
 	c = m.getCanvas()
-	if c.boxes[0].X != b0.X+5 || c.boxes[0].Y != b0.Y+2 || c.boxes[1].X != b1.X+5 || c.boxes[1].Y != b1.Y+2 {
-		t.Fatalf("group didn't move by (5,2): box0=(%d,%d) box1=(%d,%d)", c.boxes[0].X, c.boxes[0].Y, c.boxes[1].X, c.boxes[1].Y)
+	if c.Boxes()[0].X != b0.X+5 || c.Boxes()[0].Y != b0.Y+2 || c.Boxes()[1].X != b1.X+5 || c.Boxes()[1].Y != b1.Y+2 {
+		t.Fatalf("group didn't move by (5,2): box0=(%d,%d) box1=(%d,%d)", c.Boxes()[0].X, c.Boxes()[0].Y, c.Boxes()[1].X, c.Boxes()[1].Y)
 	}
 	if m.mode != ModeNormal {
 		t.Fatalf("expected ModeNormal after drop, got %v", m.mode)
@@ -215,8 +217,8 @@ func TestGroupDragMovesAndHighlights(t *testing.T) {
 	m.undo()
 	m.undo()
 	c = m.getCanvas()
-	if c.boxes[0].X != b0.X || c.boxes[0].Y != b0.Y || c.boxes[1].X != b1.X || c.boxes[1].Y != b1.Y {
-		t.Fatalf("undo didn't restore the group: box0=(%d,%d) box1=(%d,%d)", c.boxes[0].X, c.boxes[0].Y, c.boxes[1].X, c.boxes[1].Y)
+	if c.Boxes()[0].X != b0.X || c.Boxes()[0].Y != b0.Y || c.Boxes()[1].X != b1.X || c.Boxes()[1].Y != b1.Y {
+		t.Fatalf("undo didn't restore the group: box0=(%d,%d) box1=(%d,%d)", c.Boxes()[0].X, c.Boxes()[0].Y, c.Boxes()[1].X, c.Boxes()[1].Y)
 	}
 }
 
@@ -238,9 +240,9 @@ func TestMultiSelectEscCancels(t *testing.T) {
 }
 
 func TestConnectionRendersWithoutGaps(t *testing.T) {
-	c := NewCanvas()
+	c := cv.NewCanvas()
 	c.AddBox(2, 2, "A")
-	c.boxes[0].Width, c.boxes[0].Height = 7, 3
+	c.Boxes()[0].Width, c.Boxes()[0].Height = 7, 3
 	// A path that doubles back vertically (up at x=30) and ends at a free point.
 	c.AddConnectionWithWaypoints(0, -1, 8, 3, 40, 12,
 		[]point{{X: 20, Y: 3}, {X: 20, Y: 8}, {X: 30, Y: 8}, {X: 30, Y: 3}})

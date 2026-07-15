@@ -14,9 +14,21 @@
 
 ## Installation
 
+Build the binary into the project directory:
+
 ```bash
-go build -o flerm
+make build
+./flerm
 ```
+
+Or install it onto your `PATH` (into `$GOBIN`, or `$GOPATH/bin`) so you can run `flerm` from anywhere:
+
+```bash
+make install
+flerm
+```
+
+Other targets: `make run`, `make test`, `make fmt`, `make clean`.
 
 ## Usage
 
@@ -182,6 +194,17 @@ TEXTS:0
 - **BOXCOLORS / LINECOLORS / TEXTCOLORS**: Optional trailing sections listing `index,color` for any object that has a color set (color is a 0-7 palette index). Objects without a color are simply left out.
 
 **Note:** The format is backward-compatible in both directions. Older files without ZLevel, BorderStyle, Title, or color sections load fine with defaults, and older versions of Flerm just ignore the color sections.
+
+## Project Layout
+
+```
+cmd/flerm         Entry point
+internal/config   Loads ~/.flermrc
+internal/canvas   Diagram model: boxes, text, connections, rendering, save/load, PNG export
+internal/tui      Bubble Tea layer: model, key/mouse handlers, views
+```
+
+Within `internal/canvas`, logic is grouped by concern: `box.go`, `connection.go`, `render.go`, `highlight.go`, `storage.go`, `png.go`. Within `internal/tui`, the `Update` dispatcher lives in `update.go` and each mode's key handling lives in `keys_*.go`.
 
 ## Dependencies
 

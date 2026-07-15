@@ -1,4 +1,4 @@
-package main
+package tui
 
 func (m *model) undo() {
 	buf := m.getCurrentBuffer()
@@ -43,17 +43,17 @@ func (m *model) undo() {
 	case ActionMoveBox:
 		data := action.Inverse.(OriginalBoxState)
 		moveData := action.Data.(MoveBoxData)
-		// Clear highlights at their current (moved) positions before restoring
+
 		for _, highlight := range data.Highlights {
 			m.getCanvas().ClearHighlight(highlight.X+moveData.DeltaX, highlight.Y+moveData.DeltaY)
 		}
-		// Use SetBoxPositionOnly to move the box without recalculating connections
+
 		m.getCanvas().SetBoxPositionOnly(data.ID, data.X, data.Y)
-		// Restore connections to their original states
+
 		if len(data.Connections) > 0 {
 			m.getCanvas().RestoreConnections(data.Connections)
 		}
-		// Restore highlights to their original positions
+
 		for _, highlight := range data.Highlights {
 			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
 		}
@@ -68,8 +68,8 @@ func (m *model) undo() {
 		m.getCanvas().RestoreConnection(data.Connection)
 	case ActionCycleArrow:
 		cycleData := action.Inverse.(CycleArrowData)
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
-			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.OldConn
+		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().Connections()) {
+			m.getCanvas().Connections()[cycleData.ConnIdx] = cycleData.OldConn
 		}
 	case ActionHighlight:
 		data := action.Inverse.(HighlightData)
@@ -85,9 +85,9 @@ func (m *model) undo() {
 		m.getCanvas().SetBorderStyle(data.BoxID, data.OldStyle)
 	case ActionEditTitle:
 		data := action.Inverse.(EditTitleData)
-		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().boxes) {
-			m.getCanvas().boxes[data.BoxID].Title = data.OldTitle
-			m.getCanvas().boxes[data.BoxID].updateSize()
+		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().Boxes()) {
+			m.getCanvas().Boxes()[data.BoxID].Title = data.OldTitle
+			m.getCanvas().Boxes()[data.BoxID].UpdateSize()
 		}
 	case ActionSetColor:
 		data := action.Inverse.(ColorData)
@@ -97,7 +97,6 @@ func (m *model) undo() {
 	buf.redoStack = append(buf.redoStack, action)
 }
 
-// applyObjectColor sets the color of a box, line, or text by kind+index.
 func (m *model) applyObjectColor(kind, id, color int) {
 	switch kind {
 	case ColorKindBox:
@@ -152,8 +151,8 @@ func (m *model) redo() {
 		m.getCanvas().RemoveSpecificConnection(data.Connection)
 	case ActionCycleArrow:
 		cycleData := action.Data.(CycleArrowData)
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().connections) {
-			m.getCanvas().connections[cycleData.ConnIdx] = cycleData.NewConn
+		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().Connections()) {
+			m.getCanvas().Connections()[cycleData.ConnIdx] = cycleData.NewConn
 		}
 	case ActionHighlight:
 		data := action.Data.(HighlightData)
@@ -165,9 +164,9 @@ func (m *model) redo() {
 		m.getCanvas().SetBorderStyle(data.BoxID, data.NewStyle)
 	case ActionEditTitle:
 		data := action.Data.(EditTitleData)
-		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().boxes) {
-			m.getCanvas().boxes[data.BoxID].Title = data.NewTitle
-			m.getCanvas().boxes[data.BoxID].updateSize()
+		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().Boxes()) {
+			m.getCanvas().Boxes()[data.BoxID].Title = data.NewTitle
+			m.getCanvas().Boxes()[data.BoxID].UpdateSize()
 		}
 	case ActionSetColor:
 		data := action.Data.(ColorData)
@@ -176,4 +175,3 @@ func (m *model) redo() {
 
 	buf.undoStack = append(buf.undoStack, action)
 }
-

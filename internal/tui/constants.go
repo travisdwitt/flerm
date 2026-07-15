@@ -1,11 +1,10 @@
-package main
+package tui
 
 type Mode int
 
 const (
 	ModeStartup Mode = iota
 	ModeNormal
-	ModeCreating
 	ModeEditing
 	ModeTextInput
 	ModeResize
@@ -30,9 +29,9 @@ const (
 	MenuDeleteText
 	MenuDeleteLine
 	MenuEditTitle
-	MenuSetBorderStyle // Arg = BorderStyle value
-	MenuSetColor       // Arg = palette color index, or -1 for none
-	MenuSubmenu        // opens Item.Submenu; fires no action
+	MenuSetBorderStyle
+	MenuSetColor
+	MenuSubmenu
 )
 
 type FileOperation int
@@ -56,7 +55,6 @@ const (
 	ConfirmCloseBuffer
 	ConfirmOverwriteFile
 	ConfirmChooseExportType
-	ConfirmDeleteChart
 )
 
 type ActionType int
@@ -78,23 +76,3 @@ const (
 	ActionEditTitle
 	ActionSetColor
 )
-
-type BorderStyle int
-
-const (
-	BorderStyleASCII BorderStyle = iota
-	BorderStyleSingle
-	BorderStyleDouble
-	BorderStyleRounded
-)
-
-const (
-	minBoxWidth      = 8
-	minBoxHeight     = 3
-	numColors        = 8
-	colorEditSelect  = 100 // Special color index for edit text selection
-	colorMouseSelect = 101 // Special color index for a mouse-selected element
-	colorMenuSelect  = 102 // Special color index for the focused context-menu item
-	colorMenuBorder  = 103 // Special color index for the context-menu border (green)
-)
-

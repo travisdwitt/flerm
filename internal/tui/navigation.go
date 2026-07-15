@@ -1,4 +1,4 @@
-package main
+package tui
 
 import tea "github.com/charmbracelet/bubbletea"
 
@@ -7,20 +7,16 @@ func (m *model) handleNavigation(key string, speed int) (tea.Model, tea.Cmd) {
 		return m.handlePan(key, speed), nil
 	}
 
-	// Store old tooltip state
 	oldShowTooltip := m.showTooltip
 	oldTooltipText := m.tooltipText
 
-	// Move cursor
 	updatedModel := m.handleCursorMove(key, speed)
 
-	// Update tooltip state after movement
 	updatedModel.updateTooltip()
 
-	// If tooltip state changed, we want to force a re-render
 	if oldShowTooltip != updatedModel.showTooltip ||
-	   (updatedModel.showTooltip && oldTooltipText != updatedModel.tooltipText) {
-		// Return a command to force re-render
+		(updatedModel.showTooltip && oldTooltipText != updatedModel.tooltipText) {
+
 		return updatedModel, func() tea.Msg { return struct{}{} }
 	}
 
@@ -48,7 +44,7 @@ func (m *model) handlePan(key string, speed int) *model {
 func (m *model) handleCursorMove(key string, speed int) *model {
 	oldX := m.cursorX
 	oldY := m.cursorY
-	
+
 	switch key {
 	case "h", "left", "H", "shift+left":
 		m.cursorX -= speed
@@ -133,4 +129,3 @@ func (m *model) getMoveSpeed(key string) int {
 		return 1
 	}
 }
-

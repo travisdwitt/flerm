@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bufio"
@@ -13,7 +13,7 @@ type Config struct {
 	Confirmations bool
 }
 
-func loadConfig() *Config {
+func Load() *Config {
 	config := &Config{
 		SaveDirectory: "",
 		StartMenu:     true,
@@ -75,4 +75,3 @@ func (c *Config) GetSavePath(filename string) string {
 	os.MkdirAll(c.SaveDirectory, 0755)
 	return filepath.Join(c.SaveDirectory, filename)
 }
-
