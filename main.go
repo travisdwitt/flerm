@@ -16,7 +16,10 @@ func main() {
 	p := tea.NewProgram(
 		initialModel(),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		// AllMotion reports mouse movement even when no button is held, which
+		// is required for context-menu hover highlighting and for the New Line
+		// preview to follow the cursor.
+		tea.WithMouseAllMotion(),
 	)
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)
@@ -83,18 +86,18 @@ func initialModel() model {
 	}
 
 	return model{
-		buffers:               []Buffer{buffer},
-		currentBufferIndex:    0,
-		mode:                  initialMode,
-		selectedBox:           -1,
-		selectedText:          -1,
-		connectionFrom:        -1,
-		connectionFromLine:    -1,
-		config:                config,
-		highlightMode:         false,
-		selectedColor:         0,
-		selectionStartX:       -1,
-		selectionStartY:       -1,
+		buffers:                []Buffer{buffer},
+		currentBufferIndex:     0,
+		mode:                   initialMode,
+		selectedBox:            -1,
+		selectedText:           -1,
+		connectionFrom:         -1,
+		connectionFromLine:     -1,
+		config:                 config,
+		highlightMode:          false,
+		selectedColor:          0,
+		selectionStartX:        -1,
+		selectionStartY:        -1,
 		selectedBoxes:          []int{},
 		selectedTexts:          []int{},
 		selectedConnections:    []int{},
@@ -103,6 +106,12 @@ func initialModel() model {
 		originalConnections:    make(map[int]Connection),
 		originalHighlights:     make(map[point]int),
 		originalBoxConnections: make(map[int][]Connection),
+		selBox:                 -1,
+		selText:                -1,
+		selConn:                -1,
+		menuTargetBox:          -1,
+		menuTargetText:         -1,
+		menuTargetConn:         -1,
 	}
 }
 
@@ -363,6 +372,179 @@ func (m *model) handleSingleElementMove(deltaX, deltaY int) {
 	}
 }
 
+// finalizeMultiSelect resolves the selection rectangle (from selectionStart to
+// the given world end point) into selected boxes/texts/connections/highlights
+// and enters ModeMove, or returns to ModeNormal when nothing was selected.
+func (m *model) finalizeMultiSelect(endX, endY int) {
+	minX, maxX := m.selectionStartX, m.selectionStartX
+	if endX < m.selectionStartX {
+		minX = endX
+	} else if endX > m.selectionStartX {
+		maxX = endX
+	}
+	minY, maxY := m.selectionStartY, m.selectionStartY
+	if endY < m.selectionStartY {
+		minY = endY
+	} else if endY > m.selectionStartY {
+		maxY = endY
+	}
+
+	m.selectedBoxes = []int{}
+	m.selectedTexts = []int{}
+	m.selectedConnections = []int{}
+	m.originalBoxPositions = make(map[int]point)
+	m.originalTextPositions = make(map[int]point)
+	m.originalConnections = make(map[int]Connection)
+	m.originalBoxConnections = make(map[int][]Connection)
+	for i, box := range m.getCanvas().boxes {
+		boxRight, boxBottom := box.X+box.Width-1, box.Y+box.Height-1
+		if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
+			m.selectedBoxes = append(m.selectedBoxes, i)
+			m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
+			m.originalBoxConnections[i] = m.getCanvas().GetConnectionsForBox(i)
+		}
+	}
+	for i, text := range m.getCanvas().texts {
+		textRight, textBottom := text.X, text.Y
+		for _, line := range text.Lines {
+			if text.X+len(line) > textRight {
+				textRight = text.X + len(line)
+			}
+		}
+		if len(text.Lines) > 0 {
+			textBottom = text.Y + len(text.Lines) - 1
+		}
+		if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
+			m.selectedTexts = append(m.selectedTexts, i)
+			m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
+		}
+	}
+	selectedBoxSet := make(map[int]bool)
+	for _, boxID := range m.selectedBoxes {
+		selectedBoxSet[boxID] = true
+	}
+	pointInSelection := func(x, y int) bool {
+		return x >= minX && x <= maxX && y >= minY && y <= maxY
+	}
+	shouldSelectConnection := func(conn Connection) bool {
+		if conn.FromID >= 0 && conn.ToID >= 0 && selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
+			return true
+		}
+		if conn.FromID >= 0 && selectedBoxSet[conn.FromID] && conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
+			return true
+		}
+		if conn.ToID >= 0 && selectedBoxSet[conn.ToID] && conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
+			return true
+		}
+		if conn.FromID == -1 && conn.ToID == -1 && pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
+			return true
+		}
+		pointsInSelection, totalPoints := 0, 2+len(conn.Waypoints)
+		if pointInSelection(conn.FromX, conn.FromY) {
+			pointsInSelection++
+		}
+		if pointInSelection(conn.ToX, conn.ToY) {
+			pointsInSelection++
+		}
+		for _, wp := range conn.Waypoints {
+			if pointInSelection(wp.X, wp.Y) {
+				pointsInSelection++
+			}
+		}
+		return totalPoints > 0 && pointsInSelection*2 >= totalPoints
+	}
+	for i, conn := range m.getCanvas().connections {
+		if shouldSelectConnection(conn) {
+			m.selectedConnections = append(m.selectedConnections, i)
+			connCopy := conn
+			connCopy.Waypoints = make([]point, len(conn.Waypoints))
+			copy(connCopy.Waypoints, conn.Waypoints)
+			m.originalConnections[i] = connCopy
+		}
+	}
+	m.originalHighlights = make(map[point]int)
+	m.highlightMoveDelta = point{X: 0, Y: 0}
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			if color := m.getCanvas().GetHighlight(x, y); color != -1 {
+				m.originalHighlights[point{X: x, Y: y}] = color
+			}
+		}
+	}
+
+	if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+		m.mode = ModeMove
+		m.selectedBox = -1
+		m.selectedText = -1
+	} else {
+		m.mode = ModeNormal
+		m.selectionStartX = -1
+		m.selectionStartY = -1
+	}
+}
+
+// commitMove records the pending move (single or multi-select) as undoable
+// actions, then returns to normal mode and clears the selection.
+func (m *model) commitMove() {
+	for _, boxID := range m.selectedBoxes {
+		if boxID < 0 || boxID >= len(m.getCanvas().boxes) {
+			continue
+		}
+		cur := m.getCanvas().boxes[boxID]
+		orig, ok := m.originalBoxPositions[boxID]
+		if ok && (cur.X != orig.X || cur.Y != orig.Y) {
+			moveData := MoveBoxData{ID: boxID, DeltaX: cur.X - orig.X, DeltaY: cur.Y - orig.Y}
+			originalState := OriginalBoxState{
+				ID: boxID, X: orig.X, Y: orig.Y, Width: cur.Width, Height: cur.Height,
+				Connections: m.originalBoxConnections[boxID],
+			}
+			m.recordAction(ActionMoveBox, moveData, originalState)
+		}
+	}
+	for _, textID := range m.selectedTexts {
+		if textID < 0 || textID >= len(m.getCanvas().texts) {
+			continue
+		}
+		cur := m.getCanvas().texts[textID]
+		orig, ok := m.originalTextPositions[textID]
+		if ok && (cur.X != orig.X || cur.Y != orig.Y) {
+			moveData := MoveTextData{ID: textID, DeltaX: cur.X - orig.X, DeltaY: cur.Y - orig.Y}
+			m.recordAction(ActionMoveText, moveData, OriginalTextState{ID: textID, X: orig.X, Y: orig.Y})
+		}
+	}
+	// Single-item moves (keyboard single-select path).
+	if m.selectedBox != -1 && m.selectedBox < len(m.getCanvas().boxes) {
+		cur := m.getCanvas().boxes[m.selectedBox]
+		if cur.X != m.originalMoveX || cur.Y != m.originalMoveY {
+			moveData := MoveBoxData{ID: m.selectedBox, DeltaX: cur.X - m.originalMoveX, DeltaY: cur.Y - m.originalMoveY}
+			var highlightCells []HighlightCell
+			for origPos, color := range m.originalHighlights {
+				highlightCells = append(highlightCells, HighlightCell{X: origPos.X, Y: origPos.Y, Color: color})
+			}
+			originalState := OriginalBoxState{
+				ID: m.selectedBox, X: m.originalMoveX, Y: m.originalMoveY, Width: cur.Width, Height: cur.Height,
+				Connections: m.originalBoxConnections[m.selectedBox], Highlights: highlightCells,
+			}
+			m.recordAction(ActionMoveBox, moveData, originalState)
+		}
+	} else if m.selectedText != -1 && m.selectedText < len(m.getCanvas().texts) {
+		cur := m.getCanvas().texts[m.selectedText]
+		if cur.X != m.originalTextMoveX || cur.Y != m.originalTextMoveY {
+			moveData := MoveTextData{ID: m.selectedText, DeltaX: cur.X - m.originalTextMoveX, DeltaY: cur.Y - m.originalTextMoveY}
+			m.recordAction(ActionMoveText, moveData, OriginalTextState{ID: m.selectedText, X: m.originalTextMoveX, Y: m.originalTextMoveY})
+		}
+	}
+	m.mode = ModeNormal
+	m.selectedBox = -1
+	m.selectedText = -1
+	m.selectedBoxes = []int{}
+	m.selectedTexts = []int{}
+	m.selectedConnections = []int{}
+	m.originalBoxPositions = make(map[int]point)
+	m.originalTextPositions = make(map[int]point)
+	m.originalConnections = make(map[int]Connection)
+}
+
 func (m *model) handleMultiSelectMove(deltaX, deltaY int) {
 	for _, boxID := range m.selectedBoxes {
 		m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
@@ -426,7 +608,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.help && m.mode != ModeStartup {
 			switch msg.String() {
-			case "escape", "q", "?":
+			case "esc", "escape", "q", "?":
 				m.help = false
 				m.helpScroll = 0
 				return m, nil
@@ -500,8 +682,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.connectionFromLine = -1
 				m.connectionFromX = 0
 				m.connectionFromY = 0
+				m.connectionWaypoints = nil
+				m.mouseLineDrawing = false
 				m.selectedBox = -1
 				m.selectedText = -1
+				m.selBox = -1
+				m.selText = -1
+				m.selConn = -1
 				return m, nil
 			}
 
@@ -785,6 +972,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							ToX:       toX,
 							ToY:       toY,
 							Waypoints: m.connectionWaypoints,
+							Color:     -1,
 						}
 
 						m.getCanvas().AddConnectionWithWaypoints(m.connectionFrom, boxID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
@@ -808,6 +996,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							ToX:       toX,
 							ToY:       toY,
 							Waypoints: m.connectionWaypoints,
+							Color:     -1,
 						}
 
 						m.getCanvas().AddConnectionWithWaypoints(m.connectionFrom, -1, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
@@ -1047,6 +1236,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Lines:       make([]string, len(box.Lines)),
 						Title:       box.Title,
 						BorderStyle: box.BorderStyle,
+						Color:       box.Color,
 					}
 					copy(copiedBox.Lines, box.Lines)
 					m.clipboard = &copiedBox
@@ -1061,9 +1251,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.getCanvas().AddBox(worldX, worldY, text)
 					if boxID < len(m.getCanvas().boxes) {
 						m.getCanvas().SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
-						// Copy title and border style from clipboard
+						// Copy title, border style, and color from clipboard
 						m.getCanvas().boxes[boxID].Title = m.clipboard.Title
 						m.getCanvas().boxes[boxID].BorderStyle = m.clipboard.BorderStyle
+						m.getCanvas().boxes[boxID].Color = m.clipboard.Color
 						m.getCanvas().boxes[boxID].updateSize()
 					}
 					addData := AddBoxData{X: worldX, Y: worldY, Text: text, ID: boxID}
@@ -1072,7 +1263,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorInBounds()
 				}
 				return m, nil
-			case "escape":
+			case "esc", "escape":
 				m.zPanMode = false
 				m.highlightMode = false
 				m.connectionFrom = -1
@@ -1241,7 +1432,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								}
 								inverseCells[i] = HighlightCell{
 									X: cell.X, Y: cell.Y,
-									Color: oldColorForInverse,
+									Color:    oldColorForInverse,
 									HadColor: cell.HadColor, OldColor: cell.Color,
 								}
 							}
@@ -1390,6 +1581,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
 					}
 				}
+				return m, nil
+			}
+
+		case ModeContextMenu:
+			switch msg.String() {
+			case "esc", "escape", "q":
+				m.closeContextMenu()
+				return m, nil
+			case "j", "down":
+				m.menuMoveSelection(1)
+				return m, nil
+			case "k", "up":
+				m.menuMoveSelection(-1)
+				return m, nil
+			case "l", "right":
+				// Descend into a submenu if the focused item has one.
+				m.menuDescend()
+				return m, nil
+			case "h", "left":
+				// Back out of a submenu (closes the menu at the root).
+				m.menuAscend()
+				return m, nil
+			case "enter", " ":
+				items := m.focusedItems()
+				idx := m.focusedIndex()
+				if idx >= 0 && idx < len(items) && !items[idx].Separator {
+					if len(items[idx].Submenu) > 0 {
+						m.menuDescend()
+						return m, nil
+					}
+					cmd := m.activateMenuItem(items[idx].Action, items[idx].Arg)
+					return m, cmd
+				}
+				return m, nil
+			default:
 				return m, nil
 			}
 
@@ -1919,7 +2145,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ModeResize:
 			switch msg.String() {
-			case "escape":
+			case "esc", "escape":
 				m.mode = ModeNormal
 				m.selectedBox = -1
 				return m, nil
@@ -1993,7 +2219,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ModeMultiSelect:
 			switch msg.String() {
-			case "escape":
+			case "esc", "escape":
 				m.mode = ModeNormal
 				m.selectionStartX = -1
 				m.selectionStartY = -1
@@ -2010,126 +2236,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
 			case "enter":
 				panX, panY := m.getPanOffset()
-				selectionEndX, selectionEndY := m.cursorX+panX, m.cursorY+panY
-				minX, maxX := m.selectionStartX, m.selectionStartX
-				if selectionEndX < m.selectionStartX {
-					minX = selectionEndX
-				} else if selectionEndX > m.selectionStartX {
-					maxX = selectionEndX
-				}
-				minY, maxY := m.selectionStartY, m.selectionStartY
-				if selectionEndY < m.selectionStartY {
-					minY = selectionEndY
-				} else if selectionEndY > m.selectionStartY {
-					maxY = selectionEndY
-				}
-
-				// Find all boxes and texts within the selection rectangle
-				m.selectedBoxes = []int{}
-				m.selectedTexts = []int{}
-				m.selectedConnections = []int{}
-				m.originalBoxPositions = make(map[int]point)
-				m.originalTextPositions = make(map[int]point)
-				m.originalConnections = make(map[int]Connection)
-
-				m.originalBoxConnections = make(map[int][]Connection)
-				for i, box := range m.getCanvas().boxes {
-					boxRight, boxBottom := box.X+box.Width-1, box.Y+box.Height-1
-					if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
-						m.selectedBoxes = append(m.selectedBoxes, i)
-						m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
-						// Capture connection states for undo
-						m.originalBoxConnections[i] = m.getCanvas().GetConnectionsForBox(i)
-					}
-				}
-				for i, text := range m.getCanvas().texts {
-					textRight, textBottom := text.X, text.Y
-					for _, line := range text.Lines {
-						if text.X+len(line) > textRight {
-							textRight = text.X + len(line)
-						}
-					}
-					if len(text.Lines) > 0 {
-						textBottom = text.Y + len(text.Lines) - 1
-					}
-					if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
-						m.selectedTexts = append(m.selectedTexts, i)
-						m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
-					}
-				}
-				selectedBoxSet := make(map[int]bool)
-				for _, boxID := range m.selectedBoxes {
-					selectedBoxSet[boxID] = true
-				}
-				pointInSelection := func(x, y int) bool {
-					return x >= minX && x <= maxX && y >= minY && y <= maxY
-				}
-				shouldSelectConnection := func(conn Connection) bool {
-					if conn.FromID >= 0 && conn.ToID >= 0 && selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
-						return true
-					}
-					if conn.FromID >= 0 && selectedBoxSet[conn.FromID] && conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
-						return true
-					}
-					if conn.ToID >= 0 && selectedBoxSet[conn.ToID] && conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
-						return true
-					}
-					if conn.FromID == -1 && conn.ToID == -1 && pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
-						return true
-					}
-					pointsInSelection, totalPoints := 0, 2+len(conn.Waypoints)
-					if pointInSelection(conn.FromX, conn.FromY) {
-						pointsInSelection++
-					}
-					if pointInSelection(conn.ToX, conn.ToY) {
-						pointsInSelection++
-					}
-					for _, wp := range conn.Waypoints {
-						if pointInSelection(wp.X, wp.Y) {
-							pointsInSelection++
-						}
-					}
-					return totalPoints > 0 && pointsInSelection*2 >= totalPoints
-				}
-				for i, conn := range m.getCanvas().connections {
-					if shouldSelectConnection(conn) {
-						m.selectedConnections = append(m.selectedConnections, i)
-						connCopy := Connection{
-							FromID:    conn.FromID,
-							ToID:      conn.ToID,
-							FromX:     conn.FromX,
-							FromY:     conn.FromY,
-							ToX:       conn.ToX,
-							ToY:       conn.ToY,
-							Waypoints: make([]point, len(conn.Waypoints)),
-							ArrowFrom: conn.ArrowFrom,
-							ArrowTo:   conn.ArrowTo,
-						}
-						copy(connCopy.Waypoints, conn.Waypoints)
-						m.originalConnections[i] = connCopy
-					}
-				}
-				m.originalHighlights = make(map[point]int)
-				m.highlightMoveDelta = point{X: 0, Y: 0}
-				for y := minY; y <= maxY; y++ {
-					for x := minX; x <= maxX; x++ {
-						if color := m.getCanvas().GetHighlight(x, y); color != -1 {
-							m.originalHighlights[point{X: x, Y: y}] = color
-						}
-					}
-				}
-
-				// If we have selections (boxes, texts, connections, or highlights), enter move mode
-				if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 || len(m.originalHighlights) > 0 {
-					m.mode = ModeMove
-					m.selectedBox = -1
-					m.selectedText = -1
-				} else {
-					// No selections, return to normal mode
-					m.mode = ModeNormal
-					m.selectionStartX = -1
-					m.selectionStartY = -1
-				}
+				m.finalizeMultiSelect(m.cursorX+panX, m.cursorY+panY)
 				return m, nil
 			default:
 				return m, nil
@@ -2137,7 +2244,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ModeMove:
 			switch msg.String() {
-			case "escape":
+			case "esc", "escape":
 				m.mode = ModeNormal
 				m.selectedBox = -1
 				m.selectedText = -1
@@ -2462,97 +2569,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "enter":
-				// Record the move action when finishing move mode
-				// Handle multi-select moves first
-				if len(m.selectedBoxes) > 0 {
-					for _, boxID := range m.selectedBoxes {
-						if boxID >= 0 && boxID < len(m.getCanvas().boxes) {
-							currentBox := m.getCanvas().boxes[boxID]
-							originalPos, hasOriginal := m.originalBoxPositions[boxID]
-							if hasOriginal {
-								deltaX := currentBox.X - originalPos.X
-								deltaY := currentBox.Y - originalPos.Y
-								if deltaX != 0 || deltaY != 0 {
-									moveData := MoveBoxData{ID: boxID, DeltaX: deltaX, DeltaY: deltaY}
-									originalState := OriginalBoxState{
-										ID:          boxID,
-										X:           originalPos.X,
-										Y:           originalPos.Y,
-										Width:       currentBox.Width,
-										Height:      currentBox.Height,
-										Connections: m.originalBoxConnections[boxID],
-									}
-									m.recordAction(ActionMoveBox, moveData, originalState)
-								}
-							}
-						}
-					}
-				}
-				if len(m.selectedTexts) > 0 {
-					for _, textID := range m.selectedTexts {
-						if textID >= 0 && textID < len(m.getCanvas().texts) {
-							currentText := m.getCanvas().texts[textID]
-							originalPos, hasOriginal := m.originalTextPositions[textID]
-							if hasOriginal {
-								deltaX := currentText.X - originalPos.X
-								deltaY := currentText.Y - originalPos.Y
-								if deltaX != 0 || deltaY != 0 {
-									moveData := MoveTextData{ID: textID, DeltaX: deltaX, DeltaY: deltaY}
-									originalState := OriginalTextState{ID: textID, X: originalPos.X, Y: originalPos.Y}
-									m.recordAction(ActionMoveText, moveData, originalState)
-								}
-							}
-						}
-					}
-				}
-				// Handle single-item moves (backward compatibility)
-				if m.selectedBox != -1 && m.selectedBox < len(m.getCanvas().boxes) {
-					currentBox := m.getCanvas().boxes[m.selectedBox]
-					// Calculate the total change from original position
-					deltaX := currentBox.X - m.originalMoveX
-					deltaY := currentBox.Y - m.originalMoveY
-
-					// Only record if there was an actual change
-					if deltaX != 0 || deltaY != 0 {
-						moveData := MoveBoxData{ID: m.selectedBox, DeltaX: deltaX, DeltaY: deltaY}
-						// Collect original highlight states
-						var highlightCells []HighlightCell
-						for origPos, color := range m.originalHighlights {
-							highlightCells = append(highlightCells, HighlightCell{X: origPos.X, Y: origPos.Y, Color: color})
-						}
-						originalState := OriginalBoxState{
-							ID:          m.selectedBox,
-							X:           m.originalMoveX,
-							Y:           m.originalMoveY,
-							Width:       currentBox.Width,
-							Height:      currentBox.Height,
-							Connections: m.originalBoxConnections[m.selectedBox],
-							Highlights:  highlightCells,
-						}
-						m.recordAction(ActionMoveBox, moveData, originalState)
-					}
-				} else if m.selectedText != -1 && m.selectedText < len(m.getCanvas().texts) {
-					currentText := m.getCanvas().texts[m.selectedText]
-					// Calculate the total change from original position
-					deltaX := currentText.X - m.originalTextMoveX
-					deltaY := currentText.Y - m.originalTextMoveY
-
-					// Only record if there was an actual change
-					if deltaX != 0 || deltaY != 0 {
-						moveData := MoveTextData{ID: m.selectedText, DeltaX: deltaX, DeltaY: deltaY}
-						originalState := OriginalTextState{ID: m.selectedText, X: m.originalTextMoveX, Y: m.originalTextMoveY}
-						m.recordAction(ActionMoveText, moveData, originalState)
-					}
-				}
-				m.mode = ModeNormal
-				m.selectedBox = -1
-				m.selectedText = -1
-				m.selectedBoxes = []int{}
-				m.selectedTexts = []int{}
-				m.selectedConnections = []int{}
-				m.originalBoxPositions = make(map[int]point)
-				m.originalTextPositions = make(map[int]point)
-				m.originalConnections = make(map[int]Connection)
+				m.commitMove()
 				return m, nil
 			}
 
@@ -3161,7 +3178,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				// Fall through for other confirmations
-			case "n", "N", "escape":
+			case "n", "N", "esc", "escape":
 				// Cancel the action
 				if m.confirmAction == ConfirmOverwriteFile {
 					// Return to file input mode if canceling overwrite
@@ -3179,6 +3196,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 
 	return m, nil
@@ -3344,10 +3364,18 @@ func (m model) View() string {
 	// Use RenderRaw to get canvas without ANSI codes, so we can overlay tooltip cleanly
 	renderResult := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, editCursorPos, editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, showBoxNumbers, editSelStart, editSelEnd)
 
+	// Tint the mouse-selected element beneath any floating overlays.
+	m.overlaySelection(renderResult, panX, panY)
+
 	// Apply tooltip overlay to raw canvas BEFORE applying ANSI colors
 	// This ensures the tooltip floats above all other elements
 	if m.showTooltip && m.tooltipText != "" {
 		m.overlayTooltipOnRenderResult(renderResult)
+	}
+
+	// Draw the context menu on top of everything else.
+	if m.mode == ModeContextMenu {
+		m.overlayContextMenu(renderResult)
 	}
 
 	// Now apply ANSI color codes after tooltip is in place
@@ -3526,6 +3554,8 @@ func (m model) View() string {
 			message = "Export as PNG (p) or Visual TXT (t)? Press Esc to cancel"
 		}
 		statusLine = fmt.Sprintf("Mode: CONFIRM | %s", message)
+	case ModeContextMenu:
+		statusLine = "Mode: MENU | ↑/↓ or hover=navigate, →/Enter=open submenu, ←=back, click=select, Esc/right-click=cancel"
 	case ModeBoxJump:
 		statusLine = fmt.Sprintf("Mode: BOX JUMP | Enter box number: %s | Enter=jump, Esc=cancel", m.boxJumpInput)
 	case ModeTitleEdit:
@@ -4026,6 +4056,8 @@ func (m model) modeString() string {
 		return "BOX JUMP"
 	case ModeTitleEdit:
 		return "TITLE"
+	case ModeContextMenu:
+		return "MENU"
 	default:
 		return "UNKNOWN"
 	}

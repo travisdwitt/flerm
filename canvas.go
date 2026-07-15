@@ -27,6 +27,7 @@ type Text struct {
 	Y     int
 	Lines []string
 	ID    int
+	Color int // palette index 0-7, or -1 for none
 }
 
 func (t *Text) GetText() string {
@@ -48,6 +49,7 @@ type Box struct {
 	BorderStyle  BorderStyle
 	OriginalText string
 	Title        string
+	Color        int // palette index 0-7, or -1 for none
 }
 
 func (b *Box) GetText() string {
@@ -309,6 +311,7 @@ type Connection struct {
 	Waypoints []point
 	ArrowFrom bool
 	ArrowTo   bool
+	Color     int // palette index 0-7, or -1 for none
 }
 
 func NewCanvas() *Canvas {
@@ -415,9 +418,10 @@ func (c *Canvas) GetFullBounds() (int, int, int, int) {
 
 func (c *Canvas) AddBox(x, y int, text string) {
 	box := Box{
-		X:  x,
-		Y:  y,
-		ID: len(c.boxes),
+		X:     x,
+		Y:     y,
+		ID:    len(c.boxes),
+		Color: -1,
 	}
 	box.SetText(text)
 	c.boxes = append(c.boxes, box)
@@ -425,9 +429,10 @@ func (c *Canvas) AddBox(x, y int, text string) {
 
 func (c *Canvas) AddText(x, y int, text string) {
 	textObj := Text{
-		X:  x,
-		Y:  y,
-		ID: len(c.texts),
+		X:     x,
+		Y:     y,
+		ID:    len(c.texts),
+		Color: -1,
 	}
 	textObj.SetText(text)
 	c.texts = append(c.texts, textObj)
@@ -435,9 +440,10 @@ func (c *Canvas) AddText(x, y int, text string) {
 
 func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
 	textObj := Text{
-		X:  x,
-		Y:  y,
-		ID: id,
+		X:     x,
+		Y:     y,
+		ID:    id,
+		Color: -1,
 	}
 	textObj.SetText(text)
 	c.texts = append(c.texts, textObj)
@@ -448,9 +454,10 @@ func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
 
 func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
 	box := Box{
-		X:  x,
-		Y:  y,
-		ID: id,
+		X:     x,
+		Y:     y,
+		ID:    id,
+		Color: -1,
 	}
 	box.SetText(text)
 	if id >= len(c.boxes) {
@@ -684,6 +691,7 @@ func (c *Canvas) AddConnection(fromID, toID int) {
 		FromY:  fromY,
 		ToX:    toX,
 		ToY:    toY,
+		Color:  -1,
 	}
 	c.connections = append(c.connections, connection)
 }
@@ -710,6 +718,7 @@ func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY
 		Waypoints: waypoints,
 		ArrowFrom: false,
 		ArrowTo:   true,
+		Color:     -1,
 	}
 	c.connections = append(c.connections, connection)
 }
@@ -955,6 +964,7 @@ func (c *Canvas) MoveBoxOnly(id int, deltaX, deltaY int) {
 func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
+		oldX, oldY := box.X, box.Y
 		box.X += deltaX
 		box.Y += deltaY
 		if box.X < 0 {
@@ -964,61 +974,7 @@ func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
 			box.Y = 0
 		}
 
-		// Track which connections were updated and their old paths
-		var updatedConnections []connectionPathInfo
-
-		for i := range c.connections {
-			conn := &c.connections[i]
-
-			// Check if this connection involves the moved box
-			isFromThisBox := conn.FromID == id
-			isToThisBox := conn.ToID == id
-
-			if !isFromThisBox && !isToThisBox {
-				continue // Connection doesn't involve this box
-			}
-
-			// Store the old path before updating
-			oldPoints := []point{{X: conn.FromX, Y: conn.FromY}}
-			oldPoints = append(oldPoints, conn.Waypoints...)
-			oldPoints = append(oldPoints, point{X: conn.ToX, Y: conn.ToY})
-			updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
-
-			// Determine the types of endpoints
-			fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
-			toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
-			fromIsLinePoint := conn.FromID < 0
-			toIsLinePoint := conn.ToID < 0
-
-			if isFromThisBox && toIsValidBox {
-				// This box is the "from" box, connected to another valid box
-				c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
-			} else if isToThisBox && fromIsValidBox {
-				// This box is the "to" box, connected from another valid box
-				c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
-			} else if isFromThisBox && toIsLinePoint {
-				// Connection from this box to a free point (on a line)
-				// Keep the free point (ToX, ToY) fixed, adapt the box's anchor
-				conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
-				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
-			} else if isToThisBox && fromIsLinePoint {
-				// Connection from a free point (on a line) to this box
-				// Keep the free point (FromX, FromY) fixed, adapt the box's anchor
-				conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
-				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
-			} else if isFromThisBox && !toIsValidBox && !toIsLinePoint {
-				// Connection from this box to an invalid/deleted box - update our anchor anyway
-				conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
-				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
-			} else if isToThisBox && !fromIsValidBox && !fromIsLinePoint {
-				// Connection to this box from an invalid/deleted box - update our anchor anyway
-				conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
-				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
-			}
-		}
-
-		// Now update any connections that branch off from the updated connections
-		c.updateBranchConnections(updatedConnections)
+		c.rerouteConnectionsForMovedBox(id, box.X-oldX, box.Y-oldY)
 	}
 }
 
@@ -1028,57 +984,60 @@ type connectionPathInfo struct {
 	points  []point
 }
 
-// updateBranchConnections updates connections that have line-point endpoints on other connections
-// When a parent connection's path changes, branch points need to move with it
+// updateBranchConnections moves line-point endpoints that sat on a moved
+// connection's old path onto its new path. If the attachment point didn't move
+// it's a shared junction, not a branch, so the line is left alone.
 func (c *Canvas) updateBranchConnections(updatedConnections []connectionPathInfo) {
 	for i := range c.connections {
 		conn := &c.connections[i]
 
-		// Check if this connection has a line-point endpoint that might need updating
 		if conn.FromID < 0 {
-			// FromX, FromY is a line point - check if it was on an updated connection's old path
 			for _, updated := range updatedConnections {
 				if updated.connIdx == i {
-					continue // Don't check against ourselves
+					continue
 				}
 				if c.pointWasOnPath(conn.FromX, conn.FromY, updated.points) {
-					// This branch point was on the updated connection's old path
-					// Find the nearest point on the updated connection's NEW path
 					updatedConn := c.connections[updated.connIdx]
 					newPoints := []point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
 					newPoints = append(newPoints, updatedConn.Waypoints...)
 					newPoints = append(newPoints, point{X: updatedConn.ToX, Y: updatedConn.ToY})
-					conn.FromX, conn.FromY = c.findNearestPointOnPath(conn.FromX, conn.FromY, newPoints)
-
-					// Recalculate waypoints for this branch connection
-					if conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-						toBox := c.boxes[conn.ToID]
-						conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, &toBox)
+					newX, newY := c.findNearestPointOnPath(conn.FromX, conn.FromY, newPoints)
+					if newX == conn.FromX && newY == conn.FromY {
+						break
 					}
+					if !adjustEndpointKeepingPath(conn, true, newX-conn.FromX, newY-conn.FromY) {
+						if conn.ToID >= 0 && conn.ToID < len(c.boxes) {
+							toBox := c.boxes[conn.ToID]
+							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, &toBox)
+						}
+					}
+					simplifyConnectionPath(conn)
 					break
 				}
 			}
 		}
 
 		if conn.ToID < 0 {
-			// ToX, ToY is a line point - check if it was on an updated connection's old path
 			for _, updated := range updatedConnections {
 				if updated.connIdx == i {
 					continue
 				}
 				if c.pointWasOnPath(conn.ToX, conn.ToY, updated.points) {
-					// This branch point was on the updated connection's old path
 					updatedConn := c.connections[updated.connIdx]
 					newPoints := []point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
 					newPoints = append(newPoints, updatedConn.Waypoints...)
 					newPoints = append(newPoints, point{X: updatedConn.ToX, Y: updatedConn.ToY})
-					conn.ToX, conn.ToY = c.findNearestPointOnPath(conn.ToX, conn.ToY, newPoints)
-
-					// Recalculate waypoints for this branch connection
-					if conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-						fromBox := c.boxes[conn.FromID]
-						conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, &fromBox, nil)
+					newX, newY := c.findNearestPointOnPath(conn.ToX, conn.ToY, newPoints)
+					if newX == conn.ToX && newY == conn.ToY {
+						break
 					}
+					if !adjustEndpointKeepingPath(conn, false, newX-conn.ToX, newY-conn.ToY) {
+						if conn.FromID >= 0 && conn.FromID < len(c.boxes) {
+							fromBox := c.boxes[conn.FromID]
+							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, &fromBox, nil)
+						}
+					}
+					simplifyConnectionPath(conn)
 					break
 				}
 			}
@@ -1159,29 +1118,202 @@ func (c *Canvas) recalculateConnectionRoute(conn *Connection) {
 	conn.Waypoints = c.createSmartWaypoints(conn)
 }
 
-// updateConnectionAfterMove updates a connection after one of its boxes moved
-// The stationary box's anchor stays fixed; the moved box's anchor adapts to create a clean connection
-func (c *Canvas) updateConnectionAfterMove(conn *Connection, movedBoxID int, deltaX, deltaY int) {
-	if conn.FromID < 0 || conn.FromID >= len(c.boxes) ||
-		conn.ToID < 0 || conn.ToID >= len(c.boxes) {
+// rerouteConnectionsForMovedBox re-routes connections touching box id after it
+// moved by (deltaX, deltaY), which must be the box's ACTUAL (post-clamp) motion
+// so anchors stay on the edges. Anchored endpoints translate with the box,
+// keeping the existing path; an anchor is only re-picked when its edge stops
+// facing the path (the box was dragged past it).
+func (c *Canvas) rerouteConnectionsForMovedBox(id, deltaX, deltaY int) {
+	if id < 0 || id >= len(c.boxes) || (deltaX == 0 && deltaY == 0) {
 		return
 	}
+	box := &c.boxes[id]
 
-	fromBox := c.boxes[conn.FromID]
-	toBox := c.boxes[conn.ToID]
+	var updatedConnections []connectionPathInfo
 
-	if movedBoxID == conn.FromID {
-		// The "from" box moved - keep "to" anchor fixed, adapt "from" anchor
-		// The "from" anchor should find the best edge to connect to the fixed "to" anchor
-		conn.FromX, conn.FromY = c.findBestAnchorPoint(fromBox, conn.ToX, conn.ToY)
-	} else if movedBoxID == conn.ToID {
-		// The "to" box moved - keep "from" anchor fixed, adapt "to" anchor
-		// The "to" anchor should find the best edge to connect to the fixed "from" anchor
-		conn.ToX, conn.ToY = c.findBestAnchorPoint(toBox, conn.FromX, conn.FromY)
+	for i := range c.connections {
+		conn := &c.connections[i]
+
+		isFromThisBox := conn.FromID == id
+		isToThisBox := conn.ToID == id
+		if !isFromThisBox && !isToThisBox {
+			continue
+		}
+
+		// Old path is captured before mutating so branch points can follow it.
+		oldPoints := []point{{X: conn.FromX, Y: conn.FromY}}
+		oldPoints = append(oldPoints, conn.Waypoints...)
+		oldPoints = append(oldPoints, point{X: conn.ToX, Y: conn.ToY})
+		updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
+
+		fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
+		toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
+
+		// Face the ADJACENT waypoint, not the far endpoint: a line can leave its
+		// far end one way yet approach this box from another via its waypoints.
+		regenerate := false
+		if isFromThisBox {
+			refX, refY := conn.ToX, conn.ToY
+			if len(conn.Waypoints) > 0 {
+				refX, refY = conn.Waypoints[0].X, conn.Waypoints[0].Y
+			}
+			if c.anchorFacesTarget(*box, conn.FromX+deltaX, conn.FromY+deltaY, refX, refY) {
+				if !adjustEndpointKeepingPath(conn, true, deltaX, deltaY) {
+					regenerate = true
+				}
+			} else {
+				conn.FromX, conn.FromY = c.reanchor(*box, conn.FromX+deltaX, conn.FromY+deltaY, refX, refY)
+				regenerate = true
+			}
+		} else { // isToThisBox
+			refX, refY := conn.FromX, conn.FromY
+			if len(conn.Waypoints) > 0 {
+				refX, refY = conn.Waypoints[len(conn.Waypoints)-1].X, conn.Waypoints[len(conn.Waypoints)-1].Y
+			}
+			if c.anchorFacesTarget(*box, conn.ToX+deltaX, conn.ToY+deltaY, refX, refY) {
+				if !adjustEndpointKeepingPath(conn, false, deltaX, deltaY) {
+					regenerate = true
+				}
+			} else {
+				conn.ToX, conn.ToY = c.reanchor(*box, conn.ToX+deltaX, conn.ToY+deltaY, refX, refY)
+				regenerate = true
+			}
+		}
+
+		if regenerate {
+			if fromIsValidBox && toIsValidBox {
+				conn.Waypoints = c.createFlexibleWaypoints(conn, c.boxes[conn.FromID], c.boxes[conn.ToID])
+			} else if isFromThisBox {
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
+			} else {
+				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
+			}
+		}
+		simplifyConnectionPath(conn)
 	}
 
-	// Recalculate waypoints with improved routing
-	conn.Waypoints = c.createFlexibleWaypoints(conn, fromBox, toBox)
+	c.updateBranchConnections(updatedConnections)
+}
+
+// reanchor picks a new anchor when the box moved so the old edge no longer faces
+// the target. (ax, ay) is the old anchor translated with the box. For a straight
+// flip to the opposite edge on the same axis it keeps the anchor's offset along
+// the edge (so e.g. a mid-edge anchor stays mid-edge); otherwise it falls back to
+// findBestAnchorPoint.
+func (c *Canvas) reanchor(box Box, ax, ay, targetX, targetY int) (int, int) {
+	switch c.getConnectionEdge(box, ax, ay) {
+	case "left", "right":
+		if targetX <= box.X {
+			return box.X, ay
+		}
+		if targetX >= box.X+box.Width-1 {
+			return box.X + box.Width - 1, ay
+		}
+	case "top", "bottom":
+		if targetY <= box.Y {
+			return ax, box.Y
+		}
+		if targetY >= box.Y+box.Height-1 {
+			return ax, box.Y + box.Height - 1
+		}
+	}
+	return c.findBestAnchorPoint(box, targetX, targetY)
+}
+
+// anchorFacesTarget reports whether the box edge the anchor sits on still points
+// toward the target (if not, the anchor should be re-picked, not translated).
+func (c *Canvas) anchorFacesTarget(box Box, anchorX, anchorY, targetX, targetY int) bool {
+	switch c.getConnectionEdge(box, anchorX, anchorY) {
+	case "right":
+		return targetX >= box.X+box.Width-1
+	case "left":
+		return targetX <= box.X
+	case "top":
+		return targetY <= box.Y
+	case "bottom":
+		return targetY >= box.Y+box.Height-1
+	default:
+		return false
+	}
+}
+
+// adjustEndpointKeepingPath translates the moved endpoint by (dx,dy) and keeps
+// the rest of the path fixed, stretching only the segment to the neighbouring
+// waypoint (so a shared trunk and its branches stay put). Returns false when the
+// path can't be preserved (no waypoints, or the adjacent segment wasn't
+// axis-aligned); the anchor is still translated and the caller should regenerate.
+func adjustEndpointKeepingPath(conn *Connection, movingFrom bool, dx, dy int) bool {
+	if movingFrom {
+		oldX, oldY := conn.FromX, conn.FromY
+		conn.FromX += dx
+		conn.FromY += dy
+		if len(conn.Waypoints) == 0 {
+			return false
+		}
+		w := &conn.Waypoints[0]
+		switch {
+		case w.Y == oldY:
+			w.Y = conn.FromY
+		case w.X == oldX:
+			w.X = conn.FromX
+		default:
+			return false
+		}
+		return true
+	}
+
+	oldX, oldY := conn.ToX, conn.ToY
+	conn.ToX += dx
+	conn.ToY += dy
+	if len(conn.Waypoints) == 0 {
+		return false
+	}
+	w := &conn.Waypoints[len(conn.Waypoints)-1]
+	switch {
+	case w.Y == oldY:
+		w.Y = conn.ToY
+	case w.X == oldX:
+		w.X = conn.ToX
+	default:
+		return false
+	}
+	return true
+}
+
+// simplifyConnectionPath drops redundant waypoints (duplicates, and points
+// collinear with their neighbours) that would otherwise render as a stray
+// junction character on a straightened line.
+func simplifyConnectionPath(conn *Connection) {
+	if len(conn.Waypoints) == 0 {
+		return
+	}
+	pts := make([]point, 0, len(conn.Waypoints)+2)
+	pts = append(pts, point{X: conn.FromX, Y: conn.FromY})
+	pts = append(pts, conn.Waypoints...)
+	pts = append(pts, point{X: conn.ToX, Y: conn.ToY})
+
+	kept := pts[:1]
+	for i := 1; i < len(pts)-1; i++ {
+		prev := kept[len(kept)-1]
+		cur := pts[i]
+		next := pts[i+1]
+		if cur == prev {
+			continue
+		}
+		if (prev.X == cur.X && cur.X == next.X) || (prev.Y == cur.Y && cur.Y == next.Y) {
+			continue
+		}
+		kept = append(kept, cur)
+	}
+	if end := pts[len(pts)-1]; end != kept[len(kept)-1] {
+		kept = append(kept, end)
+	}
+
+	if len(kept) <= 2 {
+		conn.Waypoints = nil
+	} else {
+		conn.Waypoints = append([]point(nil), kept[1:len(kept)-1]...)
+	}
 }
 
 // findBestAnchorPoint finds the best anchor point on a box to connect to a target point
@@ -1667,63 +1799,7 @@ func (c *Canvas) SetBoxPosition(id int, x, y int) {
 		}
 
 		if box.X != oldX || box.Y != oldY {
-			deltaX, deltaY := box.X-oldX, box.Y-oldY
-
-			// Track which connections were updated and their old paths
-			var updatedConnections []connectionPathInfo
-
-			for i := range c.connections {
-				conn := &c.connections[i]
-
-				// Check if this connection involves the moved box
-				isFromThisBox := conn.FromID == id
-				isToThisBox := conn.ToID == id
-
-				if !isFromThisBox && !isToThisBox {
-					continue // Connection doesn't involve this box
-				}
-
-				// Store the old path before updating
-				oldPoints := []point{{X: conn.FromX, Y: conn.FromY}}
-				oldPoints = append(oldPoints, conn.Waypoints...)
-				oldPoints = append(oldPoints, point{X: conn.ToX, Y: conn.ToY})
-				updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
-
-				// Determine the types of endpoints
-				fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
-				toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
-				fromIsLinePoint := conn.FromID < 0
-				toIsLinePoint := conn.ToID < 0
-
-				if isFromThisBox && toIsValidBox {
-					// This box is the "from" box, connected to another valid box
-					c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
-				} else if isToThisBox && fromIsValidBox {
-					// This box is the "to" box, connected from another valid box
-					c.updateConnectionAfterMove(conn, id, deltaX, deltaY)
-				} else if isFromThisBox && toIsLinePoint {
-					// Connection from this box to a free point (on a line)
-					// Keep the free point (ToX, ToY) fixed, adapt the box's anchor
-					conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
-					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
-				} else if isToThisBox && fromIsLinePoint {
-					// Connection from a free point (on a line) to this box
-					// Keep the free point (FromX, FromY) fixed, adapt the box's anchor
-					conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
-					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
-				} else if isFromThisBox && !toIsValidBox && !toIsLinePoint {
-					// Connection from this box to an invalid/deleted box - update our anchor anyway
-					conn.FromX, conn.FromY = c.findBestAnchorPoint(*box, conn.ToX, conn.ToY)
-					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
-				} else if isToThisBox && !fromIsValidBox && !fromIsLinePoint {
-					// Connection to this box from an invalid/deleted box - update our anchor anyway
-					conn.ToX, conn.ToY = c.findBestAnchorPoint(*box, conn.FromX, conn.FromY)
-					conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
-				}
-			}
-
-			// Now update any connections that branch off from the updated connections
-			c.updateBranchConnections(updatedConnections)
+			c.rerouteConnectionsForMovedBox(id, box.X-oldX, box.Y-oldY)
 		}
 	}
 }
@@ -1739,6 +1815,37 @@ func (c *Canvas) SetBoxPositionOnly(id int, x, y int) {
 		}
 		if box.Y < 0 {
 			box.Y = 0
+		}
+	}
+}
+
+// SnapshotConnections deep-copies every connection so a drag can re-derive
+// routing from the original state each move (idempotent) instead of accumulating.
+func (c *Canvas) SnapshotConnections() []Connection {
+	snap := make([]Connection, len(c.connections))
+	for i, conn := range c.connections {
+		snap[i] = conn
+		if len(conn.Waypoints) > 0 {
+			snap[i].Waypoints = append([]point(nil), conn.Waypoints...)
+		} else {
+			snap[i].Waypoints = nil
+		}
+	}
+	return snap
+}
+
+// RestoreConnectionsSnapshot restores a SnapshotConnections result by index
+// (no-op unless the count matches, which holds during a drag).
+func (c *Canvas) RestoreConnectionsSnapshot(snap []Connection) {
+	if len(snap) != len(c.connections) {
+		return
+	}
+	for i, conn := range snap {
+		c.connections[i] = conn
+		if len(conn.Waypoints) > 0 {
+			c.connections[i].Waypoints = append([]point(nil), conn.Waypoints...)
+		} else {
+			c.connections[i].Waypoints = nil
 		}
 	}
 }
@@ -1762,7 +1869,6 @@ func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
 	var result []Connection
 	for _, conn := range c.connections {
 		if conn.FromID == boxID || conn.ToID == boxID {
-			// Make a deep copy of the connection
 			connCopy := Connection{
 				FromID:    conn.FromID,
 				ToID:      conn.ToID,
@@ -1773,6 +1879,7 @@ func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
 				ArrowFrom: conn.ArrowFrom,
 				ArrowTo:   conn.ArrowTo,
 				Waypoints: make([]point, len(conn.Waypoints)),
+				Color:     conn.Color,
 			}
 			copy(connCopy.Waypoints, conn.Waypoints)
 			result = append(result, connCopy)
@@ -2012,6 +2119,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			ToX:       previewToX,
 			ToY:       previewToY,
 			Waypoints: make([]point, len(previewWaypoints)),
+			Color:     -1,
 		}
 		for i, wp := range previewWaypoints {
 			previewConnection.Waypoints[i] = point{X: wp.X, Y: wp.Y}
@@ -2027,6 +2135,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			Y:     editTextY,
 			Lines: strings.Split(editText, "\n"),
 			ID:    -1,
+			Color: -1,
 		}
 		c.drawTextWithPan(canvas, previewText, panX, panY)
 	}
@@ -2231,59 +2340,37 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		}
 	}
 
+	// Object colors, before highlights so an explicit highlight still wins.
+	paintCells := func(cells []point, colorIndex int) {
+		if colorIndex < 0 {
+			return
+		}
+		for _, cell := range cells {
+			sx, sy := cell.X-panX, cell.Y-panY
+			if sy >= 0 && sy < height && sx >= 0 && sx < width &&
+				sy < len(colorMap) && sx < len(colorMap[sy]) {
+				colorMap[sy][sx] = colorIndex
+			}
+		}
+	}
+	for i := range c.connections {
+		paintCells(c.GetConnectionCells(i), c.connections[i].Color)
+	}
+	for i := range c.texts {
+		paintCells(c.GetTextCells(i), c.texts[i].Color)
+	}
+	for _, i := range boxOrder {
+		box := c.boxes[i]
+		if box.Color < 0 {
+			continue
+		}
+		paintCells(c.GetBoxBorderCells(i), box.Color)
+		paintCells(c.GetBoxTitleBarCells(i), box.Color)
+	}
+
 	for key, colorIndex := range c.highlights {
 		var x, y int
 		fmt.Sscanf(key, "%d,%d", &x, &y)
-
-		// Only show highlights that are inside visible content:
-		// - Inside a box's content area (interior), OR
-		// - On a box's border, OR
-		// - Inside a text object's bounds
-		// This ensures highlights from resized boxes don't "leak" onto the canvas
-		isInsideVisibleContent := false
-
-		// Check if inside any box's content area OR on the box's border
-		for _, box := range c.boxes {
-			// Check if inside box content area
-			if x >= box.X+1 && x < box.X+box.Width-1 && y >= box.Y+1 && y < box.Y+box.Height-1 {
-				isInsideVisibleContent = true
-				break
-			}
-			// Check if on box border (edge cells)
-			if x >= box.X && x < box.X+box.Width && y >= box.Y && y < box.Y+box.Height {
-				// Check if on top or bottom row
-				if y == box.Y || y == box.Y+box.Height-1 {
-					isInsideVisibleContent = true
-					break
-				}
-				// Check if on left or right edge
-				if x == box.X || x == box.X+box.Width-1 {
-					isInsideVisibleContent = true
-					break
-				}
-			}
-		}
-
-		// Check if inside any text object's bounds
-		if !isInsideVisibleContent {
-			for _, text := range c.texts {
-				for lineIdx, line := range text.Lines {
-					lineY := text.Y + lineIdx
-					if y == lineY && x >= text.X && x < text.X+len(line) {
-						isInsideVisibleContent = true
-						break
-					}
-				}
-				if isInsideVisibleContent {
-					break
-				}
-			}
-		}
-
-		// Skip highlights that aren't inside visible content
-		if !isInsideVisibleContent {
-			continue
-		}
 
 		screenX := x - panX
 		screenY := y - panY
@@ -2631,503 +2718,6 @@ func (c *Canvas) isPointInBoxScreen(x, y int, excludeFromID, excludeToID int, pa
 	return false
 }
 
-func (c *Canvas) drawLineSegment(canvas [][]rune, fromX, fromY, toX, toY int, excludeFromID, excludeToID int, drawArrowFrom, drawArrowTo bool, skipCorner bool, originalConnection Connection, panX, panY int) {
-	if fromX == toX && fromY == toY {
-		return
-	}
-
-	if fromX == toX {
-		var lineStartY, lineEndY int
-		var arrowY int
-		var arrowChar rune
-
-		if fromY < toY {
-			lineStartY = fromY + 1
-			lineEndY = toY - 1
-			arrowY = toY - 1
-			arrowChar = '▼'
-		} else {
-			lineStartY = toY + 1
-			lineEndY = fromY - 1
-			arrowY = toY + 1
-			arrowChar = '▲'
-		}
-
-		for y := lineStartY; y <= lineEndY; y++ {
-			if c.isValidPos(canvas, fromX, y) && !c.isPointInBoxScreen(fromX, y, excludeFromID, excludeToID, panX, panY) {
-				canvas[y][fromX] = '│'
-			}
-		}
-
-		if drawArrowTo && c.isValidPos(canvas, toX, arrowY) {
-			canvas[arrowY][toX] = arrowChar
-		}
-		if drawArrowFrom {
-			var fromArrowY int
-			var fromArrowChar rune
-			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
-				fromBox := c.boxes[excludeFromID]
-				fromBoxScreenY := fromBox.Y - panY
-				fromOnTopEdge := (fromY == fromBoxScreenY)
-				fromOnBottomEdge := (fromY == fromBoxScreenY+fromBox.Height-1)
-				if !fromOnTopEdge && !fromOnBottomEdge {
-					if abs(fromY-fromBoxScreenY) < abs(fromY-(fromBoxScreenY+fromBox.Height-1)) {
-						fromOnTopEdge = true
-					} else {
-						fromOnBottomEdge = true
-					}
-				}
-				if fromOnTopEdge {
-					fromArrowY = fromBoxScreenY - 1
-					fromArrowChar = '▼'
-				} else if fromOnBottomEdge {
-					fromArrowY = fromBoxScreenY + fromBox.Height
-					fromArrowChar = '▲'
-				} else {
-					if fromY < toY {
-						fromArrowY = fromY + 1
-						fromArrowChar = '▲'
-					} else {
-						fromArrowY = fromY - 1
-						fromArrowChar = '▼'
-					}
-				}
-			} else {
-				if fromY < toY {
-					fromArrowY = fromY + 1
-					fromArrowChar = '▲'
-				} else {
-					fromArrowY = fromY - 1
-					fromArrowChar = '▼'
-				}
-			}
-			if c.isValidPos(canvas, fromX, fromArrowY) && !c.isPointInBoxScreen(fromX, fromArrowY, excludeFromID, excludeToID, panX, panY) {
-				canvas[fromArrowY][fromX] = fromArrowChar
-			}
-		}
-
-	} else if fromY == toY {
-		var lineStartX, lineEndX int
-		var arrowX int
-		var arrowChar rune
-
-		var onLeftEdge, onRightEdge bool
-		if excludeToID >= 0 && excludeToID < len(c.boxes) {
-			toBox := c.boxes[excludeToID]
-			toBoxScreenX := toBox.X - panX
-			onLeftEdge = (toX == toBoxScreenX)
-			onRightEdge = (toX == toBoxScreenX+toBox.Width-1)
-			if !onLeftEdge && !onRightEdge {
-				if abs(toX-toBoxScreenX) < abs(toX-(toBoxScreenX+toBox.Width-1)) {
-					onLeftEdge = true
-				} else {
-					onRightEdge = true
-				}
-			}
-		}
-
-		if onLeftEdge {
-			arrowX = toX - 1
-			arrowChar = '▶'
-			if fromX < toX {
-				lineStartX = fromX + 1
-				lineEndX = toX - 1
-			} else {
-				lineStartX = toX - 1
-				lineEndX = fromX - 1
-			}
-		} else if onRightEdge {
-			arrowX = toX + 1
-			arrowChar = '◀'
-			if fromX < toX {
-				lineStartX = fromX + 1
-				lineEndX = toX + 1
-			} else {
-				lineStartX = toX + 1
-				lineEndX = fromX - 1
-			}
-		} else {
-			if fromX < toX {
-				lineStartX = fromX + 1
-				lineEndX = toX - 1
-				arrowX = toX - 1
-				arrowChar = '▶'
-			} else {
-				lineStartX = toX + 1
-				lineEndX = fromX - 1
-				arrowX = toX + 1
-				arrowChar = '◀'
-			}
-		}
-
-		for x := lineStartX; x <= lineEndX; x++ {
-			if c.isValidPos(canvas, x, fromY) && !c.isPointInBoxScreen(x, fromY, excludeFromID, excludeToID, panX, panY) {
-				canvas[fromY][x] = '─'
-			}
-		}
-
-		if drawArrowTo {
-			if excludeToID >= 0 && excludeToID < len(c.boxes) {
-				toBox := c.boxes[excludeToID]
-				toBoxScreenX := toBox.X - panX
-				if arrowX >= toBoxScreenX && arrowX < toBoxScreenX+toBox.Width {
-					if onLeftEdge {
-						arrowX = toBoxScreenX - 1
-					} else if onRightEdge {
-						arrowX = toBoxScreenX + toBox.Width
-					}
-				}
-			}
-			if c.isValidPos(canvas, arrowX, toY) {
-				if !c.isPointInBoxScreen(arrowX, toY, excludeFromID, excludeToID, panX, panY) {
-					canvas[toY][arrowX] = arrowChar
-				}
-			}
-		}
-		if drawArrowFrom {
-			var fromArrowX int
-			var fromArrowChar rune
-			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
-				fromBox := c.boxes[excludeFromID]
-				fromBoxScreenX := fromBox.X - panX
-				fromOnLeftEdge := (fromX == fromBoxScreenX)
-				fromOnRightEdge := (fromX == fromBoxScreenX+fromBox.Width-1)
-				if !fromOnLeftEdge && !fromOnRightEdge {
-					if abs(fromX-fromBoxScreenX) < abs(fromX-(fromBoxScreenX+fromBox.Width-1)) {
-						fromOnLeftEdge = true
-					} else {
-						fromOnRightEdge = true
-					}
-				}
-				if fromOnLeftEdge {
-					fromArrowX = fromBoxScreenX - 1
-					fromArrowChar = '▶'
-				} else if fromOnRightEdge {
-					fromArrowX = fromBoxScreenX + fromBox.Width
-					fromArrowChar = '◀'
-				} else {
-					if fromX < toX {
-						fromArrowX = fromX - 1
-						fromArrowChar = '▶'
-					} else {
-						fromArrowX = fromX + 1
-						fromArrowChar = '◀'
-					}
-				}
-			} else {
-				if fromX < toX {
-					fromArrowX = fromX - 1
-					fromArrowChar = '▶'
-				} else {
-					fromArrowX = fromX + 1
-					fromArrowChar = '◀'
-				}
-			}
-			if c.isValidPos(canvas, fromArrowX, fromY) {
-				if !c.isPointInBoxScreen(fromArrowX, fromY, excludeFromID, excludeToID, panX, panY) {
-					canvas[fromY][fromArrowX] = fromArrowChar
-				}
-			}
-		}
-
-	} else {
-		cornerX := toX
-		cornerY := fromY
-
-		var hStartX, hEndX int
-		if fromX < cornerX {
-			hStartX = fromX + 1
-			hEndX = cornerX - 1
-		} else {
-			hStartX = cornerX + 1
-			hEndX = fromX - 1
-		}
-
-		if hStartX <= hEndX {
-			for x := hStartX; x <= hEndX; x++ {
-				if c.isValidPos(canvas, x, fromY) && !c.isPointInBoxScreen(x, fromY, excludeFromID, excludeToID, panX, panY) {
-					canvas[fromY][x] = '─'
-				}
-			}
-		}
-
-		var vStartY, vEndY int
-		if cornerY < toY {
-			vStartY = cornerY + 1
-			vEndY = toY - 1
-		} else {
-			vStartY = toY + 1
-			vEndY = cornerY - 1
-		}
-
-		if vStartY <= vEndY {
-			for y := vStartY; y <= vEndY; y++ {
-				if c.isValidPos(canvas, cornerX, y) && !c.isPointInBoxScreen(cornerX, y, excludeFromID, excludeToID, panX, panY) {
-					canvas[y][cornerX] = '│'
-				}
-			}
-		}
-
-		if !skipCorner && c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBoxScreen(cornerX, cornerY, excludeFromID, excludeToID, panX, panY) {
-			if fromX < toX && fromY < toY {
-				canvas[cornerY][cornerX] = '┐'
-			} else if fromX < toX && fromY > toY {
-				canvas[cornerY][cornerX] = '┘'
-			} else if fromX > toX && fromY < toY {
-				canvas[cornerY][cornerX] = '┌'
-			} else if fromX > toX && fromY > toY {
-				canvas[cornerY][cornerX] = '└'
-			}
-		}
-
-		if drawArrowTo {
-			var arrowX, arrowY int
-			var arrowChar rune
-			// Use screen coordinates for calculations
-
-			if excludeToID >= 0 && excludeToID < len(c.boxes) {
-				toBox := c.boxes[excludeToID]
-				toBoxScreenX := toBox.X - panX
-				toBoxScreenY := toBox.Y - panY
-				origToX := originalConnection.ToX
-				origToY := originalConnection.ToY
-				origToXScreen := origToX - panX
-				origToYScreen := origToY - panY
-
-				onLeftEdge := (origToXScreen == toBoxScreenX)
-				onRightEdge := (origToXScreen == toBoxScreenX+toBox.Width-1)
-				onTopEdge := (origToYScreen == toBoxScreenY)
-				onBottomEdge := (origToYScreen == toBoxScreenY+toBox.Height-1)
-
-				if !onLeftEdge && !onRightEdge && !onTopEdge && !onBottomEdge {
-					if abs(origToXScreen-toBoxScreenX) <= abs(origToXScreen-(toBoxScreenX+toBox.Width-1)) && abs(origToXScreen-toBoxScreenX) <= abs(origToYScreen-toBoxScreenY) && abs(origToXScreen-toBoxScreenX) <= abs(origToYScreen-(toBoxScreenY+toBox.Height-1)) {
-						onLeftEdge = true
-					} else if abs(origToXScreen-(toBoxScreenX+toBox.Width-1)) <= abs(origToYScreen-toBoxScreenY) && abs(origToXScreen-(toBoxScreenX+toBox.Width-1)) <= abs(origToYScreen-(toBoxScreenY+toBox.Height-1)) {
-						onRightEdge = true
-					} else if abs(origToYScreen-toBoxScreenY) <= abs(origToYScreen-(toBoxScreenY+toBox.Height-1)) {
-						onTopEdge = true
-					} else {
-						onBottomEdge = true
-					}
-				}
-
-				if onLeftEdge {
-					arrowX = toBoxScreenX - 1
-					arrowY = origToYScreen
-					arrowChar = '▶'
-				} else if onRightEdge {
-					arrowX = toBoxScreenX + toBox.Width
-					arrowY = origToYScreen
-					arrowChar = '◀'
-				} else if onTopEdge {
-					arrowX = origToXScreen
-					arrowY = toBoxScreenY - 1
-					arrowChar = '▲'
-				} else if onBottomEdge {
-					arrowX = origToXScreen
-					arrowY = toBoxScreenY + toBox.Height
-					arrowChar = '▼'
-				} else {
-					if cornerY < toY {
-						arrowX = toX
-						arrowY = toY - 1
-						arrowChar = '▼'
-					} else if cornerY > toY {
-						arrowX = toX
-						arrowY = toY + 1
-						arrowChar = '▲'
-					} else {
-						if origToXScreen < toBoxScreenX+toBox.Width/2 {
-							arrowX = toBoxScreenX - 1
-							arrowY = origToYScreen
-							arrowChar = '▶'
-						} else {
-							arrowX = toBoxScreenX + toBox.Width
-							arrowY = origToYScreen
-							arrowChar = '◀'
-						}
-					}
-				}
-			} else {
-				if cornerY < toY {
-					arrowX = toX
-					arrowY = toY - 1
-					arrowChar = '▼'
-				} else if cornerY > toY {
-					arrowX = toX
-					arrowY = toY + 1
-					arrowChar = '▲'
-				} else {
-					if fromX < toX {
-						arrowX = toX - 1
-						arrowY = toY
-						arrowChar = '▶'
-					} else {
-						arrowX = toX + 1
-						arrowY = toY
-						arrowChar = '◀'
-					}
-				}
-			}
-
-			if arrowY == toY && arrowX != cornerX {
-				var hSegStartX, hSegEndX int
-				if cornerX < arrowX {
-					hSegStartX = cornerX + 1
-					hSegEndX = arrowX - 1
-				} else {
-					hSegStartX = arrowX + 1
-					hSegEndX = cornerX - 1
-				}
-
-				for x := hSegStartX; x <= hSegEndX; x++ {
-					if c.isValidPos(canvas, x, arrowY) && !c.isPointInBoxScreen(x, arrowY, excludeFromID, excludeToID, panX, panY) {
-						canvas[arrowY][x] = '─'
-					}
-				}
-			}
-
-			if c.isValidPos(canvas, arrowX, arrowY) && !c.isPointInBoxScreen(arrowX, arrowY, excludeFromID, excludeToID, panX, panY) {
-				canvas[arrowY][arrowX] = arrowChar
-			}
-		}
-		if drawArrowFrom {
-			var fromArrowX, fromArrowY int
-			var fromArrowChar rune
-			// Use screen coordinates for calculations
-			if excludeFromID >= 0 && excludeFromID < len(c.boxes) {
-				fromBox := c.boxes[excludeFromID]
-				fromBoxScreenX := fromBox.X - panX
-				fromBoxScreenY := fromBox.Y - panY
-				origFromX := originalConnection.FromX
-				origFromY := originalConnection.FromY
-				origFromXScreen := origFromX - panX
-				origFromYScreen := origFromY - panY
-
-				fromOnLeftEdge := (origFromXScreen == fromBoxScreenX)
-				fromOnRightEdge := (origFromXScreen == fromBoxScreenX+fromBox.Width-1)
-				fromOnTopEdge := (origFromYScreen == fromBoxScreenY)
-				fromOnBottomEdge := (origFromYScreen == fromBoxScreenY+fromBox.Height-1)
-				if !fromOnLeftEdge && !fromOnRightEdge {
-					if abs(origFromXScreen-fromBoxScreenX) < abs(origFromXScreen-(fromBoxScreenX+fromBox.Width-1)) {
-						fromOnLeftEdge = true
-					} else {
-						fromOnRightEdge = true
-					}
-				}
-				if !fromOnTopEdge && !fromOnBottomEdge {
-					if abs(origFromYScreen-fromBoxScreenY) < abs(origFromYScreen-(fromBoxScreenY+fromBox.Height-1)) {
-						fromOnTopEdge = true
-					} else {
-						fromOnBottomEdge = true
-					}
-				}
-				if fromOnTopEdge {
-					fromArrowX = origFromXScreen
-					fromArrowY = fromBoxScreenY - 1
-					fromArrowChar = '▼'
-				} else if fromOnBottomEdge {
-					fromArrowX = origFromXScreen
-					fromArrowY = fromBoxScreenY + fromBox.Height
-					fromArrowChar = '▲'
-				} else if fromOnLeftEdge {
-					fromArrowX = fromBoxScreenX - 1
-					fromArrowY = origFromYScreen
-					fromArrowChar = '▶'
-				} else if fromOnRightEdge {
-					fromArrowX = fromBoxScreenX + fromBox.Width
-					fromArrowY = origFromYScreen
-					fromArrowChar = '◀'
-				} else {
-					if origFromXScreen == cornerX {
-						if origFromYScreen < cornerY {
-							fromArrowX = fromX
-							fromArrowY = fromY - 1
-							fromArrowChar = '▼'
-						} else {
-							fromArrowX = fromX
-							fromArrowY = fromY + 1
-							fromArrowChar = '▲'
-						}
-					} else if origFromYScreen == cornerY {
-						if origFromXScreen < cornerX {
-							fromArrowX = fromX - 1
-							fromArrowY = fromY
-							fromArrowChar = '▶'
-						} else {
-							fromArrowX = fromX + 1
-							fromArrowY = fromY
-							fromArrowChar = '◀'
-						}
-					}
-				}
-			} else {
-				if fromX == cornerX {
-					if fromY < cornerY {
-						fromArrowX = fromX
-						fromArrowY = fromY - 1
-						fromArrowChar = '▼'
-					} else {
-						fromArrowX = fromX
-						fromArrowY = fromY + 1
-						fromArrowChar = '▲'
-					}
-				} else if fromY == cornerY {
-					if fromX < cornerX {
-						fromArrowX = fromX - 1
-						fromArrowY = fromY
-						fromArrowChar = '▶'
-					} else {
-						fromArrowX = fromX + 1
-						fromArrowY = fromY
-						fromArrowChar = '◀'
-					}
-				}
-			}
-			if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBoxScreen(fromArrowX, fromArrowY, excludeFromID, excludeToID, panX, panY) {
-				canvas[fromArrowY][fromArrowX] = fromArrowChar
-			}
-		}
-	}
-}
-
-func (c *Canvas) drawCorner(canvas [][]rune, cornerX, cornerY int, prevX, prevY, nextX, nextY int, excludeFromID, excludeToID int) {
-	if !c.isValidPos(canvas, cornerX, cornerY) {
-		return
-	}
-	if c.isPointInBox(cornerX, cornerY, excludeFromID, excludeToID) {
-		return
-	}
-
-	var cornerChar rune
-
-	if prevX != cornerX && nextY != cornerY {
-		if prevX < cornerX && cornerY < nextY {
-			cornerChar = '┐'
-		} else if prevX < cornerX && cornerY > nextY {
-			cornerChar = '┘'
-		} else if prevX > cornerX && cornerY < nextY {
-			cornerChar = '┌'
-		} else {
-			cornerChar = '└'
-		}
-	} else if prevY != cornerY && nextX != cornerX {
-		if prevY < cornerY && cornerX < nextX {
-			cornerChar = '└'
-		} else if prevY < cornerY && cornerX > nextX {
-			cornerChar = '┘'
-		} else if prevY > cornerY && cornerX < nextX {
-			cornerChar = '┌'
-		} else {
-			cornerChar = '┐'
-		}
-	} else {
-		return
-	}
-
-	canvas[cornerY][cornerX] = cornerChar
-}
-
 func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, panX, panY int) {
 	adjustedConnection := connection
 	adjustedConnection.FromX = connection.FromX - panX
@@ -3141,376 +2731,127 @@ func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, p
 	c.drawConnection(canvas, adjustedConnection, connection, panX, panY)
 }
 
+// drawConnection renders an orthogonal line through its waypoints. The path is
+// drawn cell-inclusive so it never breaks; bends get the matching elbow glyph,
+// and endpoints anchored to a box get an arrow.
 func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, originalConnection Connection, panX, panY int) {
-	fromX, fromY := connection.FromX, connection.FromY
-	toX, toY := connection.ToX, connection.ToY
-	origFromX, origFromY := originalConnection.FromX, originalConnection.FromY
-	origToX, origToY := originalConnection.ToX, originalConnection.ToY
+	pts := []point{{connection.FromX, connection.FromY}}
+	pts = append(pts, connection.Waypoints...)
+	pts = append(pts, point{connection.ToX, connection.ToY})
 
-	if len(connection.Waypoints) > 0 {
-		points := make([]point, 0, len(connection.Waypoints)+2)
-		points = append(points, point{fromX, fromY})
-		points = append(points, connection.Waypoints...)
-		points = append(points, point{toX, toY})
+	// Orthogonal vertex chain, matching GetConnectionCells (elbow at to.X,from.Y).
+	var verts []point
+	addV := func(p point) {
+		if len(verts) == 0 || verts[len(verts)-1] != p {
+			verts = append(verts, p)
+		}
+	}
+	for i := 0; i < len(pts)-1; i++ {
+		from, to := pts[i], pts[i+1]
+		addV(from)
+		if from.X != to.X && from.Y != to.Y {
+			addV(point{X: to.X, Y: from.Y})
+		}
+		addV(to)
+	}
+	if len(verts) < 2 {
+		return
+	}
 
-		for i := 0; i < len(points)-1; i++ {
-			prevPoint := points[i]
-			nextPoint := points[i+1]
-
-			drawFromArrow := (i == 0 && connection.ArrowFrom)
-			drawToArrow := (i == len(points)-2 && connection.ArrowTo)
-
-			if prevPoint.X == nextPoint.X {
-				startY := prevPoint.Y
-				endY := nextPoint.Y
-				if startY > endY {
-					startY, endY = endY, startY
-				}
-				for y := startY + 1; y < endY; y++ {
-					if c.isValidPos(canvas, prevPoint.X, y) && !c.isPointInBoxScreen(prevPoint.X, y, connection.FromID, connection.ToID, panX, panY) {
-						canvas[y][prevPoint.X] = '│'
-					}
-				}
-				// Draw a corner at prevPoint if the previous segment was horizontal
-				if i > 0 {
-					prevPrev := points[i-1]
-					prevWasHorizontal := prevPrev.Y == prevPoint.Y
-					if prevWasHorizontal {
-						cornerX, cornerY := prevPoint.X, prevPoint.Y
-						var cornerChar rune
-						if prevPrev.X < prevPoint.X && nextPoint.Y > prevPoint.Y {
-							cornerChar = '┐'
-						} else if prevPrev.X < prevPoint.X && nextPoint.Y < prevPoint.Y {
-							cornerChar = '┘'
-						} else if prevPrev.X > prevPoint.X && nextPoint.Y > prevPoint.Y {
-							cornerChar = '┌'
-						} else {
-							cornerChar = '└'
-						}
-						if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBoxScreen(cornerX, cornerY, connection.FromID, connection.ToID, panX, panY) {
-							canvas[cornerY][cornerX] = cornerChar
-						}
-					}
-				}
-				if drawFromArrow && i == 0 {
-					var fromArrowX, fromArrowY int
-					var fromArrowChar rune
-					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
-						fromBox := c.boxes[connection.FromID]
-						// Use original world coordinates for calculations
-						if abs(origFromX-fromBox.X) <= abs(origFromX-(fromBox.X+fromBox.Width-1)) && abs(origFromX-fromBox.X) <= abs(origFromY-fromBox.Y) && abs(origFromX-fromBox.X) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = (fromBox.X - 1) - panX
-							fromArrowY = origFromY - panY
-							fromArrowChar = '▶'
-						} else if abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-fromBox.Y) && abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = (fromBox.X + fromBox.Width) - panX
-							fromArrowY = origFromY - panY
-							fromArrowChar = '◀'
-						} else if abs(origFromY-fromBox.Y) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = origFromX - panX
-							fromArrowY = (fromBox.Y - 1) - panY
-							fromArrowChar = '▼'
-						} else {
-							fromArrowX = origFromX - panX
-							fromArrowY = (fromBox.Y + fromBox.Height) - panY
-							fromArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBoxScreen(fromArrowX, fromArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[fromArrowY][fromArrowX] = fromArrowChar
-					}
-				}
-				if drawToArrow && i == len(points)-2 {
-					var toArrowX, toArrowY int
-					var toArrowChar rune
-					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
-						toBox := c.boxes[connection.ToID]
-						// Use original world coordinates for calculations
-						if abs(origToX-toBox.X) <= abs(origToX-(toBox.X+toBox.Width-1)) && abs(origToX-toBox.X) <= abs(origToY-toBox.Y) && abs(origToX-toBox.X) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = (toBox.X - 1) - panX
-							toArrowY = origToY - panY
-							toArrowChar = '▶'
-						} else if abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-toBox.Y) && abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = (toBox.X + toBox.Width) - panX
-							toArrowY = origToY - panY
-							toArrowChar = '◀'
-						} else if abs(origToY-toBox.Y) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = origToX - panX
-							toArrowY = (toBox.Y - 1) - panY
-							toArrowChar = '▼'
-						} else {
-							toArrowX = origToX - panX
-							toArrowY = (toBox.Y + toBox.Height) - panY
-							toArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBoxScreen(toArrowX, toArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[toArrowY][toArrowX] = toArrowChar
-					}
-				}
-			} else if prevPoint.Y == nextPoint.Y {
-				startX := prevPoint.X
-				endX := nextPoint.X
-				if startX > endX {
-					startX, endX = endX, startX
-				}
-				for x := startX + 1; x < endX; x++ {
-					if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBoxScreen(x, prevPoint.Y, connection.FromID, connection.ToID, panX, panY) {
-						canvas[prevPoint.Y][x] = '─'
-					}
-				}
-				// Draw a corner at prevPoint if the previous segment was vertical
-				if i > 0 {
-					prevPrev := points[i-1]
-					prevWasVertical := prevPrev.X == prevPoint.X
-					if prevWasVertical {
-						cornerX, cornerY := prevPoint.X, prevPoint.Y
-						var cornerChar rune
-						if prevPrev.Y < prevPoint.Y && nextPoint.X > prevPoint.X {
-							cornerChar = '└'
-						} else if prevPrev.Y < prevPoint.Y && nextPoint.X < prevPoint.X {
-							cornerChar = '┘'
-						} else if prevPrev.Y > prevPoint.Y && nextPoint.X > prevPoint.X {
-							cornerChar = '┌'
-						} else {
-							cornerChar = '┐'
-						}
-						if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBoxScreen(cornerX, cornerY, connection.FromID, connection.ToID, panX, panY) {
-							canvas[cornerY][cornerX] = cornerChar
-						}
-					}
-				}
-				if drawFromArrow && i == 0 {
-					var fromArrowX, fromArrowY int
-					var fromArrowChar rune
-					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
-						fromBox := c.boxes[connection.FromID]
-						// Use original world coordinates for calculations
-						if abs(origFromX-fromBox.X) <= abs(origFromX-(fromBox.X+fromBox.Width-1)) && abs(origFromX-fromBox.X) <= abs(origFromY-fromBox.Y) && abs(origFromX-fromBox.X) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = (fromBox.X - 1) - panX
-							fromArrowY = origFromY - panY
-							fromArrowChar = '▶'
-						} else if abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-fromBox.Y) && abs(origFromX-(fromBox.X+fromBox.Width-1)) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = (fromBox.X + fromBox.Width) - panX
-							fromArrowY = origFromY - panY
-							fromArrowChar = '◀'
-						} else if abs(origFromY-fromBox.Y) <= abs(origFromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = origFromX - panX
-							fromArrowY = (fromBox.Y - 1) - panY
-							fromArrowChar = '▼'
-						} else {
-							fromArrowX = origFromX - panX
-							fromArrowY = (fromBox.Y + fromBox.Height) - panY
-							fromArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBoxScreen(fromArrowX, fromArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[fromArrowY][fromArrowX] = fromArrowChar
-					}
-				}
-				if drawToArrow && i == len(points)-2 {
-					var toArrowX, toArrowY int
-					var toArrowChar rune
-					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
-						toBox := c.boxes[connection.ToID]
-						// Use original world coordinates for calculations
-						if abs(origToX-toBox.X) <= abs(origToX-(toBox.X+toBox.Width-1)) && abs(origToX-toBox.X) <= abs(origToY-toBox.Y) && abs(origToX-toBox.X) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = (toBox.X - 1) - panX
-							toArrowY = origToY - panY
-							toArrowChar = '▶'
-						} else if abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-toBox.Y) && abs(origToX-(toBox.X+toBox.Width-1)) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = (toBox.X + toBox.Width) - panX
-							toArrowY = origToY - panY
-							toArrowChar = '◀'
-						} else if abs(origToY-toBox.Y) <= abs(origToY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = origToX - panX
-							toArrowY = (toBox.Y - 1) - panY
-							toArrowChar = '▼'
-						} else {
-							toArrowX = origToX - panX
-							toArrowY = (toBox.Y + toBox.Height) - panY
-							toArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBoxScreen(toArrowX, toArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[toArrowY][toArrowX] = toArrowChar
-					}
-				}
-			} else {
-				// Determine whether to turn horizontal-then-vertical or vertical-then-horizontal
-				firstHorizontal := true
-				if i > 0 {
-					prevPrev := points[i-1]
-					if prevPrev.X == prevPoint.X {
-						firstHorizontal = false
-					} else if prevPrev.Y == prevPoint.Y {
-						firstHorizontal = true
-					}
-				} else if i+2 < len(points) {
-					nextNext := points[i+2]
-					if nextPoint.X == nextNext.X {
-						firstHorizontal = true
-					} else if nextPoint.Y == nextNext.Y {
-						firstHorizontal = false
-					}
-				}
-
-				var cornerX, cornerY int
-				if firstHorizontal {
-					// Horizontal from prev -> corner, then vertical corner -> next
-					cornerX = nextPoint.X
-					cornerY = prevPoint.Y
-
-					if prevPoint.X < cornerX {
-						for x := prevPoint.X + 1; x < cornerX; x++ {
-							if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBoxScreen(x, prevPoint.Y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[prevPoint.Y][x] = '─'
-							}
-						}
-					} else if prevPoint.X > cornerX {
-						for x := cornerX + 1; x < prevPoint.X; x++ {
-							if c.isValidPos(canvas, x, prevPoint.Y) && !c.isPointInBoxScreen(x, prevPoint.Y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[prevPoint.Y][x] = '─'
-							}
-						}
-					}
-
-					if cornerY < nextPoint.Y {
-						for y := cornerY + 1; y < nextPoint.Y; y++ {
-							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBoxScreen(cornerX, y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[y][cornerX] = '│'
-							}
-						}
-					} else if cornerY > nextPoint.Y {
-						for y := nextPoint.Y + 1; y < cornerY; y++ {
-							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBoxScreen(cornerX, y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[y][cornerX] = '│'
-							}
-						}
-					}
-
-					var cornerChar rune
-					if prevPoint.X < cornerX && cornerY < nextPoint.Y {
-						cornerChar = '┐'
-					} else if prevPoint.X < cornerX && cornerY > nextPoint.Y {
-						cornerChar = '┘'
-					} else if prevPoint.X > cornerX && cornerY < nextPoint.Y {
-						cornerChar = '┌'
-					} else {
-						cornerChar = '└'
-					}
-					if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBoxScreen(cornerX, cornerY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[cornerY][cornerX] = cornerChar
-					}
-				} else {
-					// Vertical from prev -> corner, then horizontal corner -> next
-					cornerX = prevPoint.X
-					cornerY = nextPoint.Y
-
-					if prevPoint.Y < cornerY {
-						for y := prevPoint.Y + 1; y < cornerY; y++ {
-							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBoxScreen(cornerX, y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[y][cornerX] = '│'
-							}
-						}
-					} else if prevPoint.Y > cornerY {
-						for y := cornerY + 1; y < prevPoint.Y; y++ {
-							if c.isValidPos(canvas, cornerX, y) && !c.isPointInBoxScreen(cornerX, y, connection.FromID, connection.ToID, panX, panY) {
-								canvas[y][cornerX] = '│'
-							}
-						}
-					}
-
-					if cornerX < nextPoint.X {
-						for x := cornerX + 1; x < nextPoint.X; x++ {
-							if c.isValidPos(canvas, x, cornerY) && !c.isPointInBoxScreen(x, cornerY, connection.FromID, connection.ToID, panX, panY) {
-								canvas[cornerY][x] = '─'
-							}
-						}
-					} else if cornerX > nextPoint.X {
-						for x := nextPoint.X + 1; x < cornerX; x++ {
-							if c.isValidPos(canvas, x, cornerY) && !c.isPointInBoxScreen(x, cornerY, connection.FromID, connection.ToID, panX, panY) {
-								canvas[cornerY][x] = '─'
-							}
-						}
-					}
-
-					var cornerChar rune
-					if prevPoint.Y < cornerY && cornerX < nextPoint.X {
-						cornerChar = '└'
-					} else if prevPoint.Y < cornerY && cornerX > nextPoint.X {
-						cornerChar = '┘'
-					} else if prevPoint.Y > cornerY && cornerX < nextPoint.X {
-						cornerChar = '┌'
-					} else {
-						cornerChar = '┐'
-					}
-					if c.isValidPos(canvas, cornerX, cornerY) && !c.isPointInBoxScreen(cornerX, cornerY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[cornerY][cornerX] = cornerChar
-					}
-				}
-
-				if drawFromArrow && i == 0 {
-					var fromArrowX, fromArrowY int
-					var fromArrowChar rune
-					if connection.FromID >= 0 && connection.FromID < len(c.boxes) {
-						fromBox := c.boxes[connection.FromID]
-						fromX, fromY := connection.FromX, connection.FromY
-						if abs(fromX-fromBox.X) <= abs(fromX-(fromBox.X+fromBox.Width-1)) && abs(fromX-fromBox.X) <= abs(fromY-fromBox.Y) && abs(fromX-fromBox.X) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X - 1
-							fromArrowY = fromY
-							fromArrowChar = '▶'
-						} else if abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-fromBox.Y) && abs(fromX-(fromBox.X+fromBox.Width-1)) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromBox.X + fromBox.Width
-							fromArrowY = fromY
-							fromArrowChar = '◀'
-						} else if abs(fromY-fromBox.Y) <= abs(fromY-(fromBox.Y+fromBox.Height-1)) {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y - 1
-							fromArrowChar = '▼'
-						} else {
-							fromArrowX = fromX
-							fromArrowY = fromBox.Y + fromBox.Height
-							fromArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, fromArrowX, fromArrowY) && !c.isPointInBoxScreen(fromArrowX, fromArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[fromArrowY][fromArrowX] = fromArrowChar
-					}
-				}
-
-				if drawToArrow && i == len(points)-2 {
-					var toArrowX, toArrowY int
-					var toArrowChar rune
-					if connection.ToID >= 0 && connection.ToID < len(c.boxes) {
-						toBox := c.boxes[connection.ToID]
-						toX, toY := connection.ToX, connection.ToY
-						if abs(toX-toBox.X) <= abs(toX-(toBox.X+toBox.Width-1)) && abs(toX-toBox.X) <= abs(toY-toBox.Y) && abs(toX-toBox.X) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X - 1
-							toArrowY = toY
-							toArrowChar = '▶'
-						} else if abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-toBox.Y) && abs(toX-(toBox.X+toBox.Width-1)) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toBox.X + toBox.Width
-							toArrowY = toY
-							toArrowChar = '◀'
-						} else if abs(toY-toBox.Y) <= abs(toY-(toBox.Y+toBox.Height-1)) {
-							toArrowX = toX
-							toArrowY = toBox.Y - 1
-							toArrowChar = '▼'
-						} else {
-							toArrowX = toX
-							toArrowY = toBox.Y + toBox.Height
-							toArrowChar = '▲'
-						}
-					}
-					if c.isValidPos(canvas, toArrowX, toArrowY) && !c.isPointInBoxScreen(toArrowX, toArrowY, connection.FromID, connection.ToID, panX, panY) {
-						canvas[toArrowY][toArrowX] = toArrowChar
-					}
-				}
+	put := func(x, y int, ch rune) {
+		if c.isValidPos(canvas, x, y) && !c.isPointInBoxScreen(x, y, connection.FromID, connection.ToID, panX, panY) {
+			canvas[y][x] = ch
+		}
+	}
+	for i := 0; i < len(verts)-1; i++ {
+		a, b := verts[i], verts[i+1]
+		if a.X == b.X {
+			y0, y1 := a.Y, b.Y
+			if y0 > y1 {
+				y0, y1 = y1, y0
+			}
+			for y := y0; y <= y1; y++ {
+				put(a.X, y, '│')
+			}
+		} else {
+			x0, x1 := a.X, b.X
+			if x0 > x1 {
+				x0, x1 = x1, x0
+			}
+			for x := x0; x <= x1; x++ {
+				put(x, a.Y, '─')
 			}
 		}
-	} else {
-		c.drawLineSegment(canvas, fromX, fromY, toX, toY, connection.FromID, connection.ToID, connection.ArrowFrom, connection.ArrowTo, false, originalConnection, panX, panY)
+	}
+	for i := 1; i < len(verts)-1; i++ {
+		if ch := cornerChar(verts[i-1], verts[i], verts[i+1]); ch != 0 {
+			put(verts[i].X, verts[i].Y, ch)
+		}
+	}
+
+	if connection.ArrowFrom {
+		c.drawConnEndArrow(canvas, connection.FromID, originalConnection.FromX, originalConnection.FromY, panX, panY)
+	}
+	if connection.ArrowTo {
+		c.drawConnEndArrow(canvas, connection.ToID, originalConnection.ToX, originalConnection.ToY, panX, panY)
+	}
+}
+
+// cornerChar returns the elbow glyph for the bend prev->cur->next, or 0 when the
+// three points are collinear (no turn).
+func cornerChar(prev, cur, next point) rune {
+	if prev.Y == cur.Y && next.X == cur.X && prev.X != cur.X && next.Y != cur.Y {
+		if prev.X < cur.X {
+			if next.Y > cur.Y {
+				return '┐'
+			}
+			return '┘'
+		}
+		if next.Y > cur.Y {
+			return '┌'
+		}
+		return '└'
+	}
+	if prev.X == cur.X && next.Y == cur.Y && prev.Y != cur.Y && next.X != cur.X {
+		if prev.Y < cur.Y {
+			if next.X > cur.X {
+				return '└'
+			}
+			return '┘'
+		}
+		if next.X > cur.X {
+			return '┌'
+		}
+		return '┐'
+	}
+	return 0
+}
+
+// drawConnEndArrow draws an arrowhead pointing into boxID at the box edge nearest
+// the connection's world anchor (ax, ay). No-op for non-box endpoints.
+func (c *Canvas) drawConnEndArrow(canvas [][]rune, boxID, ax, ay, panX, panY int) {
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return
+	}
+	box := c.boxes[boxID]
+	dl := abs(ax - box.X)
+	dr := abs(ax - (box.X + box.Width - 1))
+	dt := abs(ay - box.Y)
+	db := abs(ay - (box.Y + box.Height - 1))
+	var x, y int
+	var ch rune
+	switch {
+	case dl <= dr && dl <= dt && dl <= db:
+		x, y, ch = box.X-1-panX, ay-panY, '▶'
+	case dr <= dt && dr <= db:
+		x, y, ch = box.X+box.Width-panX, ay-panY, '◀'
+	case dt <= db:
+		x, y, ch = ax-panX, box.Y-1-panY, '▼'
+	default:
+		x, y, ch = ax-panX, box.Y+box.Height-panY, '▲'
+	}
+	if c.isValidPos(canvas, x, y) && !c.isPointInBoxScreen(x, y, boxID, boxID, panX, panY) {
+		canvas[y][x] = ch
 	}
 }
 
@@ -3530,6 +2871,15 @@ func getColorCode(colorIndex int) string {
 	if colorIndex == colorEditSelect {
 		return "\x1b[7;36m" // Reverse video with cyan
 	}
+	if colorIndex == colorMouseSelect {
+		return "\x1b[103m" // Bright yellow background
+	}
+	if colorIndex == colorMenuSelect {
+		return "\x1b[7m" // Reverse video
+	}
+	if colorIndex == colorMenuBorder {
+		return "\x1b[32m" // Green (matches the startup logo)
+	}
 	colors := []int{47, 41, 42, 43, 44, 45, 46, 47}
 	if colorIndex < 0 || colorIndex >= len(colors) {
 		return ""
@@ -3541,6 +2891,15 @@ func getTextColorCode(colorIndex int) string {
 	// Special handling for edit selection color (reverse video cyan)
 	if colorIndex == colorEditSelect {
 		return "\x1b[7;36m" // Reverse video with cyan
+	}
+	if colorIndex == colorMouseSelect {
+		return "\x1b[1;93m" // Bright bold yellow
+	}
+	if colorIndex == colorMenuSelect {
+		return "\x1b[7m" // Reverse video
+	}
+	if colorIndex == colorMenuBorder {
+		return "\x1b[32m" // Green (matches the startup logo)
 	}
 	colors := []int{37, 31, 32, 33, 34, 35, 36, 37}
 	if colorIndex < 0 || colorIndex >= len(colors) {
@@ -3920,6 +3279,27 @@ func (c *Canvas) SetBorderStyle(boxID int, style BorderStyle) {
 	}
 }
 
+// SetBoxColor sets a box's color (palette index 0-7, or -1 for none).
+func (c *Canvas) SetBoxColor(boxID, color int) {
+	if boxID >= 0 && boxID < len(c.boxes) {
+		c.boxes[boxID].Color = color
+	}
+}
+
+// SetTextColor sets a text object's color (palette index 0-7, or -1 for none).
+func (c *Canvas) SetTextColor(textID, color int) {
+	if textID >= 0 && textID < len(c.texts) {
+		c.texts[textID].Color = color
+	}
+}
+
+// SetLineColor sets a connection's color (palette index 0-7, or -1 for none).
+func (c *Canvas) SetLineColor(connIdx, color int) {
+	if connIdx >= 0 && connIdx < len(c.connections) {
+		c.connections[connIdx].Color = color
+	}
+}
+
 func (c *Canvas) GetConnectionCells(connIdx int) []point {
 	if connIdx < 0 || connIdx >= len(c.connections) {
 		return nil
@@ -4061,6 +3441,35 @@ func (c *Canvas) SaveToFile(filename string) error {
 		fmt.Fprintf(file, "%d,%d,%d\n", x, y, colorIndex)
 	}
 
+	// Optional color sections (index,color), after HIGHLIGHTS so old readers skip them.
+	writeColors := func(header string, colors []int) {
+		var lines []string
+		for i, col := range colors {
+			if col >= 0 {
+				lines = append(lines, fmt.Sprintf("%d,%d", i, col))
+			}
+		}
+		fmt.Fprintf(file, "%s:%d\n", header, len(lines))
+		for _, line := range lines {
+			fmt.Fprintln(file, line)
+		}
+	}
+	boxColors := make([]int, len(c.boxes))
+	for i, b := range c.boxes {
+		boxColors[i] = b.Color
+	}
+	lineColors := make([]int, len(c.connections))
+	for i, cn := range c.connections {
+		lineColors[i] = cn.Color
+	}
+	textColors := make([]int, len(c.texts))
+	for i, t := range c.texts {
+		textColors[i] = t.Color
+	}
+	writeColors("BOXCOLORS", boxColors)
+	writeColors("LINECOLORS", lineColors)
+	writeColors("TEXTCOLORS", textColors)
+
 	return nil
 }
 
@@ -4199,6 +3608,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				ZLevel:      0,
 				BorderStyle: BorderStyleASCII,
 				Title:       "",
+				Color:       -1,
 			}
 			box.SetText(text)
 			c.boxes = append(c.boxes, box)
@@ -4212,6 +3622,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 			ZLevel:      zLevel,
 			BorderStyle: borderStyle,
 			Title:       title,
+			Color:       -1,
 		}
 		box.SetText(text)
 		box.Width = width
@@ -4280,6 +3691,7 @@ func (c *Canvas) LoadFromFile(filename string) error {
 				Waypoints: waypoints,
 				ArrowFrom: (arrowFlags & 1) != 0,
 				ArrowTo:   (arrowFlags & 2) != 0,
+				Color:     -1,
 			}
 			c.connections = append(c.connections, connection)
 		} else {
@@ -4339,6 +3751,54 @@ func (c *Canvas) LoadFromFile(filename string) error {
 							c.SetHighlight(x, y, colorIndex)
 						}
 					}
+				}
+			}
+		}
+	}
+
+	// Optional color sections; unknown lines (e.g. PAN) are skipped.
+	for scanner.Scan() {
+		line := scanner.Text()
+		var header string
+		switch {
+		case strings.HasPrefix(line, "BOXCOLORS:"):
+			header = "BOXCOLORS"
+		case strings.HasPrefix(line, "LINECOLORS:"):
+			header = "LINECOLORS"
+		case strings.HasPrefix(line, "TEXTCOLORS:"):
+			header = "TEXTCOLORS"
+		default:
+			continue
+		}
+		count, err := strconv.Atoi(strings.TrimPrefix(line, header+":"))
+		if err != nil {
+			continue
+		}
+		for i := 0; i < count; i++ {
+			if !scanner.Scan() {
+				break
+			}
+			parts := strings.Split(scanner.Text(), ",")
+			if len(parts) < 2 {
+				continue
+			}
+			idx, err1 := strconv.Atoi(parts[0])
+			col, err2 := strconv.Atoi(parts[1])
+			if err1 != nil || err2 != nil || col < 0 || col >= numColors {
+				continue
+			}
+			switch header {
+			case "BOXCOLORS":
+				if idx >= 0 && idx < len(c.boxes) {
+					c.boxes[idx].Color = col
+				}
+			case "LINECOLORS":
+				if idx >= 0 && idx < len(c.connections) {
+					c.connections[idx].Color = col
+				}
+			case "TEXTCOLORS":
+				if idx >= 0 && idx < len(c.texts) {
+					c.texts[idx].Color = col
 				}
 			}
 		}
@@ -4499,6 +3959,31 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 	return dc.SavePNG(filename)
 }
 
+// pngColor maps a palette index (0-7) to an RGB color for PNG export, mirroring
+// the ANSI foreground palette. Returns black for -1/out-of-range.
+func pngColor(index int) color.Color {
+	switch index {
+	case 0:
+		return color.RGBA{128, 128, 128, 255} // Gray
+	case 1:
+		return color.RGBA{205, 0, 0, 255} // Red
+	case 2:
+		return color.RGBA{0, 160, 0, 255} // Green
+	case 3:
+		return color.RGBA{190, 160, 0, 255} // Yellow
+	case 4:
+		return color.RGBA{0, 0, 220, 255} // Blue
+	case 5:
+		return color.RGBA{190, 0, 190, 255} // Magenta
+	case 6:
+		return color.RGBA{0, 170, 170, 255} // Cyan
+	case 7:
+		return color.RGBA{230, 230, 230, 255} // White
+	default:
+		return color.Black
+	}
+}
+
 func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY int, charWidth, charHeight float64) {
 	points := []point{{conn.FromX, conn.FromY}}
 	points = append(points, conn.Waypoints...)
@@ -4507,7 +3992,11 @@ func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY i
 		return
 	}
 	dc.SetLineWidth(1.0)
-	dc.SetColor(color.Black)
+	if conn.Color >= 0 {
+		dc.SetColor(pngColor(conn.Color))
+	} else {
+		dc.SetColor(color.Black)
+	}
 	for i := 0; i < len(points)-1; i++ {
 		x1 := float64(points[i].X-minX) * charWidth
 		y1 := float64(points[i].Y-minY) * charHeight
@@ -4557,9 +4046,15 @@ func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, 
 	width := float64(box.Width) * charWidth
 	height := float64(box.Height) * charHeight
 	dc.SetLineWidth(1.0)
-	dc.SetColor(color.Black)
+	if box.Color >= 0 {
+		dc.SetColor(pngColor(box.Color))
+	} else {
+		dc.SetColor(color.Black)
+	}
 	dc.DrawRectangle(x, y, width, height)
 	dc.Stroke()
+	// Content text stays black for readability, matching the terminal render.
+	dc.SetColor(color.Black)
 	textY := y + charHeight
 	for i, line := range box.Lines {
 		dc.DrawString(line, x+charWidth, textY+float64(i)*charHeight)
@@ -4569,7 +4064,11 @@ func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, 
 func (c *Canvas) drawTextPNG(dc *gg.Context, text Text, minX, minY int, charWidth, charHeight float64) {
 	x := float64(text.X-minX) * charWidth
 	y := float64(text.Y-minY) * charHeight
-	dc.SetColor(color.Black)
+	if text.Color >= 0 {
+		dc.SetColor(pngColor(text.Color))
+	} else {
+		dc.SetColor(color.Black)
+	}
 	for i, line := range text.Lines {
 		dc.DrawString(line, x, y+float64(i)*charHeight)
 	}

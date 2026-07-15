@@ -10,84 +10,136 @@ type Buffer struct {
 }
 
 type model struct {
-	width                 int
-	height                int
-	cursorX               int
-	cursorY               int
-	zPanMode              bool
-	buffers               []Buffer
-	currentBufferIndex    int
-	mode                  Mode
-	help                  bool
-	helpScroll            int
-	selectedBox           int
-	selectedText          int
-	editText              string
-	editCursorPos         int
-	editCursorRow         int
-	editCursorCol         int
-	editSelectionStart    int  // Start of text selection (-1 if no selection)
-	editSelectionEnd      int  // End of text selection (-1 if no selection)
-	originalEditText      string
-	connectionFrom        int
-	connectionFromX       int
-	connectionFromY       int
-	connectionFromLine    int
-	connectionWaypoints   []point
-	filename              string
-	fileList              []string
-	selectedFileIndex     int
-	fileOp                FileOperation
-	openInNewBuffer       bool
-	createNewBuffer       bool
-	showingDeleteConfirm  bool
-	confirmAction         ConfirmAction
-	confirmBoxID          int
-	confirmTextID         int
-	confirmConnIdx        int
-	confirmHighlightX     int
-	confirmHighlightY     int
-	confirmFileIndex      int
-	originalMoveX         int
-	originalMoveY         int
-	originalTextMoveX     int
-	originalTextMoveY     int
-	originalWidth         int
-	originalHeight        int
-	textInputX            int
-	textInputY            int
-	textInputText         string
-	textInputCursorPos    int
-	errorMessage          string
-	successMessage        string
-	fromStartup           bool
-	clipboard             *Box
-	config                *Config
-	highlightMode         bool
-	selectedColor         int
-	selectionStartX       int
-	selectionStartY       int
-	selectedBoxes         []int
-	selectedTexts         []int
-	selectedConnections   []int
-	originalBoxPositions  map[int]point
-	originalTextPositions map[int]point
-	originalConnections       map[int]Connection
-	originalHighlights        map[point]int
-	highlightMoveDelta        point
-	originalBoxConnections    map[int][]Connection // Original states of connections for each box being moved
-	boxJumpInput          string
-	titleEditBoxID        int
-	titleEditText         string
-	titleEditCursorPos    int
-	titleEditCursorRow    int
-	titleEditCursorCol    int
-	originalTitleText     string
-	showTooltip           bool
-	tooltipText           string
-	tooltipX              int
-	tooltipY              int
-	tooltipBoxID          int // ID of the box being shown in tooltip, -1 if none
+	width                  int
+	height                 int
+	cursorX                int
+	cursorY                int
+	zPanMode               bool
+	buffers                []Buffer
+	currentBufferIndex     int
+	mode                   Mode
+	help                   bool
+	helpScroll             int
+	selectedBox            int
+	selectedText           int
+	editText               string
+	editCursorPos          int
+	editCursorRow          int
+	editCursorCol          int
+	editSelectionStart     int // Start of text selection (-1 if no selection)
+	editSelectionEnd       int // End of text selection (-1 if no selection)
+	originalEditText       string
+	connectionFrom         int
+	connectionFromX        int
+	connectionFromY        int
+	connectionFromLine     int
+	connectionWaypoints    []point
+	filename               string
+	fileList               []string
+	selectedFileIndex      int
+	fileOp                 FileOperation
+	openInNewBuffer        bool
+	createNewBuffer        bool
+	showingDeleteConfirm   bool
+	confirmAction          ConfirmAction
+	confirmBoxID           int
+	confirmTextID          int
+	confirmConnIdx         int
+	confirmHighlightX      int
+	confirmHighlightY      int
+	confirmFileIndex       int
+	originalMoveX          int
+	originalMoveY          int
+	originalTextMoveX      int
+	originalTextMoveY      int
+	originalWidth          int
+	originalHeight         int
+	textInputX             int
+	textInputY             int
+	textInputText          string
+	textInputCursorPos     int
+	errorMessage           string
+	successMessage         string
+	fromStartup            bool
+	clipboard              *Box
+	config                 *Config
+	highlightMode          bool
+	selectedColor          int
+	selectionStartX        int
+	selectionStartY        int
+	selectedBoxes          []int
+	selectedTexts          []int
+	selectedConnections    []int
+	originalBoxPositions   map[int]point
+	originalTextPositions  map[int]point
+	originalConnections    map[int]Connection
+	originalHighlights     map[point]int
+	highlightMoveDelta     point
+	originalBoxConnections map[int][]Connection // Original states of connections for each box being moved
+	boxJumpInput           string
+	titleEditBoxID         int
+	titleEditText          string
+	titleEditCursorPos     int
+	titleEditCursorRow     int
+	titleEditCursorCol     int
+	originalTitleText      string
+	showTooltip            bool
+	tooltipText            string
+	tooltipX               int
+	tooltipY               int
+	tooltipBoxID           int // ID of the box being shown in tooltip, -1 if none
+
+	// Mouse selection (persistent highlight of a clicked element; -1 = none)
+	selBox  int
+	selText int
+	selConn int
+
+	// Mouse line drawing: true while a connection started from a right-click
+	// menu is following the mouse until the user clicks a target.
+	mouseLineDrawing bool
+
+	// Box dragging: true while the left button is held over a box.
+	// The grab offset keeps the originally-grabbed point under the pointer.
+	draggingBox     bool
+	dragBoxID       int
+	dragGrabOffsetX int
+	dragGrabOffsetY int
+	// Connections snapshot taken at drag start, so each pointer move re-derives
+	// routing from the original state (idempotent) instead of accumulating.
+	dragConnSnapshot []Connection
+
+	// Text dragging: true while the left button is held over a text object.
+	draggingText bool
+	dragTextID   int
+
+	// View panning: true while dragging an empty area to pan. panMoved
+	// distinguishes a drag (pan) from a plain click (clear selection).
+	panningView        bool
+	panLastX, panLastY int
+	panMoved           bool
+
+	// Group dragging: true while dragging a multi-select group in ModeMove.
+	draggingGroup          bool
+	groupLastX, groupLastY int
+
+	// Highlight painting: click-drag stroke state. paintedCells accumulates the
+	// stroke (with prior colors) so the whole stroke undoes as one action.
+	paintingHighlight      bool
+	paintedCells           []HighlightCell
+	paintedSeen            map[point]bool
+	lastPaintX, lastPaintY int
+
+	// Context menu state (ModeContextMenu)
+	menuItems      []MenuItem
+	menuIndex      int
+	menuX          int // canvas column of the menu's top-left corner
+	menuY          int // canvas row of the menu's top-left corner
+	menuTargetBox  int // element under the cursor when the menu opened (-1 = none)
+	menuTargetText int
+	menuTargetConn int
+	menuWorldX     int // world coords of the right-click (for New Box/Text placement)
+	menuWorldY     int
+	menuStack      []menuLevel // open cascading submenus (level 0 = root menuItems)
 
 	// Konami Code Easter Egg
 	konamiProgress  int            // How far through the code sequence
@@ -130,6 +182,23 @@ type Particle struct {
 
 type point struct {
 	X, Y int
+}
+
+// MenuItem is a single entry in the right-click context menu. An item with a
+// non-empty Submenu opens a cascading child menu instead of firing an action.
+type MenuItem struct {
+	Label     string
+	Action    MenuAction
+	Separator bool
+	Submenu   []MenuItem
+	Arg       int // action argument (e.g. color index or border-style value)
+}
+
+// menuLevel is one open (sub)menu in the cascading context menu.
+type menuLevel struct {
+	items []MenuItem
+	index int
+	x, y  int // top-left canvas coords
 }
 
 type Action struct {
@@ -199,7 +268,7 @@ type OriginalBoxState struct {
 	Y           int
 	Width       int
 	Height      int
-	Connections []Connection  // Original states of connections involving this box
+	Connections []Connection    // Original states of connections involving this box
 	Highlights  []HighlightCell // Original highlight positions on this box
 }
 
@@ -243,4 +312,18 @@ type EditTitleData struct {
 	BoxID    int
 	NewTitle string
 	OldTitle string
+}
+
+// ColorKind identifies which object list a ColorData refers to.
+const (
+	ColorKindBox = iota
+	ColorKindLine
+	ColorKindText
+)
+
+type ColorData struct {
+	Kind     int // ColorKindBox / ColorKindLine / ColorKindText
+	ID       int // index into the corresponding slice
+	OldColor int
+	NewColor int
 }

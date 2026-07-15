@@ -89,9 +89,24 @@ func (m *model) undo() {
 			m.getCanvas().boxes[data.BoxID].Title = data.OldTitle
 			m.getCanvas().boxes[data.BoxID].updateSize()
 		}
+	case ActionSetColor:
+		data := action.Inverse.(ColorData)
+		m.applyObjectColor(data.Kind, data.ID, data.OldColor)
 	}
 
 	buf.redoStack = append(buf.redoStack, action)
+}
+
+// applyObjectColor sets the color of a box, line, or text by kind+index.
+func (m *model) applyObjectColor(kind, id, color int) {
+	switch kind {
+	case ColorKindBox:
+		m.getCanvas().SetBoxColor(id, color)
+	case ColorKindLine:
+		m.getCanvas().SetLineColor(id, color)
+	case ColorKindText:
+		m.getCanvas().SetTextColor(id, color)
+	}
 }
 
 func (m *model) redo() {
@@ -154,6 +169,9 @@ func (m *model) redo() {
 			m.getCanvas().boxes[data.BoxID].Title = data.NewTitle
 			m.getCanvas().boxes[data.BoxID].updateSize()
 		}
+	case ActionSetColor:
+		data := action.Data.(ColorData)
+		m.applyObjectColor(data.Kind, data.ID, data.NewColor)
 	}
 
 	buf.undoStack = append(buf.undoStack, action)
