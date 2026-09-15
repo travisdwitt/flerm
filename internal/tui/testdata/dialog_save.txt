@@ -1,0 +1,30 @@
+                                                                                                
+                                                                                                
+    +------+                      ╔══════╗                                                      
+    |Start |                      ║Done  ║                                                      
+    +------+                      ╚══════╝                                                      
+         │                            ▲                                                         
+         │                            │                                                         
+         │                            │                                                         
+         │                            │                                                         
+         ▼                            │                                                         
+    +---------+                   ╭─────────╮                                                   
+    |Step 1   |                  ▶│Decision?│                                                   
+    |---------|                   ╰─────────╯                                                   
+    |Process  |───────────────────┘                                                             
+    |the input|                                                                                 
+    +---------+                                                                                 
+                                                                                                
+                                                                                                
+    note: label text                                                                            
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+Mode: FILE | Save filename: quarterly-plan | Enter=confirm, Esc=cancel

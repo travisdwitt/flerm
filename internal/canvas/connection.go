@@ -1,5 +1,7 @@
 package canvas
 
+import "slices"
+
 type Connection struct {
 	FromID    int
 	ToID      int
@@ -14,23 +16,15 @@ type Connection struct {
 }
 
 func (c *Canvas) FindNearestPointOnConnection(cursorX, cursorY int) (int, int, int) {
-	bestDist := -1
-	bestConnIdx := -1
+	bestDist, bestConnIdx := -1, -1
 	bestX, bestY := -1, -1
 
 	for i, conn := range c.connections {
-		points := []Point{
-			{conn.FromX, conn.FromY},
-		}
-		points = append(points, conn.Waypoints...)
-		points = append(points, Point{conn.ToX, conn.ToY})
-
+		points := connPoints(conn)
 		for j := 0; j < len(points)-1; j++ {
-			segX, segY := c.findClosestPointOnSegment(points[j].X, points[j].Y, points[j+1].X, points[j+1].Y, cursorX, cursorY)
-			dist := abs(segX-cursorX) + abs(segY-cursorY)
-			if bestDist == -1 || dist < bestDist {
-				bestDist = dist
-				bestConnIdx = i
+			segX, segY := closestOnSegment(points[j], points[j+1], cursorX, cursorY)
+			if dist := manhattan(segX, segY, cursorX, cursorY); bestDist == -1 || dist < bestDist {
+				bestDist, bestConnIdx = dist, i
 				bestX, bestY = segX, segY
 			}
 		}
@@ -42,79 +36,46 @@ func (c *Canvas) FindNearestPointOnConnection(cursorX, cursorY int) (int, int, i
 	return -1, -1, -1
 }
 
-func (c *Canvas) findClosestPointOnSegment(segX1, segY1, segX2, segY2, cursorX, cursorY int) (int, int) {
-	if segX1 == segX2 {
-		closestY := cursorY
-		if closestY < min(segY1, segY2) {
-			closestY = min(segY1, segY2)
-		} else if closestY > max(segY1, segY2) {
-			closestY = max(segY1, segY2)
-		}
-		return segX1, closestY
-	} else if segY1 == segY2 {
-		closestX := cursorX
-		if closestX < min(segX1, segX2) {
-			closestX = min(segX1, segX2)
-		} else if closestX > max(segX1, segX2) {
-			closestX = max(segX1, segX2)
-		}
-		return closestX, segY1
-	} else {
-		cornerX := segX2
-		cornerY := segY1
+func manhattan(x1, y1, x2, y2 int) int { return abs(x1-x2) + abs(y1-y2) }
 
-		closestX1, closestY1 := c.findClosestPointOnSegment(segX1, segY1, cornerX, cornerY, cursorX, cursorY)
-		dist1 := abs(closestX1-cursorX) + abs(closestY1-cursorY)
+func clamp(v, lo, hi int) int { return min(max(v, min(lo, hi)), max(lo, hi)) }
 
-		closestX2, closestY2 := c.findClosestPointOnSegment(cornerX, cornerY, segX2, segY2, cursorX, cursorY)
-		dist2 := abs(closestX2-cursorX) + abs(closestY2-cursorY)
-
-		if dist1 < dist2 {
-			return closestX1, closestY1
-		}
-		return closestX2, closestY2
+// closestOnSegment finds the nearest cell on an axis-aligned segment. A
+// diagonal segment is treated as the L-shaped path the renderer draws for it.
+func closestOnSegment(a, b Point, cursorX, cursorY int) (int, int) {
+	switch {
+	case a.X == b.X:
+		return a.X, clamp(cursorY, a.Y, b.Y)
+	case a.Y == b.Y:
+		return clamp(cursorX, a.X, b.X), a.Y
 	}
+	corner := Point{b.X, a.Y}
+	x1, y1 := closestOnSegment(a, corner, cursorX, cursorY)
+	x2, y2 := closestOnSegment(corner, b, cursorX, cursorY)
+	if manhattan(x1, y1, cursorX, cursorY) < manhattan(x2, y2, cursorX, cursorY) {
+		return x1, y1
+	}
+	return x2, y2
 }
 
+// FindNearestEdgePoint snaps a cursor to the closest point on a box's outline.
 func (c *Canvas) FindNearestEdgePoint(box Box, cursorX, cursorY int) (int, int) {
-	clampedX := cursorX
-	if clampedX < box.X {
-		clampedX = box.X
-	} else if clampedX >= box.X+box.Width {
-		clampedX = box.X + box.Width - 1
-	}
+	right, bottom := box.X+box.Width-1, box.Y+box.Height-1
+	clampedX := clamp(cursorX, box.X, right)
+	clampedY := clamp(cursorY, box.Y, bottom)
 
-	clampedY := cursorY
-	if clampedY < box.Y {
-		clampedY = box.Y
-	} else if clampedY >= box.Y+box.Height {
-		clampedY = box.Y + box.Height - 1
+	edgeX, edgeY, minDist := box.X, clampedY, abs(cursorX-box.X)
+	for _, cand := range []struct {
+		dist, x, y int
+	}{
+		{abs(cursorX - right), right, clampedY},
+		{abs(cursorY - box.Y), clampedX, box.Y},
+		{abs(cursorY - bottom), clampedX, bottom},
+	} {
+		if cand.dist < minDist {
+			minDist, edgeX, edgeY = cand.dist, cand.x, cand.y
+		}
 	}
-
-	distToLeft := abs(cursorX - box.X)
-	distToRight := abs(cursorX - (box.X + box.Width - 1))
-	distToTop := abs(cursorY - box.Y)
-	distToBottom := abs(cursorY - (box.Y + box.Height - 1))
-
-	minDist := distToLeft
-	edgeX := box.X
-	edgeY := clampedY
-
-	if distToRight < minDist {
-		minDist = distToRight
-		edgeX = box.X + box.Width - 1
-		edgeY = clampedY
-	}
-	if distToTop < minDist {
-		minDist = distToTop
-		edgeX = clampedX
-		edgeY = box.Y
-	}
-	if distToBottom < minDist {
-		edgeX = clampedX
-		edgeY = box.Y + box.Height - 1
-	}
-
 	return edgeX, edgeY
 }
 
@@ -129,45 +90,41 @@ func (c *Canvas) CalculateConnectionPoints(fromID, toID int) (fromX, fromY, toX,
 }
 
 func (c *Canvas) calculateConnectionPointsPreservingOrientation(fromID, toID int, preferHorizontal bool) (fromX, fromY, toX, toY int) {
-	if fromID < 0 || fromID >= len(c.boxes) || toID < 0 || toID >= len(c.boxes) {
+	fromBox, okFrom := c.box(fromID)
+	toBox, okTo := c.box(toID)
+	if !okFrom || !okTo {
 		return 0, 0, 0, 0
 	}
 
-	fromBox := c.boxes[fromID]
-	toBox := c.boxes[toID]
-
-	fromCenterX := fromBox.X + fromBox.Width/2
-	fromCenterY := fromBox.Y + fromBox.Height/2
-	toCenterX := toBox.X + toBox.Width/2
-	toCenterY := toBox.Y + toBox.Height/2
-
+	// Each endpoint leaves from the centre of the face pointing at the other box.
 	if preferHorizontal {
-		if fromCenterX < toCenterX {
-			fromX = fromBox.X + fromBox.Width - 1
-			fromY = fromCenterY
-			toX = toBox.X
-			toY = toCenterY
-		} else {
-			fromX = fromBox.X
-			fromY = fromCenterY
-			toX = toBox.X + toBox.Width - 1
-			toY = toCenterY
+		dir := 1
+		if fromBox.X+fromBox.Width/2 >= toBox.X+toBox.Width/2 {
+			dir = -1
 		}
-	} else {
-		if fromCenterY < toCenterY {
-			fromX = fromCenterX
-			fromY = fromBox.Y + fromBox.Height - 1
-			toX = toCenterX
-			toY = toBox.Y
-		} else {
-			fromX = fromCenterX
-			fromY = fromBox.Y
-			toX = toCenterX
-			toY = toBox.Y + toBox.Height - 1
-		}
+		return faceX(fromBox, dir), fromBox.Y + fromBox.Height/2,
+			faceX(toBox, -dir), toBox.Y + toBox.Height/2
 	}
+	dir := 1
+	if fromBox.Y+fromBox.Height/2 >= toBox.Y+toBox.Height/2 {
+		dir = -1
+	}
+	return fromBox.X + fromBox.Width/2, faceY(fromBox, dir),
+		toBox.X + toBox.Width/2, faceY(toBox, -dir)
+}
 
-	return fromX, fromY, toX, toY
+func faceX(box Box, dir int) int {
+	if dir > 0 {
+		return box.X + box.Width - 1
+	}
+	return box.X
+}
+
+func faceY(box Box, dir int) int {
+	if dir > 0 {
+		return box.Y + box.Height - 1
+	}
+	return box.Y
 }
 
 func (c *Canvas) AddConnection(fromID, toID int) {
@@ -241,22 +198,13 @@ func (c *Canvas) CycleConnectionArrowState(connIdx int) {
 	}
 }
 
+// connectionsEqual compares geometry only; arrows and colour are ignored so a
+// line can be matched after those change.
 func (c *Canvas) connectionsEqual(a, b Connection) bool {
-	if a.FromID != b.FromID || a.ToID != b.ToID {
-		return false
-	}
-	if a.FromX != b.FromX || a.FromY != b.FromY || a.ToX != b.ToX || a.ToY != b.ToY {
-		return false
-	}
-	if len(a.Waypoints) != len(b.Waypoints) {
-		return false
-	}
-	for i := range a.Waypoints {
-		if a.Waypoints[i].X != b.Waypoints[i].X || a.Waypoints[i].Y != b.Waypoints[i].Y {
-			return false
-		}
-	}
-	return true
+	return a.FromID == b.FromID && a.ToID == b.ToID &&
+		a.FromX == b.FromX && a.FromY == b.FromY &&
+		a.ToX == b.ToX && a.ToY == b.ToY &&
+		slices.Equal(a.Waypoints, b.Waypoints)
 }
 
 func (c *Canvas) RestoreConnection(connection Connection) {
@@ -363,11 +311,7 @@ func (c *Canvas) findNearestPointOnPath(x, y int, pathPoints []Point) (int, int)
 	bestDist := -1
 
 	for i := 0; i < len(pathPoints)-1; i++ {
-		segX, segY := c.findClosestPointOnSegment(
-			pathPoints[i].X, pathPoints[i].Y,
-			pathPoints[i+1].X, pathPoints[i+1].Y,
-			x, y,
-		)
+		segX, segY := closestOnSegment(pathPoints[i], pathPoints[i+1], x, y)
 		dist := abs(segX-x) + abs(segY-y)
 		if bestDist == -1 || dist < bestDist {
 			bestDist = dist
@@ -605,265 +549,142 @@ func (c *Canvas) findBestAnchorPoint(box Box, targetX, targetY int) (int, int) {
 	}
 }
 
-func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) []Point {
+// Edges are named "left"/"right"/"top"/"bottom". Routing is written once in
+// along/perpendicular coordinates: "along" is the axis the source edge faces,
+// so a vertical source edge is just the horizontal case with X and Y swapped.
 
+// edgeAxis reports whether an edge faces along X, and which way it points.
+func edgeAxis(edge string) (horiz bool, dir int) {
+	switch edge {
+	case "right":
+		return true, 1
+	case "left":
+		return true, -1
+	case "bottom":
+		return false, 1
+	case "top":
+		return false, -1
+	}
+	return true, 0
+}
+
+// pt rebuilds a Point from along/perpendicular coordinates.
+func pt(horiz bool, along, perp int) Point {
+	if horiz {
+		return Point{along, perp}
+	}
+	return Point{perp, along}
+}
+
+// outward returns whichever of a, b lies further in direction dir, offset by
+// dir*off — i.e. a point clear of both on that side.
+func outward(dir, a, b, off int) int {
+	if dir > 0 {
+		return max(a, b) + off
+	}
+	return min(a, b) - off
+}
+
+// parallelClearance is how far a line detours sideways when both endpoints face
+// the same axis; rows are cheaper to spend than columns.
+func parallelClearance(horiz bool) int {
+	if horiz {
+		return 3
+	}
+	return 2
+}
+
+func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) []Point {
 	if conn.FromX == conn.ToX || conn.FromY == conn.ToY {
 		return nil
 	}
 
 	fromEdge := c.GetConnectionEdge(fromBox, conn.FromX, conn.FromY)
 	toEdge := c.GetConnectionEdge(toBox, conn.ToX, conn.ToY)
-
-	switch fromEdge {
-	case "right":
-		switch toEdge {
-		case "left":
-
-			if conn.FromX < conn.ToX {
-
-				midX := (conn.FromX + conn.ToX) / 2
-				return []Point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
-			} else {
-
-				offsetX := max(conn.FromX, conn.ToX) + 3
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "top":
-
-			if conn.FromX < conn.ToX && conn.FromY < conn.ToY {
-
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-
-				offsetX := max(conn.FromX+1, conn.ToX+3)
-				offsetY := min(conn.FromY, conn.ToY) - 2
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "bottom":
-
-			if conn.FromX < conn.ToX && conn.FromY > conn.ToY {
-
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-
-				offsetX := max(conn.FromX+1, conn.ToX+3)
-				offsetY := max(conn.FromY, conn.ToY) + 2
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "right":
-
-			offsetX := max(fromBox.X+fromBox.Width, toBox.X+toBox.Width) + 3
-			return []Point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
-		default:
-			return []Point{{X: conn.ToX, Y: conn.FromY}}
-		}
-
-	case "left":
-		switch toEdge {
-		case "right":
-			if conn.FromX > conn.ToX {
-
-				midX := (conn.FromX + conn.ToX) / 2
-				return []Point{{X: midX, Y: conn.FromY}, {X: midX, Y: conn.ToY}}
-			} else {
-
-				offsetX := min(conn.FromX, conn.ToX) - 3
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "top":
-			if conn.FromX > conn.ToX && conn.FromY < conn.ToY {
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-				offsetX := min(conn.FromX-1, conn.ToX-3)
-				offsetY := min(conn.FromY, conn.ToY) - 2
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "bottom":
-			if conn.FromX > conn.ToX && conn.FromY > conn.ToY {
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-				offsetX := min(conn.FromX-1, conn.ToX-3)
-				offsetY := max(conn.FromY, conn.ToY) + 2
-				return []Point{
-					{X: offsetX, Y: conn.FromY},
-					{X: offsetX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "left":
-			offsetX := min(fromBox.X, toBox.X) - 3
-			return []Point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
-		default:
-			return []Point{{X: conn.ToX, Y: conn.FromY}}
-		}
-
-	case "bottom":
-		switch toEdge {
-		case "top":
-			if conn.FromY < conn.ToY {
-
-				midY := (conn.FromY + conn.ToY) / 2
-				return []Point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
-			} else {
-
-				offsetY := max(conn.FromY, conn.ToY) + 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "left":
-			if conn.FromY < conn.ToY && conn.FromX < conn.ToX {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := max(conn.FromY+1, conn.ToY+3)
-				offsetX := min(conn.FromX, conn.ToX) - 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: offsetX, Y: offsetY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "right":
-			if conn.FromY < conn.ToY && conn.FromX > conn.ToX {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := max(conn.FromY+1, conn.ToY+3)
-				offsetX := max(conn.FromX, conn.ToX) + 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: offsetX, Y: offsetY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "bottom":
-			offsetY := max(fromBox.Y+fromBox.Height, toBox.Y+toBox.Height) + 2
-			return []Point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
-		default:
-			return []Point{{X: conn.FromX, Y: conn.ToY}}
-		}
-
-	case "top":
-		switch toEdge {
-		case "bottom":
-			if conn.FromY > conn.ToY {
-
-				midY := (conn.FromY + conn.ToY) / 2
-				return []Point{{X: conn.FromX, Y: midY}, {X: conn.ToX, Y: midY}}
-			} else {
-
-				offsetY := min(conn.FromY, conn.ToY) - 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: conn.ToX, Y: offsetY},
-				}
-			}
-		case "left":
-			if conn.FromY > conn.ToY && conn.FromX < conn.ToX {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := min(conn.FromY-1, conn.ToY-3)
-				offsetX := min(conn.FromX, conn.ToX) - 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: offsetX, Y: offsetY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "right":
-			if conn.FromY > conn.ToY && conn.FromX > conn.ToX {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := min(conn.FromY-1, conn.ToY-3)
-				offsetX := max(conn.FromX, conn.ToX) + 2
-				return []Point{
-					{X: conn.FromX, Y: offsetY},
-					{X: offsetX, Y: offsetY},
-					{X: offsetX, Y: conn.ToY},
-				}
-			}
-		case "top":
-			offsetY := min(fromBox.Y, toBox.Y) - 2
-			return []Point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
-		default:
-			return []Point{{X: conn.FromX, Y: conn.ToY}}
-		}
+	horiz, dir := edgeAxis(fromEdge)
+	if fromEdge == "unknown" {
+		return []Point{{conn.ToX, conn.FromY}}
 	}
 
-	return []Point{{X: conn.ToX, Y: conn.FromY}}
+	fa, fb := along(horiz, conn.FromX, conn.FromY)
+	ta, tb := along(horiz, conn.ToX, conn.ToY)
+	elbow := []Point{pt(horiz, ta, fb)}
+
+	toHoriz, toDir := edgeAxis(toEdge)
+	switch {
+	case toEdge == "unknown":
+		return elbow
+
+	case toHoriz == horiz && toDir != dir: // facing each other
+		if dir*(ta-fa) > 0 {
+			mid := (fa + ta) / 2
+			return []Point{pt(horiz, mid, fb), pt(horiz, mid, tb)}
+		}
+		off := outward(dir, fa, ta, parallelClearance(horiz))
+		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
+
+	case toHoriz == horiz: // both facing the same way: go around the far box
+		fFar, tFar := boxFar(fromBox, horiz, dir), boxFar(toBox, horiz, dir)
+		off := outward(dir, fFar, tFar, parallelClearance(horiz))
+		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
+
+	default: // perpendicular edges
+		if dir*(ta-fa) > 0 && toDir*(tb-fb) < 0 {
+			return elbow
+		}
+		offA := outward(dir, fa+dir, ta+3*dir, 0)
+		offB := outward(toDir, fb, tb, 2)
+		return []Point{pt(horiz, offA, fb), pt(horiz, offA, offB), pt(horiz, ta, offB)}
+	}
+}
+
+// along splits a point into (source-edge axis, perpendicular axis) coordinates.
+func along(horiz bool, x, y int) (int, int) {
+	if horiz {
+		return x, y
+	}
+	return y, x
+}
+
+// boxFar returns the box's bounding coordinate on the side dir points to.
+func boxFar(box Box, horiz bool, dir int) int {
+	if horiz {
+		if dir > 0 {
+			return box.X + box.Width
+		}
+		return box.X
+	}
+	if dir > 0 {
+		return box.Y + box.Height
+	}
+	return box.Y
 }
 
 func (c *Canvas) createFlexibleWaypointsForLineConnection(conn *Connection, fromBox, toBox *Box) []Point {
-
 	if conn.FromX == conn.ToX || conn.FromY == conn.ToY {
 		return nil
 	}
 
-	dx := conn.ToX - conn.FromX
-	dy := conn.ToY - conn.FromY
-
 	if fromBox != nil {
-
-		fromEdge := c.GetConnectionEdge(*fromBox, conn.FromX, conn.FromY)
-
-		switch fromEdge {
-		case "right":
-			if dx > 0 {
-
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-
-				offsetX := conn.FromX + 3
-				return []Point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
-			}
-		case "left":
-			if dx < 0 {
-				return []Point{{X: conn.ToX, Y: conn.FromY}}
-			} else {
-				offsetX := conn.FromX - 3
-				return []Point{{X: offsetX, Y: conn.FromY}, {X: offsetX, Y: conn.ToY}}
-			}
-		case "bottom":
-			if dy > 0 {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := conn.FromY + 2
-				return []Point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
-			}
-		case "top":
-			if dy < 0 {
-				return []Point{{X: conn.FromX, Y: conn.ToY}}
-			} else {
-				offsetY := conn.FromY - 2
-				return []Point{{X: conn.FromX, Y: offsetY}, {X: conn.ToX, Y: offsetY}}
-			}
+		horiz, dir := edgeAxis(c.GetConnectionEdge(*fromBox, conn.FromX, conn.FromY))
+		if dir == 0 {
+			return []Point{{conn.ToX, conn.FromY}}
 		}
-	} else if toBox != nil {
-		toEdge := c.GetConnectionEdge(*toBox, conn.ToX, conn.ToY)
-		if toEdge == "left" || toEdge == "right" {
-			return []Point{{X: conn.FromX, Y: conn.ToY}}
+		fa, fb := along(horiz, conn.FromX, conn.FromY)
+		ta, tb := along(horiz, conn.ToX, conn.ToY)
+		if dir*(ta-fa) > 0 {
+			return []Point{pt(horiz, ta, fb)}
 		}
+		off := fa + dir*parallelClearance(horiz)
+		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
 	}
 
-	return []Point{{X: conn.ToX, Y: conn.FromY}}
+	if toBox != nil {
+		if edge := c.GetConnectionEdge(*toBox, conn.ToX, conn.ToY); edge == "left" || edge == "right" {
+			return []Point{{conn.FromX, conn.ToY}}
+		}
+	}
+	return []Point{{conn.ToX, conn.FromY}}
 }
 
 func (c *Canvas) GetConnectionEdge(box Box, x, y int) string {

@@ -35,7 +35,11 @@ type model struct {
 	connectionFromLine     int
 	connectionWaypoints    []point
 	filename               string
+	allFiles               []string
 	fileList               []string
+	fileFilter             string
+	fileSearch             bool
+	fileScroll             int
 	selectedFileIndex      int
 	fileOp                 FileOperation
 	openInNewBuffer        bool
@@ -61,6 +65,7 @@ type model struct {
 	errorMessage           string
 	successMessage         string
 	fromStartup            bool
+	lastFile               string
 	clipboard              *Box
 	config                 *Config
 	highlightMode          bool

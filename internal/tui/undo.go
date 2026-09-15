@@ -86,7 +86,7 @@ func (m *model) undo() {
 	case ActionEditTitle:
 		data := action.Inverse.(EditTitleData)
 		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().Boxes()) {
-			m.getCanvas().Boxes()[data.BoxID].Title = data.OldTitle
+			m.getCanvas().Boxes()[data.BoxID].Title = data.NewTitle
 			m.getCanvas().Boxes()[data.BoxID].UpdateSize()
 		}
 	case ActionSetColor:

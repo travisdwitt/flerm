@@ -18,85 +18,8 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 
 	charWidth := 8.0
 	charHeight := 16.0
-	minX, minY := 0, 0
-	maxX, maxY := 0, 0
-	hasElements := false
-	for _, box := range c.boxes {
-		if !hasElements {
-			minX, minY = box.X, box.Y
-			maxX, maxY = box.X+box.Width, box.Y+box.Height
-			hasElements = true
-		} else {
-			if box.X < minX {
-				minX = box.X
-			}
-			if box.Y < minY {
-				minY = box.Y
-			}
-			if box.X+box.Width > maxX {
-				maxX = box.X + box.Width
-			}
-			if box.Y+box.Height > maxY {
-				maxY = box.Y + box.Height
-			}
-		}
-	}
-
-	for _, conn := range c.connections {
-		points := []Point{{conn.FromX, conn.FromY}}
-		points = append(points, conn.Waypoints...)
-		points = append(points, Point{conn.ToX, conn.ToY})
-
-		for _, pt := range points {
-			if !hasElements {
-				minX, minY = pt.X, pt.Y
-				maxX, maxY = pt.X, pt.Y
-				hasElements = true
-			} else {
-				if pt.X < minX {
-					minX = pt.X
-				}
-				if pt.Y < minY {
-					minY = pt.Y
-				}
-				if pt.X > maxX {
-					maxX = pt.X
-				}
-				if pt.Y > maxY {
-					maxY = pt.Y
-				}
-			}
-		}
-	}
-
-	for _, text := range c.texts {
-		if !hasElements {
-			minX, minY = text.X, text.Y
-			maxX, maxY = text.X, text.Y
-			hasElements = true
-		} else {
-			if text.X < minX {
-				minX = text.X
-			}
-			if text.Y < minY {
-				minY = text.Y
-			}
-			maxTextX := text.X
-			for _, line := range text.Lines {
-				if text.X+len(line) > maxTextX {
-					maxTextX = text.X + len(line)
-				}
-			}
-			if maxTextX > maxX {
-				maxX = maxTextX
-			}
-			if text.Y+len(text.Lines) > maxY {
-				maxY = text.Y + len(text.Lines)
-			}
-		}
-	}
-
-	if !hasElements {
+	minX, minY, maxX, maxY := c.GetFullBounds()
+	if minX > maxX || minY > maxY {
 		return fmt.Errorf("nothing to export")
 	}
 
@@ -135,42 +58,27 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 	return dc.SavePNG(filename)
 }
 
+// pngColor maps a palette index to ink; anything unset draws black.
 func pngColor(index int) color.Color {
-	switch index {
-	case 0:
-		return color.RGBA{128, 128, 128, 255}
-	case 1:
-		return color.RGBA{205, 0, 0, 255}
-	case 2:
-		return color.RGBA{0, 160, 0, 255}
-	case 3:
-		return color.RGBA{190, 160, 0, 255}
-	case 4:
-		return color.RGBA{0, 0, 220, 255}
-	case 5:
-		return color.RGBA{190, 0, 190, 255}
-	case 6:
-		return color.RGBA{0, 170, 170, 255}
-	case 7:
-		return color.RGBA{230, 230, 230, 255}
-	default:
+	palette := []color.Color{
+		color.RGBA{128, 128, 128, 255}, color.RGBA{205, 0, 0, 255},
+		color.RGBA{0, 160, 0, 255}, color.RGBA{190, 160, 0, 255},
+		color.RGBA{0, 0, 220, 255}, color.RGBA{190, 0, 190, 255},
+		color.RGBA{0, 170, 170, 255}, color.RGBA{230, 230, 230, 255},
+	}
+	if index < 0 || index >= len(palette) {
 		return color.Black
 	}
+	return palette[index]
 }
 
 func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY int, charWidth, charHeight float64) {
-	points := []Point{{conn.FromX, conn.FromY}}
-	points = append(points, conn.Waypoints...)
-	points = append(points, Point{conn.ToX, conn.ToY})
+	points := connPoints(conn)
 	if len(points) < 2 {
 		return
 	}
 	dc.SetLineWidth(1.0)
-	if conn.Color >= 0 {
-		dc.SetColor(pngColor(conn.Color))
-	} else {
-		dc.SetColor(color.Black)
-	}
+	dc.SetColor(pngColor(conn.Color))
 	for i := 0; i < len(points)-1; i++ {
 		x1 := float64(points[i].X-minX) * charWidth
 		y1 := float64(points[i].Y-minY) * charHeight
@@ -220,11 +128,7 @@ func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, 
 	width := float64(box.Width) * charWidth
 	height := float64(box.Height) * charHeight
 	dc.SetLineWidth(1.0)
-	if box.Color >= 0 {
-		dc.SetColor(pngColor(box.Color))
-	} else {
-		dc.SetColor(color.Black)
-	}
+	dc.SetColor(pngColor(box.Color))
 	dc.DrawRectangle(x, y, width, height)
 	dc.Stroke()
 
@@ -238,11 +142,7 @@ func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, 
 func (c *Canvas) drawTextPNG(dc *gg.Context, text Text, minX, minY int, charWidth, charHeight float64) {
 	x := float64(text.X-minX) * charWidth
 	y := float64(text.Y-minY) * charHeight
-	if text.Color >= 0 {
-		dc.SetColor(pngColor(text.Color))
-	} else {
-		dc.SetColor(color.Black)
-	}
+	dc.SetColor(pngColor(text.Color))
 	for i, line := range text.Lines {
 		dc.DrawString(line, x, y+float64(i)*charHeight)
 	}

@@ -36,6 +36,25 @@ func (m model) handleStartupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursorY = 0
 		m.errorMessage = ""
 		return m, nil
+	case "r":
+
+		if m.lastFile == "" {
+			return m, nil
+		}
+		newCanvas := cv.NewCanvas()
+		panX, panY, err := newCanvas.LoadFromFileWithPan(m.lastFile)
+		if err != nil {
+			m.errorMessage = fmt.Sprintf("Error opening %s: %s", filepath.Base(m.lastFile), err.Error())
+			m.lastFile = ""
+			return m, nil
+		}
+		m.replaceBuffer0(newCanvas, m.lastFile, panX, panY)
+		m.rememberChart(m.lastFile)
+		m.mode = ModeNormal
+		m.cursorX = 0
+		m.cursorY = 0
+		m.errorMessage = ""
+		return m, nil
 	case "o":
 
 		m.mode = ModeFileInput
@@ -182,6 +201,14 @@ func (m model) handleMoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.fileOp == FileOpOpen && m.fileSearch && !m.showingDeleteConfirm:
+		return m.handleFileSearchKey(msg)
+	case msg.String() == "?" && m.fileOp == FileOpOpen && !m.showingDeleteConfirm:
+		m.fileSearch = true
+		m.fileFilter = ""
+		m.errorMessage = ""
+		m.applyFileFilter()
+		return m, nil
 	case msg.Type == tea.KeyEscape:
 		if m.fromStartup {
 
@@ -195,66 +222,16 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case msg.String() == "up":
 
-		if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm {
-
-			matchesFile := false
-			if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
-				selectedFile := m.fileList[m.selectedFileIndex]
-				fileDisplayName := selectedFile
-				if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
-					fileDisplayName = selectedFile[:len(selectedFile)-4]
-				}
-				matchesFile = (m.filename == fileDisplayName)
-			}
-			if matchesFile || m.filename == "" {
-				if m.selectedFileIndex < 0 {
-					m.selectedFileIndex = len(m.fileList) - 1
-				} else if m.selectedFileIndex > 0 {
-					m.selectedFileIndex--
-				} else {
-					m.selectedFileIndex = len(m.fileList) - 1
-				}
-
-				selectedFile := m.fileList[m.selectedFileIndex]
-				if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
-					m.filename = selectedFile[:len(selectedFile)-4]
-				} else {
-					m.filename = selectedFile
-				}
-				return m, nil
-			}
+		if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm && m.fileSelectionCurrent() {
+			m.moveFileSelection(-1)
+			return m, nil
 		}
 
 	case msg.String() == "down":
 
-		if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm {
-
-			matchesFile := false
-			if m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
-				selectedFile := m.fileList[m.selectedFileIndex]
-				fileDisplayName := selectedFile
-				if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
-					fileDisplayName = selectedFile[:len(selectedFile)-4]
-				}
-				matchesFile = (m.filename == fileDisplayName)
-			}
-			if matchesFile || m.filename == "" {
-				if m.selectedFileIndex < 0 {
-					m.selectedFileIndex = 0
-				} else if m.selectedFileIndex < len(m.fileList)-1 {
-					m.selectedFileIndex++
-				} else {
-					m.selectedFileIndex = 0
-				}
-
-				selectedFile := m.fileList[m.selectedFileIndex]
-				if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
-					m.filename = selectedFile[:len(selectedFile)-4]
-				} else {
-					m.filename = selectedFile
-				}
-				return m, nil
-			}
+		if m.fileOp == FileOpOpen && len(m.fileList) > 0 && !m.showingDeleteConfirm && m.fileSelectionCurrent() {
+			m.moveFileSelection(1)
+			return m, nil
 		}
 
 	case msg.String() == "d":
@@ -286,30 +263,17 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errorMessage = fmt.Sprintf("Error deleting file: %s", err.Error())
 				} else {
 
-					m.fileList = append(m.fileList[:m.confirmFileIndex], m.fileList[m.confirmFileIndex+1:]...)
-
-					if m.selectedFileIndex >= len(m.fileList) {
-						m.selectedFileIndex = len(m.fileList) - 1
-					}
-					if m.selectedFileIndex < 0 && len(m.fileList) > 0 {
-						m.selectedFileIndex = 0
-					}
-
-					if len(m.fileList) > 0 && m.selectedFileIndex >= 0 {
-						selectedFile := m.fileList[m.selectedFileIndex]
-						if strings.HasSuffix(strings.ToLower(selectedFile), ".sav") {
-							m.filename = selectedFile[:len(selectedFile)-4]
-						} else {
-							m.filename = selectedFile
+					for i, f := range m.allFiles {
+						if f == filename {
+							m.allFiles = append(m.allFiles[:i:i], m.allFiles[i+1:]...)
+							break
 						}
-					} else {
+					}
+					m.applyFileFilter()
+					if m.selectedFileIndex < 0 {
 						m.filename = ""
 					}
-					displayName := filename
-					if strings.HasSuffix(strings.ToLower(filename), ".sav") {
-						displayName = filename[:len(filename)-4]
-					}
-					m.successMessage = fmt.Sprintf("Deleted %s", displayName)
+					m.successMessage = fmt.Sprintf("Deleted %s", chartDisplayName(filename))
 				}
 			}
 			m.showingDeleteConfirm = false
@@ -411,6 +375,7 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					if buf != nil {
 						buf.filename = savePath
 					}
+					m.rememberChart(savePath)
 					absPath, _ := filepath.Abs(savePath)
 					m.successMessage = fmt.Sprintf("Saved to %s", absPath)
 					m.errorMessage = ""
@@ -436,17 +401,10 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				} else {
 
+					m.rememberChart(loadPath)
 					if m.fromStartup {
 
-						m.buffers[0] = Buffer{
-							canvas:    newCanvas,
-							undoStack: []Action{},
-							redoStack: []Action{},
-							filename:  loadPath,
-							panX:      panX,
-							panY:      panY,
-						}
-						m.currentBufferIndex = 0
+						m.replaceBuffer0(newCanvas, loadPath, panX, panY)
 						m.fromStartup = false
 					} else if m.openInNewBuffer {
 
@@ -565,6 +523,42 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedFileIndex = -1
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+// handleFileSearchKey handles keys while the open dialog's fuzzy search is
+// active: typed runes filter the list, up/down move within the matches, Enter
+// opens the highlighted chart, Esc leaves search with the full list restored.
+func (m model) handleFileSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEscape:
+		m.fileSearch = false
+		m.fileFilter = ""
+		m.applyFileFilter()
+	case tea.KeyEnter:
+		m.fileSearch = false
+		if len(m.fileList) == 0 {
+			m.fileFilter = ""
+			m.applyFileFilter()
+			return m, nil
+		}
+		return m.handleFileInputKey(msg)
+	case tea.KeyUp:
+		m.moveFileSelection(-1)
+	case tea.KeyDown:
+		m.moveFileSelection(1)
+	case tea.KeyBackspace:
+		if r := []rune(m.fileFilter); len(r) > 0 {
+			m.fileFilter = string(r[:len(r)-1])
+			m.refilterFromTop()
+		}
+	case tea.KeySpace:
+		m.fileFilter += " "
+		m.refilterFromTop()
+	case tea.KeyRunes:
+		m.fileFilter += string(msg.Runes)
+		m.refilterFromTop()
 	}
 	return m, nil
 }
@@ -726,6 +720,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if buf != nil {
 					buf.filename = filename
 				}
+				m.rememberChart(filename)
 				absPath, _ := filepath.Abs(filename)
 				m.successMessage = fmt.Sprintf("Saved to %s", absPath)
 				m.errorMessage = ""

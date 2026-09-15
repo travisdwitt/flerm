@@ -51,6 +51,9 @@ startmenu=false
 
 # Show confirmation dialogs
 confirmations=true
+
+# Offer "r: Resume <chart>" on the start menu for the last chart you opened
+resume=true
 ```
 
 ## NEW Mouse Support!

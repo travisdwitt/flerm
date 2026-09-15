@@ -10,5 +10,5 @@ func (c *Canvas) Reset() {
 	c.boxes = c.boxes[:0]
 	c.texts = c.texts[:0]
 	c.connections = c.connections[:0]
-	c.highlights = make(map[string]int)
+	c.highlights = make(map[Point]int)
 }

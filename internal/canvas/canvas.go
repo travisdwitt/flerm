@@ -4,103 +4,59 @@ type Canvas struct {
 	boxes       []Box
 	connections []Connection
 	texts       []Text
-	highlights  map[string]int
+	highlights  map[Point]int
 }
 
 func NewCanvas() *Canvas {
-	return &Canvas{
-		boxes:       make([]Box, 0),
-		connections: make([]Connection, 0),
-		texts:       make([]Text, 0),
-		highlights:  make(map[string]int),
+	return &Canvas{highlights: make(map[Point]int)}
+}
+
+func (c *Canvas) box(id int) (Box, bool) {
+	if id < 0 || id >= len(c.boxes) {
+		return Box{}, false
 	}
+	return c.boxes[id], true
+}
+
+// connPoints returns a connection's full polyline: origin, waypoints, endpoint.
+func connPoints(conn Connection) []Point {
+	pts := make([]Point, 0, len(conn.Waypoints)+2)
+	pts = append(pts, Point{conn.FromX, conn.FromY})
+	pts = append(pts, conn.Waypoints...)
+	return append(pts, Point{conn.ToX, conn.ToY})
 }
 
 func (c *Canvas) GetFullBounds() (int, int, int, int) {
-	minX, minY := 0, 0
-	maxX, maxY := 0, 0
-	hasElements := false
+	var minX, minY, maxX, maxY int
+	has := false
+	grow := func(x0, y0, x1, y1 int) {
+		if !has {
+			minX, minY, maxX, maxY, has = x0, y0, x1, y1, true
+			return
+		}
+		minX, minY = min(minX, x0), min(minY, y0)
+		maxX, maxY = max(maxX, x1), max(maxY, y1)
+	}
 
 	for _, box := range c.boxes {
-		if !hasElements {
-			minX, minY = box.X, box.Y
-			maxX, maxY = box.X+box.Width, box.Y+box.Height
-			hasElements = true
-		} else {
-			if box.X < minX {
-				minX = box.X
-			}
-			if box.Y < minY {
-				minY = box.Y
-			}
-			if box.X+box.Width > maxX {
-				maxX = box.X + box.Width
-			}
-			if box.Y+box.Height > maxY {
-				maxY = box.Y + box.Height
-			}
-		}
+		grow(box.X, box.Y, box.X+box.Width, box.Y+box.Height)
 	}
-
 	for _, conn := range c.connections {
-		points := []Point{{X: conn.FromX, Y: conn.FromY}}
-		points = append(points, conn.Waypoints...)
-		points = append(points, Point{X: conn.ToX, Y: conn.ToY})
-
-		for _, pt := range points {
-			if !hasElements {
-				minX, minY = pt.X, pt.Y
-				maxX, maxY = pt.X, pt.Y
-				hasElements = true
-			} else {
-				if pt.X < minX {
-					minX = pt.X
-				}
-				if pt.Y < minY {
-					minY = pt.Y
-				}
-				if pt.X > maxX {
-					maxX = pt.X
-				}
-				if pt.Y > maxY {
-					maxY = pt.Y
-				}
-			}
+		for _, pt := range connPoints(conn) {
+			grow(pt.X, pt.Y, pt.X, pt.Y)
 		}
 	}
-
 	for _, text := range c.texts {
-		if !hasElements {
-			minX, minY = text.X, text.Y
-			maxX, maxY = text.X, text.Y
-			hasElements = true
-		} else {
-			if text.X < minX {
-				minX = text.X
-			}
-			if text.Y < minY {
-				minY = text.Y
-			}
-		}
-
 		maxTextX := text.X
 		for _, line := range text.Lines {
-			if text.X+len(line) > maxTextX {
-				maxTextX = text.X + len(line)
-			}
+			maxTextX = max(maxTextX, text.X+len(line))
 		}
-		if maxTextX > maxX {
-			maxX = maxTextX
-		}
-		if text.Y+len(text.Lines) > maxY {
-			maxY = text.Y + len(text.Lines)
-		}
+		grow(text.X, text.Y, maxTextX, text.Y+len(text.Lines))
 	}
 
-	if !hasElements {
+	if !has {
 		return 1, 1, 0, 0
 	}
-
 	return minX, minY, maxX, maxY
 }
 
@@ -113,12 +69,7 @@ func (c *Canvas) AddText(x, y int, text string) {
 }
 
 func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
-	textObj := Text{
-		X:     x,
-		Y:     y,
-		ID:    id,
-		Color: -1,
-	}
+	textObj := Text{X: x, Y: y, ID: id, Color: -1}
 	textObj.SetText(text)
 	c.texts = append(c.texts, textObj)
 	for i := id + 1; i < len(c.texts); i++ {
@@ -127,32 +78,26 @@ func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
 }
 
 func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
-	box := Box{
-		X:     x,
-		Y:     y,
-		ID:    id,
-		Color: -1,
-	}
+	box := Box{X: x, Y: y, ID: id, Color: -1}
 	box.SetText(text)
 	if id >= len(c.boxes) {
 		for len(c.boxes) <= id {
 			c.boxes = append(c.boxes, Box{})
 		}
 		c.boxes[id] = box
-	} else {
-		c.boxes = append(c.boxes, Box{})
-		copy(c.boxes[id+1:], c.boxes[id:])
-		c.boxes[id] = box
-		for i := id + 1; i < len(c.boxes); i++ {
-			c.boxes[i].ID = i
-		}
+		return
+	}
+	c.boxes = append(c.boxes, Box{})
+	copy(c.boxes[id+1:], c.boxes[id:])
+	c.boxes[id] = box
+	for i := id + 1; i < len(c.boxes); i++ {
+		c.boxes[i].ID = i
 	}
 }
 
 func (c *Canvas) GetBoxAt(x, y int) int {
 	for i, box := range c.boxes {
-		if x >= box.X && x < box.X+box.Width &&
-			y >= box.Y && y < box.Y+box.Height {
+		if x >= box.X && x < box.X+box.Width && y >= box.Y && y < box.Y+box.Height {
 			return i
 		}
 	}
@@ -161,10 +106,8 @@ func (c *Canvas) GetBoxAt(x, y int) int {
 
 func (c *Canvas) GetTextAt(x, y int) int {
 	for i, text := range c.texts {
-
 		for lineIdx, line := range text.Lines {
-			lineY := text.Y + lineIdx
-			if y == lineY && x >= text.X && x < text.X+len(line) {
+			if y == text.Y+lineIdx && x >= text.X && x < text.X+len(line) {
 				return i
 			}
 		}
@@ -173,20 +116,47 @@ func (c *Canvas) GetTextAt(x, y int) int {
 }
 
 func (c *Canvas) DeleteText(id int) {
-	if id >= 0 && id < len(c.texts) {
-		c.deleteHighlightsForText(id)
-		c.texts = append(c.texts[:id], c.texts[id+1:]...)
-		for i := id; i < len(c.texts); i++ {
-			c.texts[i].ID = i
-		}
+	if id < 0 || id >= len(c.texts) {
+		return
+	}
+	c.deleteHighlights(c.GetTextCells(id))
+	c.texts = append(c.texts[:id], c.texts[id+1:]...)
+	for i := id; i < len(c.texts); i++ {
+		c.texts[i].ID = i
 	}
 }
 
-func (c *Canvas) GetBoxText(id int) string {
-	if id >= 0 && id < len(c.boxes) {
-		return c.boxes[id].GetText()
+func (c *Canvas) DeleteBox(id int) {
+	if id < 0 || id >= len(c.boxes) {
+		return
 	}
-	return ""
+	c.deleteHighlights(c.GetBoxCells(id))
+	c.boxes = append(c.boxes[:id], c.boxes[id+1:]...)
+	for i := id; i < len(c.boxes); i++ {
+		c.boxes[i].ID = i
+	}
+	kept := make([]Connection, 0, len(c.connections))
+	for _, conn := range c.connections {
+		if conn.FromID == id || conn.ToID == id {
+			continue
+		}
+		if conn.FromID > id {
+			conn.FromID--
+		}
+		if conn.ToID > id {
+			conn.ToID--
+		}
+		kept = append(kept, conn)
+	}
+	c.connections = kept
+}
+
+func (c *Canvas) GetBoxText(id int) string {
+	box, ok := c.box(id)
+	if !ok {
+		return ""
+	}
+	return box.GetText()
 }
 
 func (c *Canvas) SetBoxText(id int, text string) {
@@ -196,10 +166,10 @@ func (c *Canvas) SetBoxText(id int, text string) {
 }
 
 func (c *Canvas) GetTextText(id int) string {
-	if id >= 0 && id < len(c.texts) {
-		return c.texts[id].GetText()
+	if id < 0 || id >= len(c.texts) {
+		return ""
 	}
-	return ""
+	return c.texts[id].GetText()
 }
 
 func (c *Canvas) SetTextText(id int, text string) {
@@ -208,132 +178,122 @@ func (c *Canvas) SetTextText(id int, text string) {
 	}
 }
 
-func (c *Canvas) DeleteBox(id int) {
-	if id >= 0 && id < len(c.boxes) {
-		c.deleteHighlightsForBox(id)
-		c.boxes = append(c.boxes[:id], c.boxes[id+1:]...)
-		for i := id; i < len(c.boxes); i++ {
-			c.boxes[i].ID = i
-		}
-		newConnections := make([]Connection, 0)
-		for _, connection := range c.connections {
-			if connection.FromID != id && connection.ToID != id {
-				if connection.FromID > id {
-					connection.FromID--
-				}
-				if connection.ToID > id {
-					connection.ToID--
-				}
-				newConnections = append(newConnections, connection)
-			}
-		}
-		c.connections = newConnections
+func (c *Canvas) ResizeBox(id, deltaWidth, deltaHeight int) {
+	if id < 0 || id >= len(c.boxes) {
+		return
 	}
+	box := &c.boxes[id]
+	w := max(box.Width+deltaWidth, minBoxWidth)
+	h := max(box.Height+deltaHeight, minBoxHeight)
+	oldX, oldWidth := box.X, box.Width
+	if w != box.Width || h != box.Height {
+		box.fitTextToSize(w, h)
+	}
+	box.Width, box.Height = w, h
+	c.reanchorConnectionsForResize(id, oldX, oldWidth)
 }
 
-func (c *Canvas) ResizeBox(id int, deltaWidth, deltaHeight int) {
-	if id >= 0 && id < len(c.boxes) {
-		box := &c.boxes[id]
-		newWidth := box.Width + deltaWidth
-		newHeight := box.Height + deltaHeight
-
-		if newWidth < minBoxWidth {
-			newWidth = minBoxWidth
-		}
-		if newHeight < minBoxHeight {
-			newHeight = minBoxHeight
-		}
-
-		if newWidth != box.Width || newHeight != box.Height {
-			box.fitTextToSize(newWidth, newHeight)
-		}
-
-		oldBoxX := box.X
-		oldBoxWidth := box.Width
-
-		box.Width = newWidth
-		box.Height = newHeight
-
-		c.reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth)
+// SetBoxSize sets an exact size, leaving the text lines alone (undo restores
+// the size a resize produced; the lines it produced are restored separately).
+func (c *Canvas) SetBoxSize(id, width, height int) {
+	if id < 0 || id >= len(c.boxes) {
+		return
 	}
+	box := &c.boxes[id]
+	oldX, oldWidth := box.X, box.Width
+	width, height = max(width, minBoxWidth), max(height, minBoxHeight)
+	if width == box.Width && height == box.Height {
+		return
+	}
+	box.Width, box.Height = width, height
+	c.reanchorConnectionsForResize(id, oldX, oldWidth)
+}
+
+// resizeAnchorX re-pins a horizontal connection endpoint to whichever vertical
+// edge of the box it sat on before the resize. tieRight breaks a dead-centre tie.
+func resizeAnchorX(oldX, oldBX, oldBW int, box Box, tieRight bool) int {
+	mid := oldBX + oldBW/2
+	right := oldX == oldBX+oldBW-1 || oldX > mid
+	if oldX == oldBX {
+		right = false
+	} else if oldX == mid && oldX != oldBX+oldBW-1 {
+		right = tieRight
+	}
+	if right {
+		return box.X + box.Width - 1
+	}
+	return box.X
 }
 
 func (c *Canvas) reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth int) {
-	box := &c.boxes[id]
 	for i := range c.connections {
 		conn := &c.connections[i]
-		if conn.FromID == id && conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-			wasHorizontal := (conn.FromY == conn.ToY)
-			oldFromX := conn.FromX
-			oldToX := conn.ToX
-			newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(id, conn.ToID, wasHorizontal)
-			if wasHorizontal {
-				oldToBox := c.boxes[conn.ToID]
-				wasOnLeft := (oldToX == oldToBox.X || (oldToX < oldToBox.X+oldToBox.Width/2))
-				if wasOnLeft {
-					newToX = oldToBox.X
-				} else {
-					newToX = oldToBox.X + oldToBox.Width - 1
-				}
-				wasFromRight := (oldFromX == oldBoxX+oldBoxWidth-1 || (oldFromX > oldBoxX+oldBoxWidth/2))
-				if wasFromRight {
-					newFromX = box.X + box.Width - 1
-				} else {
-					newFromX = box.X
-				}
-			}
-			conn.FromX = newFromX
-			conn.FromY = newFromY
-			conn.ToX = newToX
-			conn.ToY = newToY
+		fromID, toID := conn.FromID, conn.ToID
+		if fromID != id && toID != id {
+			continue
 		}
-		if conn.ToID == id && conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-			wasHorizontal := (conn.FromY == conn.ToY)
-			oldToX := conn.ToX
-			oldFromX := conn.FromX
-			newFromX, newFromY, newToX, newToY := c.calculateConnectionPointsPreservingOrientation(conn.FromID, id, wasHorizontal)
-			if wasHorizontal {
-				wasOnLeft := (oldToX == oldBoxX || (oldToX < oldBoxX+oldBoxWidth/2))
-				if wasOnLeft {
-					newToX = box.X
-				} else {
-					newToX = box.X + box.Width - 1
-				}
-				oldFromBox := c.boxes[conn.FromID]
-				wasFromRight := (oldFromX == oldFromBox.X+oldFromBox.Width-1 || (oldFromX > oldFromBox.X+oldFromBox.Width/2))
-				if wasFromRight {
-					newFromX = oldFromBox.X + oldFromBox.Width - 1
-				} else {
-					newFromX = oldFromBox.X
-				}
-			}
-			conn.FromX = newFromX
-			conn.FromY = newFromY
-			conn.ToX = newToX
-			conn.ToY = newToY
+		other := fromID
+		if fromID == id {
+			other = toID
 		}
+		if other < 0 || other >= len(c.boxes) {
+			continue
+		}
+
+		horiz := conn.FromY == conn.ToY
+		oldFromX, oldToX := conn.FromX, conn.ToX
+		conn.FromX, conn.FromY, conn.ToX, conn.ToY =
+			c.calculateConnectionPointsPreservingOrientation(fromID, toID, horiz)
+		if !horiz {
+			continue
+		}
+		// Decide the side from each endpoint's pre-resize geometry.
+		fromBX, fromBW := c.boxes[fromID].X, c.boxes[fromID].Width
+		toBX, toBW := c.boxes[toID].X, c.boxes[toID].Width
+		if fromID == id {
+			fromBX, fromBW = oldBoxX, oldBoxWidth
+		} else {
+			toBX, toBW = oldBoxX, oldBoxWidth
+		}
+		conn.FromX = resizeAnchorX(oldFromX, fromBX, fromBW, c.boxes[fromID], false)
+		conn.ToX = resizeAnchorX(oldToX, toBX, toBW, c.boxes[toID], true)
 	}
 }
 
-func (c *Canvas) MoveBoxOnly(id int, deltaX, deltaY int) {
+func clampNonNeg(x, y int) (int, int) { return max(x, 0), max(y, 0) }
+
+func (c *Canvas) MoveBoxOnly(id, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
-		box.X += deltaX
-		box.Y += deltaY
-		if box.X < 0 {
-			box.X = 0
-		}
-		if box.Y < 0 {
-			box.Y = 0
-		}
+		box.X, box.Y = clampNonNeg(box.X+deltaX, box.Y+deltaY)
 	}
 }
 
-func (c *Canvas) MoveBox(id int, deltaX, deltaY int) {
+func (c *Canvas) MoveBox(id, deltaX, deltaY int) {
+	if id < 0 || id >= len(c.boxes) {
+		return
+	}
+	oldX, oldY := c.boxes[id].X, c.boxes[id].Y
+	c.MoveBoxOnly(id, deltaX, deltaY)
+	c.rerouteConnectionsForMovedBox(id, c.boxes[id].X-oldX, c.boxes[id].Y-oldY)
+}
+
+func (c *Canvas) SetBoxPositionOnly(id, x, y int) {
 	if id >= 0 && id < len(c.boxes) {
-		oldX, oldY := c.boxes[id].X, c.boxes[id].Y
-		c.MoveBoxOnly(id, deltaX, deltaY)
-		c.rerouteConnectionsForMovedBox(id, c.boxes[id].X-oldX, c.boxes[id].Y-oldY)
+		c.boxes[id].X, c.boxes[id].Y = clampNonNeg(x, y)
+	}
+}
+
+func (c *Canvas) MoveText(id, deltaX, deltaY int) {
+	if id >= 0 && id < len(c.texts) {
+		t := &c.texts[id]
+		t.X, t.Y = clampNonNeg(t.X+deltaX, t.Y+deltaY)
+	}
+}
+
+func (c *Canvas) SetTextPosition(id, x, y int) {
+	if id >= 0 && id < len(c.texts) {
+		c.texts[id].X, c.texts[id].Y = clampNonNeg(x, y)
 	}
 }
 
@@ -343,92 +303,17 @@ func (c *Canvas) CycleBoxZLevel(id int) {
 	}
 }
 
-func (c *Canvas) SetBoxPositionOnly(id int, x, y int) {
-	if id >= 0 && id < len(c.boxes) {
-		box := &c.boxes[id]
-		box.X, box.Y = x, y
-		if box.X < 0 {
-			box.X = 0
-		}
-		if box.Y < 0 {
-			box.Y = 0
-		}
-	}
-}
-
-func (c *Canvas) MoveText(id int, deltaX, deltaY int) {
-	if id >= 0 && id < len(c.texts) {
-		text := &c.texts[id]
-		text.X += deltaX
-		text.Y += deltaY
-		if text.X < 0 {
-			text.X = 0
-		}
-		if text.Y < 0 {
-			text.Y = 0
-		}
-	}
-}
-
-func (c *Canvas) SetTextPosition(id int, x, y int) {
-	if id >= 0 && id < len(c.texts) {
-		text := &c.texts[id]
-		text.X, text.Y = x, y
-		if text.X < 0 {
-			text.X = 0
-		}
-		if text.Y < 0 {
-			text.Y = 0
-		}
-	}
-}
-
-func (c *Canvas) SetBoxSize(id int, width, height int) {
-	if id >= 0 && id < len(c.boxes) {
-		box := &c.boxes[id]
-		oldBoxX, oldBoxWidth := box.X, box.Width
-		oldWidth, oldHeight := box.Width, box.Height
-		if width < minBoxWidth {
-			width = minBoxWidth
-		}
-		if height < minBoxHeight {
-			height = minBoxHeight
-		}
-		box.Width, box.Height = width, height
-
-		if box.Width != oldWidth || box.Height != oldHeight {
-			c.reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth)
-		}
-	}
-}
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 func (c *Canvas) CycleBorderStyle(boxID int) BorderStyle {
-	if boxID >= 0 && boxID < len(c.boxes) {
-		oldStyle := c.boxes[boxID].BorderStyle
-		var newStyle BorderStyle
-		switch oldStyle {
-		case BorderStyleASCII:
-			newStyle = BorderStyleSingle
-		case BorderStyleSingle:
-			newStyle = BorderStyleDouble
-		case BorderStyleDouble:
-			newStyle = BorderStyleRounded
-		case BorderStyleRounded:
-			newStyle = BorderStyleASCII
-		default:
-			newStyle = BorderStyleASCII
-		}
-		c.boxes[boxID].BorderStyle = newStyle
-		return oldStyle
+	if boxID < 0 || boxID >= len(c.boxes) {
+		return BorderStyleASCII
 	}
-	return BorderStyleASCII
+	old := c.boxes[boxID].BorderStyle
+	next := old + 1
+	if next < BorderStyleASCII || next > BorderStyleRounded {
+		next = BorderStyleASCII
+	}
+	c.boxes[boxID].BorderStyle = next
+	return old
 }
 
 func (c *Canvas) SetBorderStyle(boxID int, style BorderStyle) {
@@ -453,4 +338,11 @@ func (c *Canvas) SetLineColor(connIdx, color int) {
 	if connIdx >= 0 && connIdx < len(c.connections) {
 		c.connections[connIdx].Color = color
 	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

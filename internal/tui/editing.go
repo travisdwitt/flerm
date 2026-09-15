@@ -55,6 +55,16 @@ func (m *model) syncCursorPositions() {
 	m.editCursorRow, m.editCursorCol = m.linearToCursorPos(m.editCursorPos, m.editText)
 }
 
+// startEditSelection anchors a selection at the cursor unless one is already
+// running. A collapsed selection counts as none, so the anchor never goes
+// stale after a shift-key round trip.
+func (m *model) startEditSelection() {
+	if !m.hasEditSelection() {
+		m.editSelectionStart = m.editCursorPos
+		m.editSelectionEnd = m.editCursorPos
+	}
+}
+
 func (m *model) clearEditSelection() {
 	m.editSelectionStart = -1
 	m.editSelectionEnd = -1

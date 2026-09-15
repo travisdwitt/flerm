@@ -79,6 +79,15 @@ func (b *Box) UpdateSize() {
 	b.Height = len(b.Lines) + 2 + extraHeight
 }
 
+// contentStartLine is the row offset, from the box's top border, where its
+// body text begins: past the title block when there is one.
+func contentStartLine(b Box) int {
+	if b.Title == "" {
+		return 1
+	}
+	return len(strings.Split(b.Title, "\n")) + 2
+}
+
 func (b *Box) fitTextToSize(newWidth, newHeight int) {
 	text := b.GetText()
 	if text == "" {

@@ -11,6 +11,7 @@ type Config struct {
 	SaveDirectory string
 	StartMenu     bool
 	Confirmations bool
+	Resume        bool
 }
 
 func Load() *Config {
@@ -18,6 +19,7 @@ func Load() *Config {
 		SaveDirectory: "",
 		StartMenu:     true,
 		Confirmations: true,
+		Resume:        true,
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -62,6 +64,8 @@ func Load() *Config {
 			config.StartMenu = strings.ToLower(value) == "true"
 		case "confirmations", "confirm":
 			config.Confirmations = strings.ToLower(value) == "true"
+		case "resume", "resumelast", "resume_last":
+			config.Resume = strings.ToLower(value) == "true"
 		}
 	}
 
@@ -74,4 +78,49 @@ func (c *Config) GetSavePath(filename string) string {
 	}
 	os.MkdirAll(c.SaveDirectory, 0755)
 	return filepath.Join(c.SaveDirectory, filename)
+}
+
+// lastFileRecord holds the path of the most recently opened chart, so the start
+// menu can offer to resume it on the next run. Empty when resume is off.
+func (c *Config) lastFileRecord() string {
+	if !c.Resume {
+		return ""
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(homeDir, ".flerm_last")
+}
+
+func (c *Config) RememberLastFile(path string) {
+	record := c.lastFileRecord()
+	if record == "" || path == "" {
+		return
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	os.WriteFile(record, []byte(path+"\n"), 0644)
+}
+
+// LastFile returns the remembered chart, or "" if resume is off, nothing was
+// opened yet, or the file has since been moved or deleted.
+func (c *Config) LastFile() string {
+	record := c.lastFileRecord()
+	if record == "" {
+		return ""
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimSpace(string(data))
+	if path == "" {
+		return ""
+	}
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return ""
+	}
+	return path
 }

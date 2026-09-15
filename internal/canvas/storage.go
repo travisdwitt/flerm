@@ -8,66 +8,73 @@ import (
 	"strings"
 )
 
+func escapeNewlines(s string) string { return strings.ReplaceAll(s, "\n", "\\n") }
+
+func unescapeNewlines(s string) string { return strings.ReplaceAll(s, "\\n", "\n") }
+
 func (c *Canvas) SaveToFile(filename string) error {
+	return c.save(filename, false, 0, 0)
+}
+
+func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
+	return c.save(filename, true, panX, panY)
+}
+
+func (c *Canvas) save(filename string, withPan bool, panX, panY int) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	fmt.Fprintf(file, "FLOWCHART\n")
+	fmt.Fprintln(file, "FLOWCHART")
+
 	fmt.Fprintf(file, "BOXES:%d\n", len(c.boxes))
 	for _, box := range c.boxes {
-		encodedText := strings.ReplaceAll(box.GetText(), "\n", "\\n")
-
-		encodedTitle := strings.ReplaceAll(box.Title, "\n", "\\n")
-		encodedTitle = strings.ReplaceAll(encodedTitle, ",", "\\,")
-
+		title := strings.ReplaceAll(escapeNewlines(box.Title), ",", "\\,")
 		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%d,%s,%s\n",
-			box.X, box.Y, box.Width, box.Height, box.ZLevel, box.BorderStyle, encodedTitle, encodedText)
+			box.X, box.Y, box.Width, box.Height, box.ZLevel, box.BorderStyle,
+			title, escapeNewlines(box.GetText()))
 	}
 
 	fmt.Fprintf(file, "CONNECTIONS:%d\n", len(c.connections))
-	for _, connection := range c.connections {
+	for _, conn := range c.connections {
 		waypointsStr := ""
-		if len(connection.Waypoints) > 0 {
-			waypointParts := make([]string, len(connection.Waypoints))
-			for i, wp := range connection.Waypoints {
-				waypointParts[i] = fmt.Sprintf("%d:%d", wp.X, wp.Y)
+		if len(conn.Waypoints) > 0 {
+			parts := make([]string, len(conn.Waypoints))
+			for i, wp := range conn.Waypoints {
+				parts[i] = fmt.Sprintf("%d:%d", wp.X, wp.Y)
 			}
-			waypointsStr = "|" + strings.Join(waypointParts, ",")
+			waypointsStr = "|" + strings.Join(parts, ",")
 		}
 		arrowFlags := 0
-		if connection.ArrowFrom {
+		if conn.ArrowFrom {
 			arrowFlags |= 1
 		}
-		if connection.ArrowTo {
+		if conn.ArrowTo {
 			arrowFlags |= 2
 		}
 		fmt.Fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d%s\n",
-			connection.FromID, connection.ToID,
-			connection.FromX, connection.FromY,
-			connection.ToX, connection.ToY,
-			len(connection.Waypoints), arrowFlags, waypointsStr)
+			conn.FromID, conn.ToID, conn.FromX, conn.FromY, conn.ToX, conn.ToY,
+			len(conn.Waypoints), arrowFlags, waypointsStr)
 	}
 
 	fmt.Fprintf(file, "TEXTS:%d\n", len(c.texts))
 	for _, text := range c.texts {
-		encodedText := strings.ReplaceAll(text.GetText(), "\n", "\\n")
-		fmt.Fprintf(file, "%d,%d,%s\n", text.X, text.Y, encodedText)
+		fmt.Fprintf(file, "%d,%d,%s\n", text.X, text.Y, escapeNewlines(text.GetText()))
 	}
 
 	fmt.Fprintf(file, "HIGHLIGHTS:%d\n", len(c.highlights))
-	for key, colorIndex := range c.highlights {
-		var x, y int
-		fmt.Sscanf(key, "%d,%d", &x, &y)
-		fmt.Fprintf(file, "%d,%d,%d\n", x, y, colorIndex)
+	for cell, colorIndex := range c.highlights {
+		fmt.Fprintf(file, "%d,%d,%d\n", cell.X, cell.Y, colorIndex)
 	}
 
-	writeColors := func(header string, colors []int) {
+	// Colour sections list only the objects that have one, so older versions of
+	// Flerm (which skip unknown sections) still read the file.
+	writeColors := func(header string, colorOf func(i int) int, n int) {
 		var lines []string
-		for i, col := range colors {
-			if col >= 0 {
+		for i := 0; i < n; i++ {
+			if col := colorOf(i); col >= 0 {
 				lines = append(lines, fmt.Sprintf("%d,%d", i, col))
 			}
 		}
@@ -76,372 +83,252 @@ func (c *Canvas) SaveToFile(filename string) error {
 			fmt.Fprintln(file, line)
 		}
 	}
-	boxColors := make([]int, len(c.boxes))
-	for i, b := range c.boxes {
-		boxColors[i] = b.Color
-	}
-	lineColors := make([]int, len(c.connections))
-	for i, cn := range c.connections {
-		lineColors[i] = cn.Color
-	}
-	textColors := make([]int, len(c.texts))
-	for i, t := range c.texts {
-		textColors[i] = t.Color
-	}
-	writeColors("BOXCOLORS", boxColors)
-	writeColors("LINECOLORS", lineColors)
-	writeColors("TEXTCOLORS", textColors)
+	writeColors("BOXCOLORS", func(i int) int { return c.boxes[i].Color }, len(c.boxes))
+	writeColors("LINECOLORS", func(i int) int { return c.connections[i].Color }, len(c.connections))
+	writeColors("TEXTCOLORS", func(i int) int { return c.texts[i].Color }, len(c.texts))
 
+	if withPan {
+		fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
+	}
 	return nil
 }
 
-func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
-	err := c.SaveToFile(filename)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
-	return nil
-}
-
+// splitBoxLine splits on commas, honouring the "\," escape used in box titles.
 func splitBoxLine(line string) []string {
 	var fields []string
 	var current strings.Builder
-	escaped := false
-
 	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if escaped {
-			current.WriteByte(ch)
-			escaped = false
-		} else if ch == '\\' && i+1 < len(line) && line[i+1] == ',' {
-
-			current.WriteByte(ch)
-			escaped = true
-		} else if ch == ',' {
+		switch {
+		case line[i] == '\\' && i+1 < len(line) && line[i+1] == ',':
+			current.WriteString("\\,")
+			i++
+		case line[i] == ',':
 			fields = append(fields, current.String())
 			current.Reset()
-		} else {
-			current.WriteByte(ch)
+		default:
+			current.WriteByte(line[i])
 		}
 	}
-	fields = append(fields, current.String())
-	return fields
+	return append(fields, current.String())
 }
 
 func (c *Canvas) LoadFromFile(filename string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	c.boxes = c.boxes[:0]
-	c.connections = c.connections[:0]
-	c.texts = c.texts[:0]
-	c.highlights = make(map[string]int)
-
-	scanner := bufio.NewScanner(file)
-	if !scanner.Scan() || scanner.Text() != "FLOWCHART" {
-		return fmt.Errorf("invalid file format")
-	}
-	if !scanner.Scan() {
-		return fmt.Errorf("missing boxes header")
-	}
-	boxCountStr := strings.TrimPrefix(scanner.Text(), "BOXES:")
-	boxCount, err := strconv.Atoi(boxCountStr)
-	if err != nil {
-		return fmt.Errorf("invalid box count: %v", err)
-	}
-
-	for i := 0; i < boxCount; i++ {
-		if !scanner.Scan() {
-			return fmt.Errorf("missing box data")
-		}
-		line := scanner.Text()
-
-		var x, y, width, height, zLevel int
-		var borderStyle BorderStyle
-		var title, text string
-
-		fields := splitBoxLine(line)
-
-		if len(fields) < 3 {
-			return fmt.Errorf("invalid box format")
-		}
-
-		x, _ = strconv.Atoi(fields[0])
-		y, _ = strconv.Atoi(fields[1])
-
-		if len(fields) >= 8 {
-
-			width, _ = strconv.Atoi(fields[2])
-			height, _ = strconv.Atoi(fields[3])
-			zLevel, _ = strconv.Atoi(fields[4])
-			if zLevel < 0 || zLevel > 3 {
-				zLevel = 0
-			}
-			borderStyleInt, _ := strconv.Atoi(fields[5])
-			borderStyle = BorderStyle(borderStyleInt)
-
-			title = strings.ReplaceAll(fields[6], "\\,", ",")
-			title = strings.ReplaceAll(title, "\\n", "\n")
-			text = strings.ReplaceAll(strings.Join(fields[7:], ","), "\\n", "\n")
-		} else if len(fields) >= 6 {
-
-			width, _ = strconv.Atoi(fields[2])
-			height, _ = strconv.Atoi(fields[3])
-			zLevel, _ = strconv.Atoi(fields[4])
-			if zLevel < 0 || zLevel > 3 {
-				zLevel = 0
-			}
-			borderStyle = BorderStyleASCII
-			title = ""
-			text = strings.ReplaceAll(strings.Join(fields[5:], ","), "\\n", "\n")
-		} else if len(fields) >= 5 {
-
-			width, _ = strconv.Atoi(fields[2])
-			height, _ = strconv.Atoi(fields[3])
-			zLevel = 0
-			borderStyle = BorderStyleASCII
-			title = ""
-			text = strings.ReplaceAll(strings.Join(fields[4:], ","), "\\n", "\n")
-		} else {
-
-			text = strings.ReplaceAll(strings.Join(fields[2:], ","), "\\n", "\n")
-			box := Box{
-				X:           x,
-				Y:           y,
-				ID:          i,
-				ZLevel:      0,
-				BorderStyle: BorderStyleASCII,
-				Title:       "",
-				Color:       -1,
-			}
-			box.SetText(text)
-			c.boxes = append(c.boxes, box)
-			continue
-		}
-
-		box := Box{
-			X:           x,
-			Y:           y,
-			ID:          i,
-			ZLevel:      zLevel,
-			BorderStyle: borderStyle,
-			Title:       title,
-			Color:       -1,
-		}
-		box.SetText(text)
-		box.Width = width
-		box.Height = height
-		c.boxes = append(c.boxes, box)
-	}
-
-	if !scanner.Scan() {
-		return fmt.Errorf("missing connections header")
-	}
-	connectionCountStr := strings.TrimPrefix(scanner.Text(), "CONNECTIONS:")
-	connectionCount, err := strconv.Atoi(connectionCountStr)
-	if err != nil {
-		return fmt.Errorf("invalid connection count: %v", err)
-	}
-
-	for i := 0; i < connectionCount; i++ {
-		if !scanner.Scan() {
-			return fmt.Errorf("missing connection data")
-		}
-		line := scanner.Text()
-
-		parts := strings.Split(line, "|")
-		mainParts := strings.Split(parts[0], ",")
-
-		if len(mainParts) == 2 {
-			fromID, _ := strconv.Atoi(mainParts[0])
-			toID, _ := strconv.Atoi(mainParts[1])
-			if fromID >= 0 && fromID < len(c.boxes) && toID >= 0 && toID < len(c.boxes) {
-				c.AddConnection(fromID, toID)
-			}
-		} else if len(mainParts) >= 7 {
-			fromID, _ := strconv.Atoi(mainParts[0])
-			toID, _ := strconv.Atoi(mainParts[1])
-			fromX, _ := strconv.Atoi(mainParts[2])
-			fromY, _ := strconv.Atoi(mainParts[3])
-			toX, _ := strconv.Atoi(mainParts[4])
-			toY, _ := strconv.Atoi(mainParts[5])
-			waypointCount, _ := strconv.Atoi(mainParts[6])
-
-			arrowFlags := 2
-			if len(mainParts) >= 8 {
-				arrowFlags, _ = strconv.Atoi(mainParts[7])
-			}
-
-			var waypoints []Point
-			if len(parts) > 1 && waypointCount > 0 {
-				waypointParts := strings.Split(parts[1], ",")
-				for j := 0; j < waypointCount && j < len(waypointParts); j++ {
-					wpParts := strings.Split(waypointParts[j], ":")
-					if len(wpParts) == 2 {
-						wpX, _ := strconv.Atoi(wpParts[0])
-						wpY, _ := strconv.Atoi(wpParts[1])
-						waypoints = append(waypoints, Point{wpX, wpY})
-					}
-				}
-			}
-
-			connection := Connection{
-				FromID:    fromID,
-				ToID:      toID,
-				FromX:     fromX,
-				FromY:     fromY,
-				ToX:       toX,
-				ToY:       toY,
-				Waypoints: waypoints,
-				ArrowFrom: (arrowFlags & 1) != 0,
-				ArrowTo:   (arrowFlags & 2) != 0,
-				Color:     -1,
-			}
-			c.connections = append(c.connections, connection)
-		} else {
-			return fmt.Errorf("invalid connection format")
-		}
-	}
-
-	if scanner.Scan() {
-		textCountStr := strings.TrimPrefix(scanner.Text(), "TEXTS:")
-		textCount, err := strconv.Atoi(textCountStr)
-		if err == nil {
-			for i := 0; i < textCount; i++ {
-				if !scanner.Scan() {
-					break
-				}
-				line := scanner.Text()
-
-				firstComma := strings.Index(line, ",")
-				if firstComma == -1 {
-					continue
-				}
-				secondComma := strings.Index(line[firstComma+1:], ",")
-				if secondComma == -1 {
-					continue
-				}
-				secondComma += firstComma + 1
-
-				x, err1 := strconv.Atoi(line[:firstComma])
-				y, err2 := strconv.Atoi(line[firstComma+1 : secondComma])
-				if err1 != nil || err2 != nil {
-					continue
-				}
-				text := strings.ReplaceAll(line[secondComma+1:], "\\n", "\n")
-				c.AddText(x, y, text)
-			}
-		}
-	}
-
-	if scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "HIGHLIGHTS:") {
-			highlightCountStr := strings.TrimPrefix(line, "HIGHLIGHTS:")
-			highlightCount, err := strconv.Atoi(highlightCountStr)
-			if err == nil {
-				for i := 0; i < highlightCount; i++ {
-					if !scanner.Scan() {
-						break
-					}
-					parts := strings.Split(scanner.Text(), ",")
-					if len(parts) >= 3 {
-						x, _ := strconv.Atoi(parts[0])
-						y, _ := strconv.Atoi(parts[1])
-						colorIndex, _ := strconv.Atoi(parts[2])
-						if colorIndex >= 0 && colorIndex < NumColors {
-							c.SetHighlight(x, y, colorIndex)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		var header string
-		switch {
-		case strings.HasPrefix(line, "BOXCOLORS:"):
-			header = "BOXCOLORS"
-		case strings.HasPrefix(line, "LINECOLORS:"):
-			header = "LINECOLORS"
-		case strings.HasPrefix(line, "TEXTCOLORS:"):
-			header = "TEXTCOLORS"
-		default:
-			continue
-		}
-		count, err := strconv.Atoi(strings.TrimPrefix(line, header+":"))
-		if err != nil {
-			continue
-		}
-		for i := 0; i < count; i++ {
-			if !scanner.Scan() {
-				break
-			}
-			parts := strings.Split(scanner.Text(), ",")
-			if len(parts) < 2 {
-				continue
-			}
-			idx, err1 := strconv.Atoi(parts[0])
-			col, err2 := strconv.Atoi(parts[1])
-			if err1 != nil || err2 != nil || col < 0 || col >= NumColors {
-				continue
-			}
-			switch header {
-			case "BOXCOLORS":
-				if idx >= 0 && idx < len(c.boxes) {
-					c.boxes[idx].Color = col
-				}
-			case "LINECOLORS":
-				if idx >= 0 && idx < len(c.connections) {
-					c.connections[idx].Color = col
-				}
-			case "TEXTCOLORS":
-				if idx >= 0 && idx < len(c.texts) {
-					c.texts[idx].Color = col
-				}
-			}
-		}
-	}
-
-	return scanner.Err()
+	_, _, err := c.LoadFromFileWithPan(filename)
+	return err
 }
 
 func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
-	err := c.LoadFromFile(filename)
-	if err != nil {
-		return 0, 0, err
-	}
-
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer file.Close()
+
+	c.boxes, c.connections, c.texts = c.boxes[:0], c.connections[:0], c.texts[:0]
+	c.highlights = make(map[Point]int)
+
 	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() || scanner.Text() != "FLOWCHART" {
+		return 0, 0, fmt.Errorf("invalid file format")
+	}
+
+	// Section count line, e.g. "BOXES:3".
+	section := func(name string) (int, error) {
+		if !scanner.Scan() {
+			return 0, fmt.Errorf("missing %s header", strings.ToLower(name))
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(scanner.Text(), name+":"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid %s count: %v", strings.ToLower(name), err)
+		}
+		return n, nil
+	}
+
+	boxCount, err := section("BOXES")
+	if err != nil {
+		return 0, 0, err
+	}
+	for i := 0; i < boxCount; i++ {
+		if !scanner.Scan() {
+			return 0, 0, fmt.Errorf("missing box data")
+		}
+		box, err := parseBox(scanner.Text(), i)
+		if err != nil {
+			return 0, 0, err
+		}
+		c.boxes = append(c.boxes, box)
+	}
+
+	connCount, err := section("CONNECTIONS")
+	if err != nil {
+		return 0, 0, err
+	}
+	for i := 0; i < connCount; i++ {
+		if !scanner.Scan() {
+			return 0, 0, fmt.Errorf("missing connection data")
+		}
+		if err := c.parseConnection(scanner.Text()); err != nil {
+			return 0, 0, err
+		}
+	}
+
+	// Everything past this point is optional and self-describing.
 	panX, panY := 0, 0
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "PAN:") {
-			parts := strings.Split(strings.TrimPrefix(line, "PAN:"), ",")
-			if len(parts) >= 2 {
+		header, arg, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		if header == "PAN" {
+			if parts := strings.Split(arg, ","); len(parts) >= 2 {
 				panX, _ = strconv.Atoi(parts[0])
 				panY, _ = strconv.Atoi(parts[1])
 			}
-			break
+			continue
+		}
+		count, err := strconv.Atoi(arg)
+		if err != nil {
+			continue
+		}
+		for i := 0; i < count && scanner.Scan(); i++ {
+			c.loadSectionLine(header, scanner.Text())
 		}
 	}
 
 	return panX, panY, scanner.Err()
+}
+
+// parseBox reads one BOXES line. Older files carry fewer fields; anything
+// missing falls back to a default.
+func parseBox(line string, id int) (Box, error) {
+	fields := splitBoxLine(line)
+	if len(fields) < 3 {
+		return Box{}, fmt.Errorf("invalid box format")
+	}
+	box := Box{ID: id, Color: -1}
+	box.X, _ = strconv.Atoi(fields[0])
+	box.Y, _ = strconv.Atoi(fields[1])
+
+	textFrom := 2
+	width, height := 0, 0
+	if len(fields) >= 5 {
+		width, _ = strconv.Atoi(fields[2])
+		height, _ = strconv.Atoi(fields[3])
+		textFrom = 4
+	}
+	if len(fields) >= 6 {
+		if z, _ := strconv.Atoi(fields[4]); z >= 0 && z <= 3 {
+			box.ZLevel = z
+		}
+		textFrom = 5
+	}
+	if len(fields) >= 8 {
+		style, _ := strconv.Atoi(fields[5])
+		box.BorderStyle = BorderStyle(style)
+		box.Title = unescapeNewlines(strings.ReplaceAll(fields[6], "\\,", ","))
+		textFrom = 7
+	}
+
+	box.SetText(unescapeNewlines(strings.Join(fields[textFrom:], ",")))
+	if len(fields) >= 5 {
+		box.Width, box.Height = width, height
+	}
+	return box, nil
+}
+
+func (c *Canvas) parseConnection(line string) error {
+	main, waypointStr, _ := strings.Cut(line, "|")
+	parts := strings.Split(main, ",")
+
+	if len(parts) == 2 {
+		fromID, _ := strconv.Atoi(parts[0])
+		toID, _ := strconv.Atoi(parts[1])
+		if fromID >= 0 && fromID < len(c.boxes) && toID >= 0 && toID < len(c.boxes) {
+			c.AddConnection(fromID, toID)
+		}
+		return nil
+	}
+	if len(parts) < 7 {
+		return fmt.Errorf("invalid connection format")
+	}
+
+	n := make([]int, 8)
+	n[7] = 2 // default: arrow on the "to" end only
+	for i := 0; i < len(parts) && i < 8; i++ {
+		n[i], _ = strconv.Atoi(parts[i])
+	}
+
+	var waypoints []Point
+	if waypointStr != "" && n[6] > 0 {
+		for i, wp := range strings.Split(waypointStr, ",") {
+			if i >= n[6] {
+				break
+			}
+			if x, y, ok := strings.Cut(wp, ":"); ok {
+				wx, _ := strconv.Atoi(x)
+				wy, _ := strconv.Atoi(y)
+				waypoints = append(waypoints, Point{wx, wy})
+			}
+		}
+	}
+
+	c.connections = append(c.connections, Connection{
+		FromID: n[0], ToID: n[1],
+		FromX: n[2], FromY: n[3], ToX: n[4], ToY: n[5],
+		Waypoints: waypoints,
+		ArrowFrom: n[7]&1 != 0,
+		ArrowTo:   n[7]&2 != 0,
+		Color:     -1,
+	})
+	return nil
+}
+
+func (c *Canvas) loadSectionLine(header, line string) {
+	switch header {
+	case "TEXTS":
+		x, rest, ok := strings.Cut(line, ",")
+		if !ok {
+			return
+		}
+		y, text, ok := strings.Cut(rest, ",")
+		if !ok {
+			return
+		}
+		tx, err1 := strconv.Atoi(x)
+		ty, err2 := strconv.Atoi(y)
+		if err1 == nil && err2 == nil {
+			c.AddText(tx, ty, unescapeNewlines(text))
+		}
+		return
+	}
+
+	parts := strings.Split(line, ",")
+	if len(parts) < 2 {
+		return
+	}
+	a, err1 := strconv.Atoi(parts[0])
+	b, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return
+	}
+
+	if header == "HIGHLIGHTS" {
+		if len(parts) >= 3 {
+			if col, err := strconv.Atoi(parts[2]); err == nil {
+				c.SetHighlight(a, b, col)
+			}
+		}
+		return
+	}
+	if b < 0 || b >= NumColors {
+		return
+	}
+	switch header {
+	case "BOXCOLORS":
+		c.SetBoxColor(a, b)
+	case "LINECOLORS":
+		c.SetLineColor(a, b)
+	case "TEXTCOLORS":
+		c.SetTextColor(a, b)
+	}
 }

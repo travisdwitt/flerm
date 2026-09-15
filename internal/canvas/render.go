@@ -2,6 +2,7 @@ package canvas
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -32,11 +33,7 @@ func (r *RenderResult) ApplyColors() []string {
 					coloredLine.WriteString(colorReset)
 				}
 				if cellColor != -1 {
-					if char != ' ' {
-						coloredLine.WriteString(getTextColorCode(cellColor))
-					} else {
-						coloredLine.WriteString(getColorCode(cellColor))
-					}
+					coloredLine.WriteString(colorCode(cellColor, char == ' '))
 				}
 				currentColor = cellColor
 			}
@@ -51,12 +48,7 @@ func (r *RenderResult) ApplyColors() []string {
 }
 
 func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []Point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) *RenderResult {
-	if height < 1 {
-		height = 1
-	}
-	if width < 1 {
-		width = 1
-	}
+	width, height = max(width, 1), max(height, 1)
 	canvas := make([][]rune, height)
 	colorMap := make([][]int, height)
 	for i := range canvas {
@@ -67,236 +59,120 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			colorMap[i][j] = -1
 		}
 	}
+	inBounds := func(x, y int) bool { return x >= 0 && x < width && y >= 0 && y < height }
+	putRune := func(x, y int, ch rune) {
+		if inBounds(x, y) {
+			canvas[y][x] = ch
+		}
+	}
+	putColor := func(x, y, color int) {
+		if inBounds(x, y) {
+			colorMap[y][x] = color
+		}
+	}
 
 	for _, connection := range c.connections {
 		c.drawConnectionWithPan(canvas, connection, panX, panY)
 	}
 	if previewFromX >= 0 && previewFromY >= 0 {
-		previewConnection := Connection{
-			FromID:    -1,
-			ToID:      -1,
-			FromX:     previewFromX,
-			FromY:     previewFromY,
-			ToX:       previewToX,
-			ToY:       previewToY,
-			Waypoints: make([]Point, len(previewWaypoints)),
+		c.drawConnectionWithPan(canvas, Connection{
+			FromID: -1, ToID: -1,
+			FromX: previewFromX, FromY: previewFromY,
+			ToX: previewToX, ToY: previewToY,
+			Waypoints: append([]Point(nil), previewWaypoints...),
 			Color:     -1,
-		}
-		for i, wp := range previewWaypoints {
-			previewConnection.Waypoints[i] = Point{X: wp.X, Y: wp.Y}
-		}
-		c.drawConnectionWithPan(canvas, previewConnection, panX, panY)
+		}, panX, panY)
 	}
 	for _, text := range c.texts {
-		c.drawTextWithPan(canvas, text, panX, panY)
+		c.drawTextAt(canvas, text.Lines, text.X-panX, text.Y-panY)
 	}
 	if editTextX >= 0 && editTextY >= 0 && editText != "" {
-		previewText := Text{
-			X:     editTextX,
-			Y:     editTextY,
-			Lines: strings.Split(editText, "\n"),
-			ID:    -1,
-			Color: -1,
-		}
-		c.drawTextWithPan(canvas, previewText, panX, panY)
+		c.drawTextAt(canvas, strings.Split(editText, "\n"), editTextX-panX, editTextY-panY)
 	}
+
+	// Higher z-levels draw last so their shadows fall over lower boxes.
 	boxOrder := make([]int, len(c.boxes))
 	for i := range boxOrder {
 		boxOrder[i] = i
 	}
-	for i := 0; i < len(boxOrder)-1; i++ {
-		for j := i + 1; j < len(boxOrder); j++ {
-			if c.boxes[boxOrder[i]].ZLevel > c.boxes[boxOrder[j]].ZLevel {
-				boxOrder[i], boxOrder[j] = boxOrder[j], boxOrder[i]
-			}
-		}
-	}
+	sort.SliceStable(boxOrder, func(a, b int) bool {
+		return c.boxes[boxOrder[a]].ZLevel < c.boxes[boxOrder[b]].ZLevel
+	})
 	for _, i := range boxOrder {
 		box := c.boxes[i]
-		isSelected := (i == selectedBox)
 		if box.ZLevel > 0 {
 			c.drawBoxShadow(canvas, box, box.ZLevel, panX, panY)
 		}
-		c.drawBoxWithPan(canvas, box, isSelected, panX, panY)
+		c.drawBoxAt(canvas, box, i == selectedBox, box.X-panX, box.Y-panY)
 		if showBoxNumbers {
-
-			boxScreenX := box.X - panX
-			boxScreenY := box.Y - panY
-			if boxScreenY >= 0 && boxScreenY < height && boxScreenX >= 0 && boxScreenX < width {
-				numberStr := fmt.Sprintf("%d", i)
-				for idx, char := range numberStr {
-					posX := boxScreenX + 1 + idx
-					if posX < boxScreenX+box.Width-1 && posX >= 0 && posX < width && boxScreenY >= 0 && boxScreenY < height {
-						if boxScreenY < len(canvas) && posX < len(canvas[boxScreenY]) {
-							canvas[boxScreenY][posX] = char
-						}
-					}
+			boxScreenX, boxScreenY := box.X-panX, box.Y-panY
+			if !inBounds(boxScreenX, boxScreenY) {
+				continue
+			}
+			for idx, char := range fmt.Sprintf("%d", i) {
+				if posX := boxScreenX + 1 + idx; posX < boxScreenX+box.Width-1 {
+					putRune(posX, boxScreenY, char)
 				}
 			}
 		}
+	}
+
+	// editCursorAt maps a character offset in the text being edited to a screen cell.
+	editCursorAt := func(pos int) (int, int, bool) {
+		switch {
+		case editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes):
+			box := c.boxes[editBoxID]
+			x, y := cursorScreenPos(box.X+1, box.Y+1, pos, editText, panX, panY)
+			return x, y, true
+		case editBoxID >= 0 && editBoxID < len(c.boxes):
+			box := c.boxes[editBoxID]
+			x, y := cursorScreenPos(box.X+1, box.Y+contentStartLine(box), pos, editText, panX, panY)
+			return x, y, true
+		case editTextID >= 0 && editTextID < len(c.texts):
+			t := c.texts[editTextID]
+			x, y := cursorScreenPos(t.X, t.Y, pos, editText, panX, panY)
+			return x, y, true
+		case editTextX >= 0 && editTextY >= 0:
+			x, y := cursorScreenPos(editTextX, editTextY, pos, editText, panX, panY)
+			return x, y, true
+		}
+		return 0, 0, false
 	}
 
 	if editSelStart >= 0 && editSelEnd >= 0 && editSelStart != editSelEnd {
-		selStart, selEnd := editSelStart, editSelEnd
-		if selStart > selEnd {
-			selStart, selEnd = selEnd, selStart
-		}
-
+		selStart, selEnd := min(editSelStart, editSelEnd), max(editSelStart, editSelEnd)
 		for pos := selStart; pos < selEnd; pos++ {
-			var screenX, screenY int
-			if editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes) {
+			if x, y, ok := editCursorAt(pos); ok {
+				putColor(x, y, colorEditSelect)
+			}
+		}
+	}
+	if x, y, ok := editCursorAt(editCursorPos); ok {
+		putRune(x, y, '█')
+	}
+	if showCursor {
+		putRune(cursorX, cursorY, '█')
+	}
 
-				box := c.boxes[editBoxID]
-				screenX, screenY = c.calculateTitleCursorPosition(box, pos, editText, panX, panY)
-			} else if editBoxID >= 0 && editBoxID < len(c.boxes) {
-				box := c.boxes[editBoxID]
-				screenX, screenY = c.calculateTextCursorPosition(box, pos, editText, panX, panY)
-			} else if editTextID >= 0 && editTextID < len(c.texts) {
-				text := c.texts[editTextID]
-				screenX, screenY = c.calculateTextCursorPositionForText(text, pos, editText, panX, panY)
-			} else if editTextX >= 0 && editTextY >= 0 {
-				screenX, screenY = c.calculateTextCursorPositionForNewText(editTextX, editTextY, pos, editText, panX, panY)
-			} else {
+	if selectionStartX >= 0 && selectionStartY >= 0 {
+		x0, x1 := minmax(selectionStartX-panX, selectionEndX-panX)
+		y0, y1 := minmax(selectionStartY-panY, selectionEndY-panY)
+		x0, y0 = max(x0, 0), max(y0, 0)
+		x1, y1 = min(x1, width-1), min(y1, height-1)
+		for x := x0; x <= x1; x++ {
+			corner := x == x0 || x == x1
+			if y0 == y1 && corner {
+				putRune(x, y0, '█')
 				continue
 			}
-			if screenY >= 0 && screenY < height && screenX >= 0 && screenX < width {
-				if screenY < len(colorMap) && screenX < len(colorMap[screenY]) {
-					colorMap[screenY][screenX] = colorEditSelect
-				}
+			putRune(x, y0, boxRune(corner, x == x0, true))
+			if y1 != y0 {
+				putRune(x, y1, boxRune(corner, x == x0, false))
 			}
 		}
-	}
-
-	if editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes) {
-
-		box := c.boxes[editBoxID]
-		editCursorX, editCursorY := c.calculateTitleCursorPosition(box, editCursorPos, editText, panX, panY)
-		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
-			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
-				canvas[editCursorY][editCursorX] = '█'
-			}
-		}
-	} else if editBoxID >= 0 && editBoxID < len(c.boxes) {
-		box := c.boxes[editBoxID]
-		editCursorX, editCursorY := c.calculateTextCursorPosition(box, editCursorPos, editText, panX, panY)
-		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
-			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
-				canvas[editCursorY][editCursorX] = '█'
-			}
-		}
-	} else if editTextID >= 0 && editTextID < len(c.texts) {
-		text := c.texts[editTextID]
-		editCursorX, editCursorY := c.calculateTextCursorPositionForText(text, editCursorPos, editText, panX, panY)
-		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
-			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
-				canvas[editCursorY][editCursorX] = '█'
-			}
-		}
-	} else if editTextX >= 0 && editTextY >= 0 {
-
-		editCursorX, editCursorY := c.calculateTextCursorPositionForNewText(editTextX, editTextY, editCursorPos, editText, panX, panY)
-		if editCursorY >= 0 && editCursorY < height && editCursorX >= 0 && editCursorX < width {
-			if editCursorY < len(canvas) && editCursorX < len(canvas[editCursorY]) {
-				canvas[editCursorY][editCursorX] = '█'
-			}
-		}
-	}
-
-	if showCursor && cursorY >= 0 && cursorY < height && cursorX >= 0 && cursorX < width {
-		if cursorY < len(canvas) && cursorX < len(canvas[cursorY]) {
-			canvas[cursorY][cursorX] = '█'
-		}
-	}
-	if selectionStartX >= 0 && selectionStartY >= 0 {
-		startScreenX := selectionStartX - panX
-		startScreenY := selectionStartY - panY
-		endScreenX := selectionEndX - panX
-		endScreenY := selectionEndY - panY
-		minX, maxX := startScreenX, startScreenX
-		if endScreenX < startScreenX {
-			minX = endScreenX
-		} else if endScreenX > startScreenX {
-			maxX = endScreenX
-		}
-		minY, maxY := startScreenY, startScreenY
-		if endScreenY < startScreenY {
-			minY = endScreenY
-		} else if endScreenY > startScreenY {
-			maxY = endScreenY
-		}
-		if minX < 0 {
-			minX = 0
-		}
-		if maxX >= width {
-			maxX = width - 1
-		}
-		if minY < 0 {
-			minY = 0
-		}
-		if maxY >= height {
-			maxY = height - 1
-		}
-		for x := minX; x <= maxX && x < width; x++ {
-			if minY >= 0 && minY < height && x >= 0 {
-				if x == minX || x == maxX {
-
-					if minY == maxY {
-
-						if len(canvas[minY]) > x {
-							canvas[minY][x] = '█'
-						}
-					} else {
-						if x == minX {
-							if len(canvas[minY]) > x {
-								canvas[minY][x] = '┌'
-							}
-						} else {
-							if len(canvas[minY]) > x {
-								canvas[minY][x] = '┐'
-							}
-						}
-					}
-				} else {
-
-					if len(canvas[minY]) > x {
-						canvas[minY][x] = '─'
-					}
-				}
-				if maxY != minY && maxY >= 0 && maxY < height {
-					if x == minX || x == maxX {
-
-						if x == minX {
-							if len(canvas[maxY]) > x {
-								canvas[maxY][x] = '└'
-							}
-						} else {
-							if len(canvas[maxY]) > x {
-								canvas[maxY][x] = '┘'
-							}
-						}
-					} else {
-
-						if len(canvas[maxY]) > x {
-							canvas[maxY][x] = '─'
-						}
-					}
-				}
-			}
-		}
-
-		for y := minY + 1; y < maxY && y < height; y++ {
-			if y >= 0 {
-				if minX >= 0 && minX < width {
-					if len(canvas[y]) > minX {
-						canvas[y][minX] = '│'
-					}
-				}
-				if maxX >= 0 && maxX < width {
-					if len(canvas[y]) > maxX {
-						canvas[y][maxX] = '│'
-					}
-				}
-			}
+		for y := y0 + 1; y < y1; y++ {
+			putRune(x0, y, '│')
+			putRune(x1, y, '│')
 		}
 	}
 
@@ -305,11 +181,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			return
 		}
 		for _, cell := range cells {
-			sx, sy := cell.X-panX, cell.Y-panY
-			if sy >= 0 && sy < height && sx >= 0 && sx < width &&
-				sy < len(colorMap) && sx < len(colorMap[sy]) {
-				colorMap[sy][sx] = colorIndex
-			}
+			putColor(cell.X-panX, cell.Y-panY, colorIndex)
 		}
 	}
 	for i := range c.connections {
@@ -319,238 +191,126 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		paintCells(c.GetTextCells(i), c.texts[i].Color)
 	}
 	for _, i := range boxOrder {
-		box := c.boxes[i]
-		if box.Color < 0 {
-			continue
-		}
-		paintCells(c.GetBoxBorderCells(i), box.Color)
-		paintCells(c.GetBoxTitleBarCells(i), box.Color)
+		paintCells(c.GetBoxBorderCells(i), c.boxes[i].Color)
+		paintCells(c.GetBoxTitleBarCells(i), c.boxes[i].Color)
+	}
+	for cell, colorIndex := range c.highlights {
+		putColor(cell.X-panX, cell.Y-panY, colorIndex)
 	}
 
-	for key, colorIndex := range c.highlights {
-		var x, y int
-		fmt.Sscanf(key, "%d,%d", &x, &y)
-
-		screenX := x - panX
-		screenY := y - panY
-		if screenY >= 0 && screenY < height && screenX >= 0 && screenX < width {
-			if screenY < len(colorMap) && screenX < len(colorMap[screenY]) {
-				colorMap[screenY][screenX] = colorIndex
-			}
-		}
-	}
-
-	return &RenderResult{
-		Canvas:   canvas,
-		ColorMap: colorMap,
-		Width:    width,
-		Height:   height,
-	}
+	return &RenderResult{Canvas: canvas, ColorMap: colorMap, Width: width, Height: height}
 }
 
-func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset int, panX, panY int) {
-	boxX := box.X - panX + shadowOffset
-	boxY := box.Y - panY + shadowOffset
-	height := len(canvas)
-	width := 0
-	if height > 0 {
-		width = len(canvas[0])
+func minmax(a, b int) (int, int) { return min(a, b), max(a, b) }
+
+// boxRune picks the light box-drawing rune for a selection rectangle edge.
+func boxRune(corner, left, top bool) rune {
+	if !corner {
+		return '─'
 	}
-	shadowChar := '░'
-	if shadowOffset >= 2 {
-		shadowChar = '▒'
+	switch {
+	case top && left:
+		return '┌'
+	case top:
+		return '┐'
+	case left:
+		return '└'
 	}
-	if shadowOffset >= 3 {
-		shadowChar = '▓'
-	}
-	actualBoxX := box.X - panX
-	actualBoxY := box.Y - panY
-	for y := boxY; y < boxY+box.Height && y < height; y++ {
-		if y < 0 {
-			continue
-		}
-		for x := boxX; x < boxX+box.Width && x < width; x++ {
-			if x < 0 {
+	return '┘'
+}
+
+func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset, panX, panY int) {
+	shadowChar := []rune{'░', '░', '▒', '▓'}[min(shadowOffset, 3)]
+	boxX, boxY := box.X-panX, box.Y-panY
+	for y := boxY + shadowOffset; y < boxY+shadowOffset+box.Height; y++ {
+		for x := boxX + shadowOffset; x < boxX+shadowOffset+box.Width; x++ {
+			if x >= boxX && x < boxX+box.Width && y >= boxY && y < boxY+box.Height {
 				continue
 			}
-			if x >= actualBoxX && x < actualBoxX+box.Width && y >= actualBoxY && y < actualBoxY+box.Height {
-				continue
-			}
-			if y < len(canvas) && x < len(canvas[y]) {
+			if c.isValidPos(canvas, x, y) {
 				canvas[y][x] = shadowChar
 			}
 		}
 	}
 }
 
-func (c *Canvas) drawBoxWithPan(canvas [][]rune, box Box, isSelected bool, panX, panY int) {
-	c.drawBoxAt(canvas, box, isSelected, box.X-panX, box.Y-panY)
+// borderRunes returns topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical.
+func borderRunes(style BorderStyle, selected bool) [6]rune {
+	if selected {
+		return [6]rune{'#', '#', '#', '#', '#', '#'}
+	}
+	switch style {
+	case BorderStyleSingle:
+		return [6]rune{'┌', '┐', '└', '┘', '─', '│'}
+	case BorderStyleDouble:
+		return [6]rune{'╔', '╗', '╚', '╝', '═', '║'}
+	case BorderStyleRounded:
+		return [6]rune{'╭', '╮', '╰', '╯', '─', '│'}
+	}
+	return [6]rune{'+', '+', '+', '+', '-', '|'}
 }
 
 func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY int) {
-	var topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical rune
-
-	if isSelected {
-		topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '#', '#', '#', '#', '#', '#'
-	} else {
-		switch box.BorderStyle {
-		case BorderStyleASCII:
-			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '+', '+', '+', '+', '-', '|'
-		case BorderStyleSingle:
-			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '┌', '┐', '└', '┘', '─', '│'
-		case BorderStyleDouble:
-			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '╔', '╗', '╚', '╝', '═', '║'
-		case BorderStyleRounded:
-			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '╭', '╮', '╰', '╯', '─', '│'
-		default:
-			topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical = '+', '+', '+', '+', '-', '|'
+	b := borderRunes(box.BorderStyle, isSelected)
+	put := func(x, y int, ch rune) {
+		if c.isValidPos(canvas, x, y) {
+			canvas[y][x] = ch
 		}
 	}
 
-	height := len(canvas)
-	width := 0
-	if height > 0 {
-		width = len(canvas[0])
+	right, bottom := boxX+box.Width-1, boxY+box.Height-1
+	for x := boxX; x <= right; x++ {
+		put(x, boxY, b[4])
+		put(x, bottom, b[4])
 	}
-
-	startY := boxY
-	if startY < 0 {
-		startY = 0
+	for y := boxY + 1; y < bottom; y++ {
+		put(boxX, y, b[5])
+		put(right, y, b[5])
 	}
-	endY := boxY + box.Height
-	if endY > height {
-		endY = height
-	}
+	put(boxX, boxY, b[0])
+	put(right, boxY, b[1])
+	put(boxX, bottom, b[2])
+	put(right, bottom, b[3])
 
-	startX := boxX
-	if startX < 0 {
-		startX = 0
-	}
-	endX := boxX + box.Width
-	if endX > width {
-		endX = width
-	}
-
-	for y := startY; y < endY; y++ {
-		for x := startX; x < endX; x++ {
-
-			isTopRow := (y == boxY)
-			isBottomRow := (y == boxY+box.Height-1)
-			isLeftCol := (x == boxX)
-			isRightCol := (x == boxX+box.Width-1)
-
-			if isTopRow {
-				if isLeftCol {
-					canvas[y][x] = topLeft
-				} else if isRightCol {
-					canvas[y][x] = topRight
-				} else {
-					canvas[y][x] = horizontal
+	// Text is clipped to the inside of the border on every side.
+	maxWidth := max(box.Width-2, 0)
+	putLines := func(lines []string, startY, limitY int) {
+		for i, line := range lines {
+			y := startY + i
+			if y >= limitY {
+				break
+			}
+			for j, ch := range []rune(line) {
+				if j >= maxWidth {
+					break
 				}
-			} else if isBottomRow {
-				if isLeftCol {
-					canvas[y][x] = bottomLeft
-				} else if isRightCol {
-					canvas[y][x] = bottomRight
-				} else {
-					canvas[y][x] = horizontal
-				}
-			} else if isLeftCol || isRightCol {
-				canvas[y][x] = vertical
+				put(boxX+1+j, y, ch)
 			}
 		}
 	}
 
-	contentStartLine := 0
 	if box.Title != "" {
-
 		titleLines := strings.Split(box.Title, "\n")
-		maxWidth := box.Width - 2
-		if maxWidth < 0 {
-			maxWidth = 0
-		}
-
-		for lineIdx, titleLine := range titleLines {
-			titleY := boxY + 1 + lineIdx
-			if titleY >= 0 && titleY < len(canvas) {
-				titleText := titleLine
-				if len(titleText) > maxWidth {
-					titleText = titleText[:maxWidth]
-				}
-
-				titleX := boxX + 1
-
-				for i, char := range titleText {
-					if titleX+i >= 0 && titleX+i < len(canvas[titleY]) && titleX+i < boxX+box.Width-1 {
-						canvas[titleY][titleX+i] = char
-					}
-				}
-			}
-		}
-
+		putLines(titleLines, boxY+1, bottom+len(titleLines))
 		dividerY := boxY + 1 + len(titleLines)
-		if dividerY >= 0 && dividerY < len(canvas) {
-			divStartX := boxX + 1
-			if divStartX < 0 {
-				divStartX = 0
-			}
-			divEndX := boxX + box.Width - 1
-			if divEndX > len(canvas[dividerY]) {
-				divEndX = len(canvas[dividerY])
-			}
-			for x := divStartX; x < divEndX; x++ {
-				canvas[dividerY][x] = horizontal
-			}
+		for x := boxX + 1; x < right; x++ {
+			put(x, dividerY, b[4])
 		}
-
-		contentStartLine = 1 + len(titleLines) + 1
-	} else {
-		contentStartLine = 1
 	}
+	putLines(box.Lines, boxY+contentStartLine(box), bottom)
+}
 
-	for lineIdx, line := range box.Lines {
-		textY := boxY + contentStartLine + lineIdx
-		textX := boxX + 1
-		if textY >= 0 && textY < len(canvas) && textY < boxY+box.Height-1 {
-			maxWidth := box.Width - 2
-			if maxWidth < 0 {
-				maxWidth = 0
-			}
-			displayText := line
-			if len(displayText) > maxWidth {
-				displayText = displayText[:maxWidth]
-			}
-
-			for i, char := range displayText {
-				charX := textX + i
-				if charX >= 0 && charX < len(canvas[textY]) && charX < boxX+box.Width-1 {
-					canvas[textY][charX] = char
-				}
+func (c *Canvas) drawTextAt(canvas [][]rune, lines []string, textX, textY int) {
+	for lineIdx, line := range lines {
+		for i, char := range line {
+			if c.isValidPos(canvas, textX+i, textY+lineIdx) {
+				canvas[textY+lineIdx][textX+i] = char
 			}
 		}
 	}
 }
 
-func (c *Canvas) drawTextWithPan(canvas [][]rune, text Text, panX, panY int) {
-	c.drawTextAt(canvas, text, text.X-panX, text.Y-panY)
-}
-
-func (c *Canvas) drawTextAt(canvas [][]rune, text Text, textX, textY int) {
-	for lineIdx, line := range text.Lines {
-		lineY := textY + lineIdx
-		lineX := textX
-		if lineY >= 0 && lineY < len(canvas) {
-
-			for i, char := range line {
-				charX := lineX + i
-				if charX >= 0 && charX < len(canvas[lineY]) {
-					canvas[lineY][charX] = char
-				}
-			}
-		}
-	}
-}
-
+// cursorScreenPos walks content to find the screen cell for a character offset.
 func cursorScreenPos(originX, originY, cursorPos int, content string, panX, panY int) (int, int) {
 	lines := strings.Split(content, "\n")
 	currentPos := 0
@@ -561,50 +321,25 @@ func cursorScreenPos(originX, originY, cursorPos int, content string, panX, panY
 		}
 		currentPos += lineLength + 1
 	}
-	if len(lines) > 0 {
-		return originX + len([]rune(lines[len(lines)-1])) - panX, originY + len(lines) - 1 - panY
-	}
-	return originX - panX, originY - panY
-}
-
-func (c *Canvas) calculateTextCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
-	contentStartY := 1
-	if box.Title != "" {
-		contentStartY = 1 + len(strings.Split(box.Title, "\n")) + 1
-	}
-	return cursorScreenPos(box.X+1, box.Y+contentStartY, cursorPos, text, panX, panY)
-}
-
-func (c *Canvas) calculateTitleCursorPosition(box Box, cursorPos int, text string, panX, panY int) (int, int) {
-	return cursorScreenPos(box.X+1, box.Y+1, cursorPos, text, panX, panY)
-}
-
-func (c *Canvas) calculateTextCursorPositionForText(text Text, cursorPos int, textContent string, panX, panY int) (int, int) {
-	return cursorScreenPos(text.X, text.Y, cursorPos, textContent, panX, panY)
-}
-
-func (c *Canvas) calculateTextCursorPositionForNewText(textX, textY int, cursorPos int, textContent string, panX, panY int) (int, int) {
-	return cursorScreenPos(textX, textY, cursorPos, textContent, panX, panY)
+	last := lines[len(lines)-1]
+	return originX + len([]rune(last)) - panX, originY + len(lines) - 1 - panY
 }
 
 func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, panX, panY int) {
-	adjustedConnection := connection
-	adjustedConnection.FromX = connection.FromX - panX
-	adjustedConnection.FromY = connection.FromY - panY
-	adjustedConnection.ToX = connection.ToX - panX
-	adjustedConnection.ToY = connection.ToY - panY
-	adjustedConnection.Waypoints = make([]Point, len(connection.Waypoints))
+	shifted := connection
+	shifted.FromX, shifted.FromY = connection.FromX-panX, connection.FromY-panY
+	shifted.ToX, shifted.ToY = connection.ToX-panX, connection.ToY-panY
+	shifted.Waypoints = make([]Point, len(connection.Waypoints))
 	for i, wp := range connection.Waypoints {
-		adjustedConnection.Waypoints[i] = Point{X: wp.X - panX, Y: wp.Y - panY}
+		shifted.Waypoints[i] = Point{wp.X - panX, wp.Y - panY}
 	}
-	c.drawConnection(canvas, adjustedConnection, connection, panX, panY)
+	c.drawConnection(canvas, shifted, connection, panX, panY)
 }
 
-func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, originalConnection Connection, panX, panY int) {
-	pts := []Point{{connection.FromX, connection.FromY}}
-	pts = append(pts, connection.Waypoints...)
-	pts = append(pts, Point{connection.ToX, connection.ToY})
+func (c *Canvas) drawConnection(canvas [][]rune, connection, originalConnection Connection, panX, panY int) {
+	pts := connPoints(connection)
 
+	// Diagonal hops become an L: across first, then down.
 	var verts []Point
 	addV := func(p Point) {
 		if len(verts) == 0 || verts[len(verts)-1] != p {
@@ -615,7 +350,7 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, original
 		from, to := pts[i], pts[i+1]
 		addV(from)
 		if from.X != to.X && from.Y != to.Y {
-			addV(Point{X: to.X, Y: from.Y})
+			addV(Point{to.X, from.Y})
 		}
 		addV(to)
 	}
@@ -631,18 +366,12 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, original
 	for i := 0; i < len(verts)-1; i++ {
 		a, b := verts[i], verts[i+1]
 		if a.X == b.X {
-			y0, y1 := a.Y, b.Y
-			if y0 > y1 {
-				y0, y1 = y1, y0
-			}
+			y0, y1 := minmax(a.Y, b.Y)
 			for y := y0; y <= y1; y++ {
 				put(a.X, y, '│')
 			}
 		} else {
-			x0, x1 := a.X, b.X
-			if x0 > x1 {
-				x0, x1 = x1, x0
-			}
+			x0, x1 := minmax(a.X, b.X)
 			for x := x0; x <= x1; x++ {
 				put(x, a.Y, '─')
 			}
@@ -663,38 +392,20 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection Connection, original
 }
 
 func cornerChar(prev, cur, next Point) rune {
-	if prev.Y == cur.Y && next.X == cur.X && prev.X != cur.X && next.Y != cur.Y {
-		if prev.X < cur.X {
-			if next.Y > cur.Y {
-				return '┐'
-			}
-			return '┘'
-		}
-		if next.Y > cur.Y {
-			return '┌'
-		}
-		return '└'
-	}
-	if prev.X == cur.X && next.Y == cur.Y && prev.Y != cur.Y && next.X != cur.X {
-		if prev.Y < cur.Y {
-			if next.X > cur.X {
-				return '└'
-			}
-			return '┘'
-		}
-		if next.X > cur.X {
-			return '┌'
-		}
-		return '┐'
+	switch {
+	case prev.Y == cur.Y && next.X == cur.X && prev.X != cur.X && next.Y != cur.Y:
+		return boxRune(true, prev.X > cur.X, next.Y > cur.Y)
+	case prev.X == cur.X && next.Y == cur.Y && prev.Y != cur.Y && next.X != cur.X:
+		return boxRune(true, next.X > cur.X, prev.Y > cur.Y)
 	}
 	return 0
 }
 
 func (c *Canvas) drawConnEndArrow(canvas [][]rune, boxID, ax, ay, panX, panY int) {
-	if boxID < 0 || boxID >= len(c.boxes) {
+	box, ok := c.box(boxID)
+	if !ok {
 		return
 	}
-	box := c.boxes[boxID]
 	dl := abs(ax - box.X)
 	dr := abs(ax - (box.X + box.Width - 1))
 	dt := abs(ay - box.Y)
@@ -717,49 +428,35 @@ func (c *Canvas) drawConnEndArrow(canvas [][]rune, boxID, ax, ay, panX, panY int
 }
 
 func (c *Canvas) isValidPos(canvas [][]rune, x, y int) bool {
-	return y >= 0 && y < len(canvas) && x >= 0 && x < len(canvas[0])
+	return y >= 0 && y < len(canvas) && x >= 0 && x < len(canvas[y])
 }
 
-func getColorCode(colorIndex int) string {
-
-	if colorIndex == colorEditSelect {
+// colorCode returns the SGR sequence for a palette index: background for blank
+// cells, foreground for cells holding a glyph.
+func colorCode(colorIndex int, blank bool) string {
+	switch colorIndex {
+	case colorEditSelect:
 		return "\x1b[7;36m"
-	}
-	if colorIndex == ColorMouseSelect {
-		return "\x1b[103m"
-	}
-	if colorIndex == ColorMenuSelect {
-		return "\x1b[7m"
-	}
-	if colorIndex == ColorMenuBorder {
-		return "\x1b[32m"
-	}
-	colors := []int{47, 41, 42, 43, 44, 45, 46, 47}
-	if colorIndex < 0 || colorIndex >= len(colors) {
-		return ""
-	}
-	return fmt.Sprintf("\x1b[%dm", colors[colorIndex])
-}
-
-func getTextColorCode(colorIndex int) string {
-
-	if colorIndex == colorEditSelect {
-		return "\x1b[7;36m"
-	}
-	if colorIndex == ColorMouseSelect {
+	case ColorMouseSelect:
+		if blank {
+			return "\x1b[103m"
+		}
 		return "\x1b[1;93m"
-	}
-	if colorIndex == ColorMenuSelect {
+	case ColorMenuSelect:
 		return "\x1b[7m"
-	}
-	if colorIndex == ColorMenuBorder {
+	case ColorMenuBorder:
 		return "\x1b[32m"
 	}
-	colors := []int{37, 31, 32, 33, 34, 35, 36, 37}
-	if colorIndex < 0 || colorIndex >= len(colors) {
+	if colorIndex < 0 || colorIndex >= NumColors {
 		return ""
 	}
-	return fmt.Sprintf("\x1b[%dm", colors[colorIndex])
+	base := 30
+	if blank {
+		base = 40
+	}
+	// Index 0 (gray) and 7 (white) share the palette's white slot.
+	offsets := []int{7, 1, 2, 3, 4, 5, 6, 7}
+	return fmt.Sprintf("\x1b[%dm", base+offsets[colorIndex])
 }
 
 const colorReset = "\x1b[0m"

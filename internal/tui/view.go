@@ -223,7 +223,7 @@ func (m model) View() string {
 	var statusLine string
 	switch m.mode {
 	case ModeStartup:
-		statusLine = "Press 'n' for new flowchart, 'o' to open existing, or 'q' to quit"
+		statusLine = "Press 'n' for new flowchart, 'o' to open existing, 'r' to resume, or 'q' to quit"
 	case ModeEditing:
 		displayText := strings.ReplaceAll(m.editText, "\n", " ")
 		cursorPos := m.editCursorPos
@@ -262,11 +262,11 @@ func (m model) View() string {
 			selectionHint = fmt.Sprintf(" | %d chars selected", end-start)
 		}
 		if m.selectedBox != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", m.selectedBox, cursorDisplay, selectionHint)
+			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", m.selectedBox, cursorDisplay, selectionHint)
 		} else if m.selectedText != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", m.selectedText, cursorDisplay, selectionHint)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", m.selectedText, cursorDisplay, selectionHint)
 		} else {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s%s | Home/End, Shift+←→↑↓=select, Ctrl+S=save", cursorDisplay, selectionHint)
+			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", cursorDisplay, selectionHint)
 		}
 	case ModeTextInput:
 		displayText := strings.ReplaceAll(m.textInputText, "\n", " ")
@@ -285,7 +285,7 @@ func (m model) View() string {
 			runes[cursorPos] = '█'
 			cursorDisplay = string(runes)
 		}
-		statusLine = fmt.Sprintf("Mode: TEXT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
+		statusLine = fmt.Sprintf("Mode: TEXT | Text: %s | ←/→=move cursor, Enter=newline, Ctrl+S/Esc=save", cursorDisplay)
 	case ModeResize:
 		statusLine = fmt.Sprintf("Mode: RESIZE | Box %d | hjkl/arrows=resize, Enter=finish, Esc=cancel", m.selectedBox)
 	case ModeMove:
@@ -393,7 +393,7 @@ func (m model) View() string {
 			runes[cursorPos] = '█'
 			cursorDisplay = string(runes)
 		}
-		statusLine = fmt.Sprintf("Mode: TITLE EDIT | Title: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S=save, Esc=cancel", cursorDisplay)
+		statusLine = fmt.Sprintf("Mode: TITLE EDIT | Title: %s | ←/→/↑/↓=move cursor, Enter=newline, Ctrl+S/Esc=save", cursorDisplay)
 	default:
 		modeStr := m.modeString()
 		if m.zPanMode {
@@ -635,14 +635,21 @@ func (m model) renderStartupMenu() string {
 	menuItems := []string{
 		"  n: New",
 		"  o: Open",
-		"  q: Quit",
 	}
+	if m.lastFile != "" {
+		name := chartDisplayName(filepath.Base(m.lastFile))
+		if r := []rune(name); len(r) > 24 {
+			name = string(r[:23]) + "\u2026"
+		}
+		menuItems = append(menuItems, "  r: Resume "+name)
+	}
+	menuItems = append(menuItems, "  q: Quit")
 
 	logoWidth := len(logo[0])
 	menuWidth := 0
 	for _, item := range menuItems {
-		if len(item) > menuWidth {
-			menuWidth = len(item)
+		if w := len([]rune(item)); w > menuWidth {
+			menuWidth = w
 		}
 	}
 
@@ -698,10 +705,10 @@ func (m model) renderStartupMenu() string {
 				} else if relY == 2+len(logo) || relY == 3+len(logo) {
 					result.WriteString(" ")
 				} else if relY >= 4+len(logo) && relY < 4+len(logo)+len(menuItems) {
-					menuLineIdx := relY - 4 - len(logo)
+					item := []rune(menuItems[relY-4-len(logo)])
 					menuX := relX - 1
-					if menuX >= 0 && menuX < len(menuItems[menuLineIdx]) {
-						result.WriteString(string(menuItems[menuLineIdx][menuX]))
+					if menuX >= 0 && menuX < len(item) {
+						result.WriteString(string(item[menuX]))
 					} else {
 						result.WriteString(" ")
 					}
@@ -718,44 +725,116 @@ func (m model) renderStartupMenu() string {
 	return result.String()
 }
 
+// scrollbarChar returns the scrollbar glyph for visible row (0-based) of a
+// file list of total entries scrolled down by scroll.
+func scrollbarChar(row, scroll, total int) string {
+	thumb := fileListWindow * fileListWindow / total
+	if thumb < 1 {
+		thumb = 1
+	}
+	start := 0
+	if maxScroll := total - fileListWindow; maxScroll > 0 {
+		start = scroll * (fileListWindow - thumb) / maxScroll
+	}
+	if row >= start && row < start+thumb {
+		return "\u2588"
+	}
+	return "\u2591"
+}
+
 func (m model) renderFileMenu() string {
 	title := "Select a saved chart:"
+	const (
+		openHint    = "  Enter: Open  d: Delete  ?: Search  Esc: Cancel"
+		searchHint  = "  Enter: Open  Esc: Exit search"
+		emptyHint   = "  Esc: Cancel"
+		emptyList   = "  (No .sav files found in current directory)"
+		noMatch     = "  (No charts match)"
+		searchLabel = "  Search: "
+	)
 
+	// The dialog keeps one size while it is open: the list area is always
+	// listRows tall and the width comes from the unfiltered chart list, so
+	// starting a search or narrowing it never resizes the box.
+	listRows := len(m.allFiles)
+	if listRows > fileListWindow {
+		listRows = fileListWindow
+	}
+	if listRows < 1 {
+		listRows = 1
+	}
+
+	nameWidth := 0
+	for _, f := range m.allFiles {
+		if w := len([]rune(chartDisplayName(f))) + 2; w > nameWidth {
+			nameWidth = w
+		}
+	}
+	scrolls := len(m.allFiles) > fileListWindow
+	if scrolls {
+		nameWidth += 2 // reserve the scrollbar column
+	}
+
+	contentWidth := len([]rune(title))
+	for _, w := range []int{nameWidth, len(openHint), len(searchHint), len(emptyList)} {
+		if w > contentWidth {
+			contentWidth = w
+		}
+	}
+
+	total := len(m.fileList)
 	var menuItems []string
-	if len(m.fileList) == 0 {
-		menuItems = []string{"  (No .sav files found in current directory)"}
-	} else {
-		for i, file := range m.fileList {
-			displayName := file
-			if strings.HasSuffix(strings.ToLower(file), ".sav") {
-				displayName = file[:len(file)-4]
-			}
-
+	switch {
+	case len(m.allFiles) == 0:
+		menuItems = append(menuItems, emptyList)
+	case total == 0:
+		menuItems = append(menuItems, noMatch)
+	default:
+		end := m.fileScroll + fileListWindow
+		if end > total {
+			end = total
+		}
+		for i := m.fileScroll; i < end; i++ {
+			row := "  "
 			if i == m.selectedFileIndex {
-				menuItems = append(menuItems, "> "+displayName)
-			} else {
-				menuItems = append(menuItems, "  "+displayName)
+				row = "> "
 			}
+			row += chartDisplayName(m.fileList[i])
+			if total > fileListWindow {
+				row += strings.Repeat(" ", contentWidth-len([]rune(row))-1) + scrollbarChar(i-m.fileScroll, m.fileScroll, total)
+			}
+			menuItems = append(menuItems, row)
 		}
 	}
-
-	if m.showingDeleteConfirm && m.confirmFileIndex >= 0 && m.confirmFileIndex < len(m.fileList) {
-		chartName := m.fileList[m.confirmFileIndex]
-		if strings.HasSuffix(strings.ToLower(chartName), ".sav") {
-			chartName = chartName[:len(chartName)-4]
-		}
+	for len(menuItems) < listRows {
 		menuItems = append(menuItems, "")
-		menuItems = append(menuItems, fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartName))
-	} else if len(m.fileList) > 0 {
-		menuItems = append(menuItems, "")
-		menuItems = append(menuItems, "  Enter: Open  d: Delete  Esc: Cancel")
 	}
 
-	contentWidth := len(title)
-	for _, item := range menuItems {
-		if len(item) > contentWidth {
-			contentWidth = len(item)
+	menuItems = append(menuItems, "")
+	if m.fileSearch {
+		// Show the tail of a filter too long for the box rather than widen it.
+		filter := []rune(m.fileFilter)
+		if fits := contentWidth - len(searchLabel) - 1; len(filter) > fits && fits > 0 {
+			filter = filter[len(filter)-fits:]
 		}
+		menuItems = append(menuItems, searchLabel+string(filter)+"\u2588")
+	} else {
+		menuItems = append(menuItems, "")
+	}
+
+	switch {
+	case m.showingDeleteConfirm && m.confirmFileIndex >= 0 && m.confirmFileIndex < total:
+		confirm := fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartDisplayName(m.fileList[m.confirmFileIndex]))
+		menuItems = append(menuItems, confirm)
+		if w := len([]rune(confirm)); w > contentWidth {
+			contentWidth = w
+		}
+	case m.fileSearch:
+		menuItems = append(menuItems, searchHint)
+	case len(m.allFiles) == 0:
+		menuItems = append(menuItems, emptyHint)
+	default:
+		menuItems = append(menuItems, openHint)
 	}
 
 	boxWidth := contentWidth + 4
@@ -802,10 +881,10 @@ func (m model) renderFileMenu() string {
 				} else if relY == 2 {
 					result.WriteString("─")
 				} else if relY >= 3 && relY < 3+len(menuItems) {
-					itemIdx := relY - 3
+					item := []rune(menuItems[relY-3])
 					itemX := relX - 1
-					if itemX >= 0 && itemX < len(menuItems[itemIdx]) {
-						result.WriteString(string(menuItems[itemIdx][itemX]))
+					if itemX >= 0 && itemX < len(item) {
+						result.WriteString(string(item[itemX]))
 					} else {
 						result.WriteString(" ")
 					}

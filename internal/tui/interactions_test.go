@@ -5,6 +5,8 @@ import (
 
 	cv "flerm/internal/canvas"
 
+	"github.com/atotto/clipboard"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -293,5 +295,136 @@ func TestHighlightPaintDrag(t *testing.T) {
 	m.undo()
 	if m.getCanvas().GetHighlight(32, 30) != -1 {
 		t.Fatal("expected undo to clear the painted stroke")
+	}
+}
+
+// TestEscapeKeepsTypedText checks that Esc commits an in-progress edit the way
+// Ctrl+S does, in every text-entry mode, and that undo still reverts it.
+func TestEscapeKeepsTypedText(t *testing.T) {
+	typeKeys := func(m model, s string) model {
+		for _, r := range s {
+			out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = out.(model)
+		}
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		return out.(model)
+	}
+
+	// Box text: 'e' on box 0, retype, Esc.
+	m := newTestModel()
+	m.cursorX, m.cursorY = 6, 4
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = out.(model)
+	if m.mode != ModeEditing {
+		t.Fatalf("expected ModeEditing, got %v", m.mode)
+	}
+	for range "Alpha" {
+		out, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = out.(model)
+	}
+	m = typeKeys(m, "Kept")
+	if m.mode != ModeNormal {
+		t.Fatalf("expected Esc to return to normal mode, got %v", m.mode)
+	}
+	if got := m.getCanvas().Boxes()[0].GetText(); got != "Kept" {
+		t.Fatalf("expected box text %q, got %q", "Kept", got)
+	}
+	m.undo()
+	if got := m.getCanvas().Boxes()[0].GetText(); got != "Alpha" {
+		t.Fatalf("expected undo to restore %q, got %q", "Alpha", got)
+	}
+
+	// Box title: 'T' on box 0, type, Esc.
+	m = newTestModel()
+	m.cursorX, m.cursorY = 6, 4
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = out.(model)
+	if m.mode != ModeTitleEdit {
+		t.Fatalf("expected ModeTitleEdit, got %v", m.mode)
+	}
+	m = typeKeys(m, "Title")
+	if got := m.getCanvas().Boxes()[0].Title; got != "Title" {
+		t.Fatalf("expected title %q, got %q", "Title", got)
+	}
+	m.undo()
+	if got := m.getCanvas().Boxes()[0].Title; got != "" {
+		t.Fatalf("expected undo to clear the title, got %q", got)
+	}
+
+	// Free text: 't' on empty canvas space, type, Esc.
+	m = newTestModel()
+	m.cursorX, m.cursorY = 60, 30
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	m = out.(model)
+	if m.mode != ModeTextInput {
+		t.Fatalf("expected ModeTextInput, got %v", m.mode)
+	}
+	before := len(m.getCanvas().Texts())
+	m = typeKeys(m, "note")
+	texts := m.getCanvas().Texts()
+	if len(texts) != before+1 || texts[len(texts)-1].GetText() != "note" {
+		t.Fatalf("expected Esc to add the typed text, got %d texts", len(texts))
+	}
+}
+
+// TestShiftHomeEndSelectAndCopy covers Shift+Home/End selection and 'y' copying
+// the selection to the system clipboard instead of replacing it.
+func TestShiftHomeEndSelectAndCopy(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeEditing
+	m.selectedBox = 0
+	m.editText = "hello world"
+	m.originalEditText = m.editText
+	m.editCursorPos = len(m.editText)
+	m.clearEditSelection()
+	m.syncCursorPositions()
+
+	key := func(m model, t tea.KeyType) model {
+		out, _ := m.Update(tea.KeyMsg{Type: t})
+		return out.(model)
+	}
+
+	// Shift+Home selects back to the line start, Shift+End forward again.
+	m = key(m, tea.KeyShiftHome)
+	if start, end := m.getEditSelectionBounds(); start != 0 || end != len(m.editText) {
+		t.Fatalf("expected the whole line selected, got %d-%d", start, end)
+	}
+	m = key(m, tea.KeyShiftEnd)
+	if m.hasEditSelection() {
+		t.Fatal("expected Shift+End to collapse the selection back to the line end")
+	}
+	m.editCursorPos = 5 // "hello|"
+	m.syncCursorPositions()
+	m = key(m, tea.KeyShiftHome)
+	if start, end := m.getEditSelectionBounds(); start != 0 || end != 5 {
+		t.Fatalf("expected 0-5 selected, got %d-%d", start, end)
+	}
+
+	// 'y' copies rather than replacing the selection.
+	restore, _ := clipboard.ReadAll()
+	if err := clipboard.WriteAll("probe"); err != nil {
+		t.Skipf("no usable clipboard here: %v", err)
+	}
+	defer clipboard.WriteAll(restore)
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = out.(model)
+	if m.editText != "hello world" {
+		t.Fatalf("expected 'y' to leave the text alone, got %q", m.editText)
+	}
+	if got, err := clipboard.ReadAll(); err != nil || got != "hello" {
+		t.Fatalf("expected %q on the clipboard, got %q (err %v)", "hello", got, err)
+	}
+	if !m.hasEditSelection() {
+		t.Fatal("expected the selection to survive a copy")
+	}
+
+	// With no selection, 'y' is still just a character (the cursor sits at the
+	// line start, where Shift+Home left it).
+	m.clearEditSelection()
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = out.(model)
+	if m.editText != "yhello world" {
+		t.Fatalf("expected 'y' to be typed, got %q", m.editText)
 	}
 }
