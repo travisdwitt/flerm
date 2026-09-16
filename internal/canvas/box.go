@@ -58,7 +58,7 @@ func (b *Box) UpdateSize() {
 	if b.Title != "" {
 		titleLines = strings.Split(b.Title, "\n")
 		for _, titleLine := range titleLines {
-			titleWidth := len(titleLine) + 2
+			titleWidth := len(titleLine) + 2*boxInsetX
 			if titleWidth > maxWidth {
 				maxWidth = titleWidth
 			}
@@ -66,8 +66,8 @@ func (b *Box) UpdateSize() {
 	}
 
 	for _, line := range b.Lines {
-		if len(line)+2 > maxWidth {
-			maxWidth = len(line) + 2
+		if len(line)+2*boxInsetX > maxWidth {
+			maxWidth = len(line) + 2*boxInsetX
 		}
 	}
 	b.Width = maxWidth
@@ -95,7 +95,7 @@ func (b *Box) fitTextToSize(newWidth, newHeight int) {
 		return
 	}
 
-	contentWidth := newWidth - 2
+	contentWidth := newWidth - 2*boxInsetX
 	contentHeight := newHeight - 2
 
 	if contentWidth < 1 {

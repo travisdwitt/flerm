@@ -98,7 +98,8 @@ func TestSnapshots(t *testing.T) {
 	save.filename = "quarterly-plan"
 	snapshot(t, "dialog_save", save)
 
-	openDlg := chartModel(96, 30)
+	// Height 18 leaves a 10-row list window, so the list still scrolls.
+	openDlg := chartModel(96, 18)
 	openDlg.mode = ModeFileInput
 	openDlg.fileOp = FileOpOpen
 	for _, n := range []string{"alpha", "beta", "delta", "gamma", "omega", "sigma",

@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -123,13 +124,107 @@ func (m *model) rememberChart(path string) {
 	m.lastFile = path
 }
 
-// fileListWindow is the number of saved charts shown at once in the open
-// dialog; longer lists scroll with a scrollbar.
-const fileListWindow = 10
+// fileListRows is how many saved charts the open dialog shows at once: as many
+// as the terminal fits, since the dialog draws 6 rows of chrome around the
+// list and wants a row of margin above and below it.
+func (m model) fileListRows() int {
+	rows := m.height - 8
+	if rows > len(m.allFiles) {
+		rows = len(m.allFiles)
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
 
-// chartDisplayName strips the .sav extension used for saved charts.
+// fileScrollMax is the largest fileScroll that still fills the list window.
+func (m model) fileScrollMax() int {
+	return max(len(m.fileList)-m.fileListRows(), 0)
+}
+
+// fileThumbLen is the scrollbar thumb's height in list rows, or 0 when the
+// whole list fits and no scrollbar is drawn.
+func (m model) fileThumbLen() int {
+	rows := m.fileListRows()
+	if len(m.fileList) <= rows {
+		return 0
+	}
+	return max(rows*rows/len(m.fileList), 1)
+}
+
+// fileScrollThumb returns the first and one-past-last list row the scrollbar
+// thumb covers, or 0, 0 when there is no scrollbar.
+func (m model) fileScrollThumb() (int, int) {
+	length := m.fileThumbLen()
+	if length == 0 {
+		return 0, 0
+	}
+	rows := m.fileListRows()
+	start := min(m.fileScroll, m.fileScrollMax()) * (rows - length) / (len(m.fileList) - rows)
+	return start, start + length
+}
+
+// dragFileScrollTo scrolls so the scrollbar thumb starts at list row row, the
+// inverse of fileScrollThumb.
+func (m *model) dragFileScrollTo(row int) {
+	length := m.fileThumbLen()
+	if length == 0 {
+		return
+	}
+	rows := m.fileListRows()
+	m.fileScroll = min(max(row, 0), rows-length) * (len(m.fileList) - rows) / (rows - length)
+	m.scrollFileList(0)
+}
+
+// scrollFileList scrolls the window by delta rows without moving the
+// highlight, the way a wheel or a scrollbar drag is expected to behave.
+func (m *model) scrollFileList(delta int) {
+	m.fileScroll = min(max(m.fileScroll+delta, 0), m.fileScrollMax())
+}
+
+// saveExt is the extension new charts are saved with; chartExts are all the
+// extensions recognized when opening, so charts written by older versions
+// under .sav keep working.
+const saveExt = ".flerm"
+
+var chartExts = []string{saveExt, ".sav"}
+
+// hasChartExt reports whether file already carries a recognized chart
+// extension.
+func hasChartExt(file string) bool {
+	return slices.Contains(chartExts, strings.ToLower(filepath.Ext(file)))
+}
+
+// chartDisplayName strips the extension used for saved charts.
 func chartDisplayName(file string) string {
 	return strings.TrimSuffix(file, filepath.Ext(file))
+}
+
+// resolveChartPath finds the chart a typed name refers to, looking in the
+// configured save directory before the working directory and trying each
+// recognized extension when the name carries none. It returns "" if no such
+// chart exists.
+func (m *model) resolveChartPath(name string) string {
+	names := []string{name}
+	if !hasChartExt(name) {
+		names = nil
+		for _, ext := range chartExts {
+			names = append(names, name+ext)
+		}
+	}
+	for _, n := range names {
+		candidates := []string{n}
+		if m.config != nil && m.config.SaveDirectory != "" {
+			candidates = []string{m.config.GetSavePath(n), n}
+		}
+		for _, path := range candidates {
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path
+			}
+		}
+	}
+	return ""
 }
 
 // fuzzyMatch reports whether pattern's runes appear in order (not necessarily
@@ -192,40 +287,46 @@ func (m *model) refilterFromTop() {
 	m.applyFileFilter()
 }
 
-// moveFileSelection moves the highlight by delta (wrapping at both ends) and
-// keeps the typed filename and the scroll window in sync.
+// selectFileIndex highlights idx, keeping the typed filename and the scroll
+// window in sync. Both the arrow keys and a mouse click land here.
+func (m *model) selectFileIndex(idx int) {
+	if idx < 0 || idx >= len(m.fileList) {
+		return
+	}
+	m.selectedFileIndex = idx
+	m.filename = chartDisplayName(m.fileList[idx])
+	m.clampFileScroll()
+}
+
+// moveFileSelection moves the highlight by delta, wrapping at both ends.
 func (m *model) moveFileSelection(delta int) {
 	if len(m.fileList) == 0 {
 		return
 	}
-	if m.selectedFileIndex < 0 {
+	idx := m.selectedFileIndex
+	if idx < 0 {
 		if delta < 0 {
-			m.selectedFileIndex = len(m.fileList) - 1
+			idx = len(m.fileList) - 1
 		} else {
-			m.selectedFileIndex = 0
+			idx = 0
 		}
 	} else {
-		m.selectedFileIndex = (m.selectedFileIndex + delta%len(m.fileList) + len(m.fileList)) % len(m.fileList)
+		idx = (idx + delta%len(m.fileList) + len(m.fileList)) % len(m.fileList)
 	}
-	m.filename = chartDisplayName(m.fileList[m.selectedFileIndex])
-	m.clampFileScroll()
+	m.selectFileIndex(idx)
 }
 
 // clampFileScroll scrolls the window just far enough to show the selection.
 func (m *model) clampFileScroll() {
+	rows := m.fileListRows()
 	if m.selectedFileIndex >= 0 {
 		if m.selectedFileIndex < m.fileScroll {
 			m.fileScroll = m.selectedFileIndex
-		} else if m.selectedFileIndex >= m.fileScroll+fileListWindow {
-			m.fileScroll = m.selectedFileIndex - fileListWindow + 1
+		} else if m.selectedFileIndex >= m.fileScroll+rows {
+			m.fileScroll = m.selectedFileIndex - rows + 1
 		}
 	}
-	if max := len(m.fileList) - fileListWindow; m.fileScroll > max {
-		m.fileScroll = max
-	}
-	if m.fileScroll < 0 {
-		m.fileScroll = 0
-	}
+	m.scrollFileList(0)
 }
 
 func (m *model) scanTxtFiles() {
@@ -234,6 +335,7 @@ func (m *model) scanTxtFiles() {
 	m.fileFilter = ""
 	m.fileSearch = false
 	m.fileScroll = 0
+	m.draggingFileScroll = false
 	m.selectedFileIndex = -1
 	dir := ""
 	if m.config != nil && m.config.SaveDirectory != "" {
@@ -250,7 +352,7 @@ func (m *model) scanTxtFiles() {
 		return
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".sav") {
+		if !entry.IsDir() && hasChartExt(entry.Name()) {
 			m.allFiles = append(m.allFiles, entry.Name())
 		}
 	}

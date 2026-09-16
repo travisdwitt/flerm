@@ -172,7 +172,7 @@ resume=true
 
 ## File Format
 
-Flowcharts are saved in a text (.sav) format:
+Flowcharts are saved in a text (.flerm) format. Older .sav files still open:
 
 ```
 FLOWCHART

@@ -82,13 +82,13 @@ func TestMenuEditTitleEntersMode(t *testing.T) {
 	}
 }
 
-// TestFileSearchAndScroll covers the open dialog's fuzzy search and the
-// 10-item scroll window.
+// TestFileSearchAndScroll covers the open dialog's fuzzy search and its
+// scroll window, sized here to 10 rows by the terminal height.
 func TestFileSearchAndScroll(t *testing.T) {
 	m := newTestModel()
 	m.mode = ModeFileInput
 	m.fileOp = FileOpOpen
-	m.width, m.height = 96, 30
+	m.width, m.height = 96, 18
 	for _, n := range []string{"alpha", "beta", "delta", "gamma", "omega", "sigma",
 		"theta", "zeta", "kappa", "lambda", "mu", "nu"} {
 		m.allFiles = append(m.allFiles, n+".sav")
@@ -211,5 +211,132 @@ func TestBufferBarDoesNotShiftOnSelect(t *testing.T) {
 	if debracket(first) != debracket(second) || debracket(second) != debracket(third) {
 		t.Fatalf("selecting a buffer moved the others:\n%q\n%q\n%q",
 			debracket(first), debracket(second), debracket(third))
+	}
+}
+
+// TestSaveExtensionAndLegacyOpen covers the file extensions: new charts are
+// written as .flerm, while charts left over as .sav still open by bare name.
+func TestSaveExtensionAndLegacyOpen(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "old-chart.sav")
+	c := cv.NewCanvas()
+	c.AddBox(3, 3, "Legacy")
+	if err := c.SaveToFileWithPan(legacy, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestModel()
+	m.config = &Config{SaveDirectory: dir}
+	m.mode = ModeFileInput
+	m.fileOp = FileOpSave
+	m.filename = "new_chart"
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(model)
+	if m.errorMessage != "" {
+		t.Fatalf("save failed: %s", m.errorMessage)
+	}
+	if got := m.getCurrentBuffer().filename; got != filepath.Join(dir, "new_chart.flerm") {
+		t.Fatalf("expected new_chart.flerm, got %q", got)
+	}
+
+	// The open dialog lists both extensions, stripped to the same display name.
+	m.mode = ModeFileInput
+	m.fileOp = FileOpOpen
+	m.allFiles = nil
+	m.scanTxtFiles()
+	if len(m.allFiles) != 2 || m.allFiles[0] != "new_chart.flerm" || m.allFiles[1] != "old-chart.sav" {
+		t.Fatalf("expected both charts listed, got %v", m.allFiles)
+	}
+
+	// A typed name without an extension still finds the legacy chart.
+	m.filename = "old-chart"
+	m.selectedFileIndex = -1
+	m.fileList = nil
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(model)
+	if m.errorMessage != "" {
+		t.Fatalf("open failed: %s", m.errorMessage)
+	}
+	if got := m.getCurrentBuffer().filename; got != legacy {
+		t.Fatalf("expected to open %q, got %q", legacy, got)
+	}
+	if boxes := m.getCanvas().Boxes(); len(boxes) != 1 || boxes[0].GetText() != "Legacy" {
+		t.Fatalf("expected the legacy chart's contents, got %v", boxes)
+	}
+}
+
+// TestFileMenuMouse covers the open dialog's mouse handling: the wheel
+// scrolls, a click picks a row, a second click on it opens, and dragging the
+// scrollbar scrolls without disturbing the highlight.
+func TestFileMenuMouse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	for _, n := range []string{"alpha", "beta", "delta", "gamma", "omega", "sigma",
+		"theta", "zeta", "kappa", "lambda", "mu", "nu"} {
+		c := cv.NewCanvas()
+		c.AddBox(2, 2, n)
+		if err := c.SaveToFileWithPan(filepath.Join(dir, n+saveExt), 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := newTestModel()
+	m.config = &Config{SaveDirectory: dir}
+	m.mode = ModeFileInput
+	m.fileOp = FileOpOpen
+	m.width, m.height = 96, 18 // a 10-row list window for 12 charts
+	m.scanTxtFiles()
+
+	x, y, w, rows := m.fileMenuBounds()
+	if len(m.fileList) != 12 || rows != 10 {
+		t.Fatalf("expected 12 charts in a 10-row window, got %d in %d", len(m.fileList), rows)
+	}
+	listY := y + 3 // first list row, matching renderFileMenu's chrome
+
+	// The wheel scrolls the window and leaves the highlight where it was.
+	out, _ := m.Update(press(tea.MouseButtonWheelDown, x+2, listY))
+	m = out.(model)
+	if m.fileScroll != 2 || m.selectedFileIndex != 0 {
+		t.Fatalf("expected wheel to scroll to 2 keeping selection 0, got %d/%d", m.fileScroll, m.selectedFileIndex)
+	}
+	out, _ = m.Update(press(tea.MouseButtonWheelUp, x+2, listY))
+	m = out.(model)
+	if m.fileScroll != 0 {
+		t.Fatalf("expected wheel up to scroll back to 0, got %d", m.fileScroll)
+	}
+
+	// A click picks the row under the pointer. Sorted, index 4 is kappa.
+	out, _ = m.Update(press(tea.MouseButtonLeft, x+3, listY+4))
+	m = out.(model)
+	if m.selectedFileIndex != 4 || m.filename != "kappa" {
+		t.Fatalf("expected the click to select kappa at 4, got %d/%q", m.selectedFileIndex, m.filename)
+	}
+
+	// Dragging the scrollbar to the bottom scrolls without reselecting.
+	out, _ = m.Update(press(tea.MouseButtonLeft, x+w-2, listY+rows-1))
+	m = out.(model)
+	if !m.draggingFileScroll || m.fileScroll != m.fileScrollMax() {
+		t.Fatalf("expected a scrollbar drag to the end, got dragging=%v scroll %d", m.draggingFileScroll, m.fileScroll)
+	}
+	out, _ = m.Update(dragMotion(x+w-2, listY))
+	m = out.(model)
+	if m.fileScroll != 0 {
+		t.Fatalf("expected the drag back to the top to scroll to 0, got %d", m.fileScroll)
+	}
+	out, _ = m.Update(release(x+w-2, listY))
+	m = out.(model)
+	if m.draggingFileScroll || m.selectedFileIndex != 4 {
+		t.Fatalf("expected release to end the drag with kappa still selected, got dragging=%v sel %d",
+			m.draggingFileScroll, m.selectedFileIndex)
+	}
+
+	// Clicking the already-selected row opens it.
+	out, _ = m.Update(press(tea.MouseButtonLeft, x+3, listY+4))
+	m = out.(model)
+	if m.mode != ModeNormal {
+		t.Fatalf("expected the second click to open the chart, got mode %v err %q", m.mode, m.errorMessage)
+	}
+	if got := m.getCanvas().Boxes(); len(got) != 1 || got[0].GetText() != "kappa" {
+		t.Fatalf("expected the opened chart's single kappa box, got %v", got)
 	}
 }

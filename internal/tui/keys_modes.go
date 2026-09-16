@@ -325,7 +325,7 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		if m.fileOp == FileOpOpen && len(m.fileList) > 0 && m.selectedFileIndex >= 0 && m.selectedFileIndex < len(m.fileList) {
 			selectedFile := m.fileList[m.selectedFileIndex]
-			if filename == "" || (strings.HasSuffix(strings.ToLower(selectedFile), ".sav") && filename == selectedFile[:len(selectedFile)-4]) {
+			if filename == "" || filename == chartDisplayName(selectedFile) {
 				filename = selectedFile
 			}
 		}
@@ -337,11 +337,9 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errorMessage = "Please enter a filename"
 					return m, nil
 				}
-			}
-			if !strings.HasSuffix(strings.ToLower(filename), ".sav") {
-				filename += ".sav"
-			}
-			if m.fileOp == FileOpSave {
+				if !hasChartExt(filename) {
+					filename += saveExt
+				}
 
 				savePath := filename
 				if m.config != nil {
@@ -383,15 +381,8 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 
-				loadPath := filename
-				if m.config != nil && m.config.SaveDirectory != "" {
-					saveDirPath := m.config.GetSavePath(filename)
-					if _, err := os.Stat(saveDirPath); err == nil {
-						loadPath = saveDirPath
-					}
-				}
-
-				if _, err := os.Stat(loadPath); os.IsNotExist(err) {
+				loadPath := m.resolveChartPath(filename)
+				if loadPath == "" {
 					m.errorMessage = fmt.Sprintf("File not found: %s", filename)
 					return m, nil
 				}
@@ -740,12 +731,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			buf := m.getCurrentBuffer()
 			if buf != nil && buf.filename != "" {
 
-				baseName := filepath.Base(buf.filename)
-
-				if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
-					baseName = baseName[:len(baseName)-4]
-				}
-				m.filename = baseName
+				m.filename = chartDisplayName(filepath.Base(buf.filename))
 			} else {
 				m.filename = "flowchart"
 			}
@@ -764,12 +750,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			buf := m.getCurrentBuffer()
 			if buf != nil && buf.filename != "" {
 
-				baseName := filepath.Base(buf.filename)
-
-				if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
-					baseName = baseName[:len(baseName)-4]
-				}
-				m.filename = baseName
+				m.filename = chartDisplayName(filepath.Base(buf.filename))
 			} else {
 				m.filename = "flowchart"
 			}

@@ -119,7 +119,7 @@ func (c *Canvas) GetBoxTitleTextCells(boxID int) []Point {
 	if box.Title == "" {
 		return []Point{}
 	}
-	return lineCells(strings.Split(box.Title, "\n"), box.X+1, box.Y+1, box.Width-2)
+	return lineCells(strings.Split(box.Title, "\n"), box.X+boxInsetX, box.Y+1, box.Width-2*boxInsetX)
 }
 
 func (c *Canvas) GetBoxContentTextCells(boxID int) []Point {
@@ -127,7 +127,7 @@ func (c *Canvas) GetBoxContentTextCells(boxID int) []Point {
 	if !ok {
 		return nil
 	}
-	return lineCells(box.Lines, box.X+1, box.Y+contentStartLine(box), box.Width-2)
+	return lineCells(box.Lines, box.X+boxInsetX, box.Y+contentStartLine(box), box.Width-2*boxInsetX)
 }
 
 func (c *Canvas) GetTextCells(textID int) []Point {
@@ -168,7 +168,7 @@ func (c *Canvas) GetBoxContentHighlights(boxID int) map[int]int {
 	charIndex := 0
 	for row, line := range lines {
 		for col := range line {
-			if color, exists := c.highlights[Point{box.X + 1 + col, box.Y + 1 + row}]; exists {
+			if color, exists := c.highlights[Point{box.X + boxInsetX + col, box.Y + 1 + row}]; exists {
 				result[charIndex+col] = color
 			}
 		}

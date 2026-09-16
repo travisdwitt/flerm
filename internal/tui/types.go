@@ -110,6 +110,8 @@ type model struct {
 	draggingText bool
 	dragTextID   int
 
+	draggingFileScroll bool
+
 	panningView        bool
 	panLastX, panLastY int
 	panMoved           bool

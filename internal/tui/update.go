@@ -18,6 +18,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ensureCursorInBounds()
+		// The open dialog's list window is sized from the terminal height.
+		m.clampFileScroll()
 		return m, nil
 
 	case tea.KeyMsg:

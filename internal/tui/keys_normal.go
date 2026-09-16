@@ -2,7 +2,6 @@ package tui
 
 import (
 	"path/filepath"
-	"strings"
 
 	cv "flerm/internal/canvas"
 
@@ -472,11 +471,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeFileInput
 		m.fileOp = FileOpSave
 		if buf := m.getCurrentBuffer(); buf != nil && buf.filename != "" {
-			baseName := filepath.Base(buf.filename)
-			if strings.HasSuffix(strings.ToLower(baseName), ".sav") {
-				baseName = baseName[:len(baseName)-4]
-			}
-			m.filename = baseName
+			m.filename = chartDisplayName(filepath.Base(buf.filename))
 		} else {
 			m.filename = ""
 		}

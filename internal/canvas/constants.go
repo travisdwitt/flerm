@@ -10,6 +10,9 @@ const (
 )
 
 const (
+	// boxInsetX is the columns between a box's left edge and its text: the
+	// border plus one blank padding column. Same on the right.
+	boxInsetX        = 2
 	minBoxWidth      = 8
 	minBoxHeight     = 3
 	numZLevels       = 4

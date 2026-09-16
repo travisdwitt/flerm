@@ -35,6 +35,8 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		cmd = m.handleMoveMouse(msg)
 	case ModeEditing, ModeTextInput, ModeTitleEdit:
 		return m.handleTextMouse(msg)
+	case ModeFileInput:
+		return m.handleFileMouse(msg)
 	}
 	return m, cmd
 }
@@ -83,6 +85,67 @@ func (m model) handleTextMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	m.editSelectionEnd = pos
 	m.syncCursorPositions()
+	return m, nil
+}
+
+// handleFileMouse drives the open dialog: the wheel and the scrollbar scroll
+// the list, a click picks a row, and a click on the row already picked opens
+// it, so a double-click opens without any click-timing state.
+// ponytail: second-click-opens instead of real double-click detection; add
+// timing if a stray second click on the same row turns out to be annoying.
+func (m model) handleFileMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.fileOp != FileOpOpen {
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionRelease {
+		m.draggingFileScroll = false
+		return m, nil
+	}
+
+	x, y, w, rows := m.fileMenuBounds()
+	row := msg.Y - (y + 3)
+
+	if m.draggingFileScroll {
+		if msg.Action == tea.MouseActionMotion {
+			m.dragFileScrollTo(row - m.fileThumbLen()/2)
+		}
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.scrollFileList(-3)
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.scrollFileList(3)
+		return m, nil
+	}
+
+	// The delete prompt is keyboard-only; a stray click must not answer it.
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || m.showingDeleteConfirm {
+		return m, nil
+	}
+	if row < 0 || row >= rows || msg.X <= x || msg.X >= x+w-1 {
+		return m, nil
+	}
+
+	if m.fileThumbLen() > 0 && msg.X == x+w-2 {
+		m.draggingFileScroll = true
+		// Grab the thumb by its middle so it lands under the pointer.
+		m.dragFileScrollTo(row - m.fileThumbLen()/2)
+		return m, nil
+	}
+
+	idx := m.fileScroll + row
+	if idx >= len(m.fileList) {
+		return m, nil
+	}
+	reopen := idx == m.selectedFileIndex
+	m.selectFileIndex(idx)
+	if reopen {
+		// Opening lives in one place: the Enter handler.
+		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	}
 	return m, nil
 }
 

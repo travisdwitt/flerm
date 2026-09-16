@@ -260,7 +260,7 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 	put(right, bottom, b[3])
 
 	// Text is clipped to the inside of the border on every side.
-	maxWidth := max(box.Width-2, 0)
+	maxWidth := max(box.Width-2*boxInsetX, 0)
 	putLines := func(lines []string, startY, limitY int) {
 		for i, line := range lines {
 			y := startY + i
@@ -271,7 +271,7 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 				if j >= maxWidth {
 					break
 				}
-				put(boxX+1+j, y, ch)
+				put(boxX+boxInsetX+j, y, ch)
 			}
 		}
 	}
@@ -301,10 +301,10 @@ func (c *Canvas) drawTextAt(canvas [][]rune, lines []string, textX, textY int) {
 func (c *Canvas) EditOrigin(editBoxID, editTextID, editTextX, editTextY int) (int, int, bool) {
 	switch {
 	case editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes):
-		return c.boxes[editBoxID].X + 1, c.boxes[editBoxID].Y + 1, true
+		return c.boxes[editBoxID].X + boxInsetX, c.boxes[editBoxID].Y + 1, true
 	case editBoxID >= 0 && editBoxID < len(c.boxes):
 		box := c.boxes[editBoxID]
-		return box.X + 1, box.Y + contentStartLine(box), true
+		return box.X + boxInsetX, box.Y + contentStartLine(box), true
 	case editTextID >= 0 && editTextID < len(c.texts):
 		return c.texts[editTextID].X, c.texts[editTextID].Y, true
 	case editTextX >= 0 && editTextY >= 0:

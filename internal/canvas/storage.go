@@ -216,7 +216,9 @@ func parseBox(line string, id int) (Box, error) {
 
 	box.SetText(unescapeNewlines(strings.Join(fields[textFrom:], ",")))
 	if len(fields) >= 5 {
-		box.Width, box.Height = width, height
+		// SetText already sized the box to fit; never shrink below that, or a
+		// chart saved before the padding widened would clip its last column.
+		box.Width, box.Height = max(width, box.Width), max(height, box.Height)
 	}
 	return box, nil
 }

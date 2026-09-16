@@ -44,11 +44,7 @@ func (m *model) renderBufferBar(width int) string {
 		}
 		var bufName string
 		if buf.filename != "" {
-			name := filepath.Base(buf.filename)
-			if strings.HasSuffix(strings.ToLower(name), ".sav") {
-				name = name[:len(name)-4]
-			}
-			bufName = name
+			bufName = chartDisplayName(filepath.Base(buf.filename))
 		} else {
 			bufName = fmt.Sprintf("Buffer %d", i+1)
 		}
@@ -340,10 +336,7 @@ func (m model) View() string {
 				if m.showingDeleteConfirm {
 					chartName := ""
 					if m.confirmFileIndex >= 0 && m.confirmFileIndex < len(m.fileList) {
-						chartName = m.fileList[m.confirmFileIndex]
-						if strings.HasSuffix(strings.ToLower(chartName), ".sav") {
-							chartName = chartName[:len(chartName)-4]
-						}
+						chartName = chartDisplayName(m.fileList[m.confirmFileIndex])
 					}
 					statusLine = fmt.Sprintf("Mode: FILE | Are you sure you want to delete %s? (y/n)", chartName)
 				} else {
@@ -732,50 +725,81 @@ func (m model) renderStartupMenu() string {
 	return result.String()
 }
 
-func (m model) renderFileMenu() string {
-	title := "Select a saved chart:"
-	const (
-		openHint    = "  Enter: Open  d: Delete  ?: Search  Esc: Cancel"
-		searchHint  = "  Enter: Open  Esc: Exit search"
-		emptyHint   = "  Esc: Cancel"
-		emptyList   = "  (No .sav files found in current directory)"
-		noMatch     = "  (No charts match)"
-		searchLabel = "  Search: "
-	)
+// Fixed strings in the open dialog. They set the box's minimum width, so it
+// keeps one size as the list is filtered.
+const (
+	fileOpenHint    = "  Enter: Open  d: Delete  ?: Search  Esc: Cancel"
+	fileSearchHint  = "  Enter: Open  Esc: Exit search"
+	fileEmptyHint   = "  Esc: Cancel"
+	fileEmptyList   = "  (No charts found in current directory)"
+	fileNoMatch     = "  (No charts match)"
+	fileSearchLabel = "  Search: "
+)
 
-	// The dialog keeps one size while it is open: the list area is always
-	// listRows tall and the width comes from the unfiltered chart list, so
-	// starting a search or narrowing it never resizes the box.
-	listRows := len(m.allFiles)
-	if listRows > fileListWindow {
-		listRows = fileListWindow
+// fileMenuTitle is the open dialog's heading. The count doubles as the scroll
+// cue: it says how long the list is, and how much of it a filter left.
+func (m model) fileMenuTitle() string {
+	n := len(m.allFiles)
+	if n == 0 {
+		return "Select a saved chart:"
 	}
-	if listRows < 1 {
-		listRows = 1
+	if total := len(m.fileList); total != n {
+		return fmt.Sprintf("Select a saved chart (%d of %d):", total, n)
 	}
+	return fmt.Sprintf("Select a saved chart (%d):", n)
+}
 
-	nameWidth := 0
+// fileConfirmLine is the delete prompt, or "" when nothing is being confirmed.
+func (m model) fileConfirmLine() string {
+	if !m.showingDeleteConfirm || m.confirmFileIndex < 0 || m.confirmFileIndex >= len(m.fileList) {
+		return ""
+	}
+	return fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartDisplayName(m.fileList[m.confirmFileIndex]))
+}
+
+// fileMenuBounds is the open dialog's screen rectangle plus its list-row
+// count. The renderer and the mouse hit-test both read the geometry from here
+// so they cannot disagree about where a row sits.
+func (m model) fileMenuBounds() (x, y, w, rows int) {
+	rows = m.fileListRows()
+
+	// The width comes from the unfiltered chart list and reserves the title's
+	// count at its widest, so starting a search or narrowing it never resizes
+	// the box.
+	contentWidth := len([]rune(m.fileMenuTitle()))
+	if n := len(m.allFiles); n > 0 {
+		contentWidth = len(fmt.Sprintf("Select a saved chart (%d of %d):", n, n))
+	}
 	for _, f := range m.allFiles {
-		if w := len([]rune(chartDisplayName(f))) + 2; w > nameWidth {
-			nameWidth = w
+		if nw := len([]rune(chartDisplayName(f))) + 2; nw > contentWidth {
+			contentWidth = nw
 		}
 	}
-	contentWidth := len([]rune(title))
-	for _, w := range []int{nameWidth, len(openHint), len(searchHint), len(emptyList)} {
-		if w > contentWidth {
-			contentWidth = w
+	for _, s := range []string{fileOpenHint, fileSearchHint, fileEmptyList, m.fileConfirmLine()} {
+		if len([]rune(s)) > contentWidth {
+			contentWidth = len([]rune(s))
 		}
 	}
+
+	w = contentWidth + 4
+	return m.width/2 - w/2, m.height/2 - (rows+6)/2, w, rows
+}
+
+func (m model) renderFileMenu() string {
+	title := m.fileMenuTitle()
+	centerX, centerY, boxWidth, listRows := m.fileMenuBounds()
+	contentWidth := boxWidth - 4
+	boxHeight := listRows + 6
 
 	total := len(m.fileList)
 	var menuItems []string
 	switch {
 	case len(m.allFiles) == 0:
-		menuItems = append(menuItems, emptyList)
+		menuItems = append(menuItems, fileEmptyList)
 	case total == 0:
-		menuItems = append(menuItems, noMatch)
+		menuItems = append(menuItems, fileNoMatch)
 	default:
-		end := m.fileScroll + fileListWindow
+		end := m.fileScroll + listRows
 		if end > total {
 			end = total
 		}
@@ -791,38 +815,31 @@ func (m model) renderFileMenu() string {
 		menuItems = append(menuItems, "")
 	}
 
-	menuItems = append(menuItems, "")
 	if m.fileSearch {
 		// Show the tail of a filter too long for the box rather than widen it.
 		filter := []rune(m.fileFilter)
-		if fits := contentWidth - len(searchLabel) - 1; len(filter) > fits && fits > 0 {
+		if fits := contentWidth - len(fileSearchLabel) - 1; len(filter) > fits && fits > 0 {
 			filter = filter[len(filter)-fits:]
 		}
-		menuItems = append(menuItems, searchLabel+string(filter)+"\u2588")
+		menuItems = append(menuItems, fileSearchLabel+string(filter)+"\u2588")
 	} else {
+		// The search line's row stays reserved so opening search never
+		// resizes the box.
 		menuItems = append(menuItems, "")
 	}
 
 	switch {
-	case m.showingDeleteConfirm && m.confirmFileIndex >= 0 && m.confirmFileIndex < total:
-		confirm := fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartDisplayName(m.fileList[m.confirmFileIndex]))
-		menuItems = append(menuItems, confirm)
-		if w := len([]rune(confirm)); w > contentWidth {
-			contentWidth = w
-		}
+	case m.fileConfirmLine() != "":
+		menuItems = append(menuItems, m.fileConfirmLine())
 	case m.fileSearch:
-		menuItems = append(menuItems, searchHint)
+		menuItems = append(menuItems, fileSearchHint)
 	case len(m.allFiles) == 0:
-		menuItems = append(menuItems, emptyHint)
+		menuItems = append(menuItems, fileEmptyHint)
 	default:
-		menuItems = append(menuItems, openHint)
+		menuItems = append(menuItems, fileOpenHint)
 	}
 
-	boxWidth := contentWidth + 4
-	boxHeight := len(menuItems) + 4
-
-	centerX := m.width/2 - boxWidth/2
-	centerY := m.height/2 - boxHeight/2
+	thumbStart, thumbEnd := m.fileScrollThumb()
 
 	var result strings.Builder
 
@@ -861,6 +878,12 @@ func (m model) renderFileMenu() string {
 					}
 				} else if relY == 2 {
 					result.WriteString("─")
+				} else if thumbEnd > 0 && relX == boxWidth-2 && relY >= 3 && relY < 3+listRows {
+					if i := relY - 3; i >= thumbStart && i < thumbEnd {
+						result.WriteString("█")
+					} else {
+						result.WriteString("░")
+					}
 				} else if relY >= 3 && relY < 3+len(menuItems) {
 					item := []rune(menuItems[relY-3])
 					itemX := relX - 1
