@@ -25,14 +25,10 @@ func (c *Canvas) GetBoxCells(boxID int) []Point {
 	if !ok {
 		return nil
 	}
-	return rectCells(box.X, box.Y, box.Width, box.Height)
-}
-
-func rectCells(x, y, w, h int) []Point {
-	cells := make([]Point, 0, w*h)
-	for cy := y; cy < y+h; cy++ {
-		for cx := x; cx < x+w; cx++ {
-			cells = append(cells, Point{cx, cy})
+	cells := make([]Point, 0, box.Width*box.Height)
+	for y := box.Y; y < box.Y+box.Height; y++ {
+		for x := box.X; x < box.X+box.Width; x++ {
+			cells = append(cells, Point{x, y})
 		}
 	}
 	return cells

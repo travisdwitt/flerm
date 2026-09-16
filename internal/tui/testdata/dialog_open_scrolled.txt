@@ -8,16 +8,16 @@
                       ┌──────────────────────────────────────────────────┐                      
                       │             Select a saved chart:                │                      
                       │──────────────────────────────────────────────────│                      
-                      │  delta                                        ░  │                      
-                      │  gamma                                        ░  │                      
-                      │  omega                                        █  │                      
-                      │  sigma                                        █  │                      
-                      │  theta                                        █  │                      
-                      │  zeta                                         █  │                      
-                      │  kappa                                        █  │                      
-                      │  lambda                                       █  │                      
-                      │  mu                                           █  │                      
-                      │> nu                                           █  │                      
+                      │  delta                                           │                      
+                      │  gamma                                           │                      
+                      │  omega                                           │                      
+                      │  sigma                                           │                      
+                      │  theta                                           │                      
+                      │  zeta                                            │                      
+                      │  kappa                                           │                      
+                      │  lambda                                          │                      
+                      │  mu                                              │                      
+                      │> nu                                              │                      
                       │                                                  │                      
                       │                                                  │                      
                       │  Enter: Open  d: Delete  ?: Search  Esc: Cancel  │                      

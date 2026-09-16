@@ -374,6 +374,7 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					buf := m.getCurrentBuffer()
 					if buf != nil {
 						buf.filename = savePath
+						buf.savedAt = len(buf.undoStack)
 					}
 					m.rememberChart(savePath)
 					absPath, _ := filepath.Abs(savePath)
@@ -553,10 +554,7 @@ func (m model) handleFileSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fileFilter = string(r[:len(r)-1])
 			m.refilterFromTop()
 		}
-	case tea.KeySpace:
-		m.fileFilter += " "
-		m.refilterFromTop()
-	case tea.KeyRunes:
+	case tea.KeyRunes, tea.KeySpace:
 		m.fileFilter += string(msg.Runes)
 		m.refilterFromTop()
 	}
@@ -719,6 +717,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				buf := m.getCurrentBuffer()
 				if buf != nil {
 					buf.filename = filename
+					buf.savedAt = len(buf.undoStack)
 				}
 				m.rememberChart(filename)
 				absPath, _ := filepath.Abs(filename)

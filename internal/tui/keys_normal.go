@@ -29,7 +29,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+c", "q":
-		if m.config != nil && m.config.Confirmations {
+		// Unsaved work confirms even with confirmations off.
+		if m.unsavedChanges() || (m.config != nil && m.config.Confirmations) {
 			m.mode = ModeConfirm
 			m.confirmAction = ConfirmQuit
 			return m, nil

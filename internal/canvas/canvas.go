@@ -299,7 +299,7 @@ func (c *Canvas) SetTextPosition(id, x, y int) {
 
 func (c *Canvas) CycleBoxZLevel(id int) {
 	if id >= 0 && id < len(c.boxes) {
-		c.boxes[id].ZLevel = (c.boxes[id].ZLevel + 1) % 4
+		c.boxes[id].ZLevel = (c.boxes[id].ZLevel + 1) % numZLevels
 	}
 }
 

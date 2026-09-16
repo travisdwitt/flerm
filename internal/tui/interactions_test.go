@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	cv "flerm/internal/canvas"
@@ -426,5 +427,154 @@ func TestShiftHomeEndSelectAndCopy(t *testing.T) {
 	m = out.(model)
 	if m.editText != "yhello world" {
 		t.Fatalf("expected 'y' to be typed, got %q", m.editText)
+	}
+}
+
+func TestHelpScrollAndExit(t *testing.T) {
+	key := func(m model, s string) model {
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+		return out.(model)
+	}
+	special := func(m model, k tea.KeyType) model {
+		out, _ := m.Update(tea.KeyMsg{Type: k})
+		return out.(model)
+	}
+
+	m := newTestModel()
+	m.height = 11 // a 10-line page plus the status line
+	m = key(m, "?")
+	if !m.help {
+		t.Fatal("expected '?' to open the help screen")
+	}
+
+	m = special(m, tea.KeyPgDown)
+	if m.helpScroll != 10 {
+		t.Fatalf("expected PgDn to scroll one page (10), got %d", m.helpScroll)
+	}
+	m = special(m, tea.KeyPgUp)
+	if m.helpScroll != 0 {
+		t.Fatalf("expected PgUp to scroll back to the top, got %d", m.helpScroll)
+	}
+	m = special(m, tea.KeyPgUp)
+	if m.helpScroll != 0 {
+		t.Fatalf("expected PgUp at the top to stay put, got %d", m.helpScroll)
+	}
+	for i := 0; i < len(helpText); i++ {
+		m = special(m, tea.KeyPgDown)
+	}
+	if want := m.helpMaxScroll(); m.helpScroll != want {
+		t.Fatalf("expected paging past the end to stop at %d, got %d", want, m.helpScroll)
+	}
+
+	for _, k := range []string{"?", "n", "x", "e"} {
+		if m = key(m, k); !m.help {
+			t.Fatalf("expected %q to leave the help screen open", k)
+		}
+	}
+	if m = special(m, tea.KeyEnter); !m.help {
+		t.Fatal("expected Enter to leave the help screen open")
+	}
+
+	if esc := special(m, tea.KeyEscape); esc.help || esc.helpScroll != 0 {
+		t.Fatalf("expected Esc to close help and reset scroll, got help=%v scroll=%d", esc.help, esc.helpScroll)
+	}
+	if q := key(m, "q"); q.help || q.helpScroll != 0 {
+		t.Fatalf("expected q to close help and reset scroll, got help=%v scroll=%d", q.help, q.helpScroll)
+	}
+}
+
+func TestQuitWarnsAboutUnsavedChanges(t *testing.T) {
+	key := func(m model, s string) model {
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+		return out.(model)
+	}
+
+	m := newTestModel()
+	m.config = &Config{Confirmations: false}
+	if m.unsavedChanges() {
+		t.Fatal("a freshly loaded chart should be clean")
+	}
+	if quit := key(m, "q"); quit.mode != ModeNormal {
+		t.Fatalf("a clean chart with confirmations off should quit outright, got mode %v", quit.mode)
+	}
+
+	m.cursorX, m.cursorY = 60, 30
+	m = key(m, "b")
+	if !m.unsavedChanges() {
+		t.Fatal("adding a box should mark the chart unsaved")
+	}
+	m = key(m, "q")
+	if m.mode != ModeConfirm || m.confirmAction != ConfirmQuit {
+		t.Fatalf("expected unsaved work to force a quit prompt, got mode %v action %v", m.mode, m.confirmAction)
+	}
+	if !strings.Contains(m.View(), "Unsaved changes will be lost") {
+		t.Fatalf("expected the prompt to warn about unsaved changes:\n%s", m.View())
+	}
+
+	m.mode = ModeNormal
+	m.undo()
+	if m.unsavedChanges() {
+		t.Fatal("undoing the only edit should leave the chart clean")
+	}
+
+	m = key(m, "b")
+	buf := m.getCurrentBuffer()
+	buf.savedAt = len(buf.undoStack)
+	if m.unsavedChanges() {
+		t.Fatal("a saved chart should be clean at its current undo depth")
+	}
+	m = key(m, "b")
+	if !m.unsavedChanges() {
+		t.Fatal("editing after a save should mark the chart unsaved again")
+	}
+}
+
+func TestHighlightRightDragErases(t *testing.T) {
+	m := newTestModel()
+	m.highlightMode = true
+	m.selectedColor = 2
+
+	for _, msg := range []tea.MouseMsg{press(tea.MouseButtonLeft, 30, 30), dragMotion(34, 30), release(34, 30)} {
+		out, _ := m.Update(msg)
+		m = out.(model)
+	}
+
+	rightDrag := tea.MouseMsg{X: 33, Y: 30, Action: tea.MouseActionMotion, Button: tea.MouseButtonRight}
+	out, _ := m.Update(press(tea.MouseButtonRight, 31, 30))
+	m = out.(model)
+	if !m.paintingHighlight {
+		t.Fatal("expected a right press to start erasing")
+	}
+	if m.mode != ModeNormal {
+		t.Fatalf("erasing must not open the context menu, got mode %v", m.mode)
+	}
+	out, _ = m.Update(rightDrag)
+	m = out.(model)
+	out, _ = m.Update(release(33, 30))
+	m = out.(model)
+
+	c := m.getCanvas()
+	for x := 31; x <= 33; x++ {
+		if c.GetHighlight(x, 30) != -1 {
+			t.Fatalf("expected (%d,30) erased, got %d", x, c.GetHighlight(x, 30))
+		}
+	}
+	for _, x := range []int{30, 34} {
+		if c.GetHighlight(x, 30) != 2 {
+			t.Fatalf("expected (%d,30) untouched, got %d", x, c.GetHighlight(x, 30))
+		}
+	}
+
+	m.undo()
+	for x := 30; x <= 34; x++ {
+		if m.getCanvas().GetHighlight(x, 30) != 2 {
+			t.Fatalf("expected undo to restore (%d,30), got %d", x, m.getCanvas().GetHighlight(x, 30))
+		}
+	}
+	m.redo()
+	for x := 31; x <= 33; x++ {
+		if m.getCanvas().GetHighlight(x, 30) != -1 {
+			t.Fatalf("expected redo to erase (%d,30) again, got %d", x, m.getCanvas().GetHighlight(x, 30))
+		}
 	}
 }

@@ -4,6 +4,7 @@ type Buffer struct {
 	canvas    *Canvas
 	undoStack []Action
 	redoStack []Action
+	savedAt   int
 	filename  string
 	panX      int
 	panY      int
@@ -117,6 +118,7 @@ type model struct {
 	groupLastX, groupLastY int
 
 	paintingHighlight      bool
+	paintColor             int
 	paintedCells           []HighlightCell
 	paintedSeen            map[point]bool
 	lastPaintX, lastPaintY int

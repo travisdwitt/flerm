@@ -33,8 +33,57 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		cmd = m.handleMultiSelectMouse(msg)
 	case ModeMove:
 		cmd = m.handleMoveMouse(msg)
+	case ModeEditing, ModeTextInput, ModeTitleEdit:
+		return m.handleTextMouse(msg)
 	}
 	return m, cmd
+}
+
+// Copy and paste re-enter Update with the equivalent keystroke, keeping the
+// clipboard logic in one place per mode.
+func (m model) handleTextMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress {
+		switch msg.Button {
+		case tea.MouseButtonRight:
+			// Elsewhere 'y' would be typed as a literal.
+			if m.mode == ModeEditing && m.hasEditSelection() {
+				return m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+			}
+			return m, nil
+		case tea.MouseButtonMiddle:
+			return m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+		}
+	}
+
+	text, cursor := m.editTextCursor()
+	if cursor == nil {
+		return m, nil
+	}
+	pos, ok := m.editPosAt(msg.X, msg.Y, text)
+	if !ok {
+		return m, nil
+	}
+	anchor := false
+	switch {
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+		anchor = true
+	case msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft,
+		msg.Action == tea.MouseActionRelease:
+	default:
+		return m, nil
+	}
+	*cursor = pos
+
+	// Only ModeEditing renders a selection.
+	if m.mode != ModeEditing {
+		return m, nil
+	}
+	if anchor {
+		m.editSelectionStart = pos
+	}
+	m.editSelectionEnd = pos
+	m.syncCursorPositions()
+	return m, nil
 }
 
 func (m *model) handleMoveMouse(msg tea.MouseMsg) tea.Cmd {
@@ -173,7 +222,10 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 	if m.highlightMode {
 		switch {
 		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
-			m.beginHighlightPaint(worldX, worldY)
+			m.beginHighlightPaint(worldX, worldY, m.selectedColor)
+			return nil
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight:
+			m.beginHighlightPaint(worldX, worldY, -1)
 			return nil
 		case msg.Action == tea.MouseActionMotion && m.paintingHighlight:
 			m.paintHighlightTo(worldX, worldY)
@@ -368,11 +420,13 @@ func (m *model) panViewTo(canvasX, canvasY int) {
 	m.panMoved = true
 }
 
-func (m *model) beginHighlightPaint(worldX, worldY int) {
+// A negative color erases instead of painting.
+func (m *model) beginHighlightPaint(worldX, worldY, color int) {
 	if m.getCanvas() == nil {
 		return
 	}
 	m.paintingHighlight = true
+	m.paintColor = color
 	m.paintedCells = nil
 	m.paintedSeen = map[point]bool{}
 	m.lastPaintX, m.lastPaintY = worldX, worldY
@@ -386,8 +440,8 @@ func (m *model) paintHighlightCell(x, y int) {
 	}
 	m.paintedSeen[p] = true
 	old := m.getCanvas().GetHighlight(x, y)
-	m.getCanvas().SetHighlight(x, y, m.selectedColor)
-	m.paintedCells = append(m.paintedCells, HighlightCell{X: x, Y: y, Color: m.selectedColor, HadColor: old != -1, OldColor: old})
+	m.applyHighlight(x, y, m.paintColor)
+	m.paintedCells = append(m.paintedCells, HighlightCell{X: x, Y: y, Color: m.paintColor, HadColor: old != -1, OldColor: old})
 }
 
 func (m *model) paintHighlightTo(worldX, worldY int) {

@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
                                                                                                 
-Mode: NORMAL | Cursor: (6,11) | Selected: Box 1 | ? for help | q to quit
+Mode: NORMAL | Cursor: (6,11) | Selected: Box 1 | ? for help | q to quit                        

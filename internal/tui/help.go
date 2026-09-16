@@ -1,5 +1,10 @@
 package tui
 
+// One row goes to the status line.
+func (m model) helpPageHeight() int { return max(m.height-1, 1) }
+
+func (m model) helpMaxScroll() int { return max(len(helpText)-m.helpPageHeight(), 0) }
+
 var helpText = []string{
 	"Fl(ow)(T)erm Help",
 	"=================",
@@ -53,6 +58,10 @@ var helpText = []string{
 	"  Ctrl+S or Esc    Keep what you typed (undo reverts it)",
 	"                   Ctrl+S/Esc and Ctrl+V also work while typing a new text",
 	"                   label (t) or a box title (T)",
+	"  Left click       Put the cursor where you click",
+	"  Left drag        Select the text you drag across",
+	"  Right click      Copy the selection to the clipboard",
+	"  Middle click     Paste the clipboard at the cursor",
 	"",
 	"Resize Mode:",
 	"------------",
@@ -93,6 +102,8 @@ var helpText = []string{
 	"  d    						Delete the highlight directly under the cursor",
 	"  D    						Delete all highlights from an element",
 	"  Enter            Highlight entire element at cursor (box, text, or connection)",
+	"  Left drag        Paint highlights in the current color",
+	"  Right drag       Erase highlights under the pointer",
 	"  Esc              Exit highlight mode",
 	"",
 	"File Operations:",
@@ -102,7 +113,7 @@ var helpText = []string{
 	"  o                Load a saved flowchart in current buffer",
 	"  O                Load a saved flowchart in new buffer",
 	"  r                On the start menu: resume the last chart you opened",
-	"                   (set resume=false in ~/.flermrc to hide it)",
+	"                   (start Flerm with --no-resume to hide it)",
 	"  ?                In the open dialog: fuzzy-search the saved charts",
 	"                   (type to filter, ↑/↓ to pick, Enter to open, Esc to exit search)",
 	"",
@@ -119,9 +130,9 @@ var helpText = []string{
 	"  u                Undo last action",
 	"  U                Redo last undone action",
 	"  z                Toggle pan mode (scroll canvas instead of moving cursor)",
-	"  Ctrl+S/Esc       While typing text or a title: keep what you typed (undo reverts it)",
 	"  Esc           	Clear selection/cancel current operation",
-	"  ?                Toggle this help screen",
+	"  ?                Open this help screen",
+	"                   (j/k or PgUp/PgDn to scroll, Esc or q to close)",
 	"  q/Ctrl+C         Quit Flerm",
 	"",
 	"========== Thanks for trying Flerm! ==========",

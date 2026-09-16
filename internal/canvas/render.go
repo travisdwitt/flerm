@@ -2,7 +2,6 @@ package canvas
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -59,14 +58,13 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			colorMap[i][j] = -1
 		}
 	}
-	inBounds := func(x, y int) bool { return x >= 0 && x < width && y >= 0 && y < height }
 	putRune := func(x, y int, ch rune) {
-		if inBounds(x, y) {
+		if c.isValidPos(canvas, x, y) {
 			canvas[y][x] = ch
 		}
 	}
 	putColor := func(x, y, color int) {
-		if inBounds(x, y) {
+		if c.isValidPos(canvas, x, y) {
 			colorMap[y][x] = color
 		}
 	}
@@ -91,13 +89,14 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 	}
 
 	// Higher z-levels draw last so their shadows fall over lower boxes.
-	boxOrder := make([]int, len(c.boxes))
-	for i := range boxOrder {
-		boxOrder[i] = i
+	boxOrder := make([]int, 0, len(c.boxes))
+	for z := 0; z < numZLevels; z++ {
+		for i, box := range c.boxes {
+			if box.ZLevel == z {
+				boxOrder = append(boxOrder, i)
+			}
+		}
 	}
-	sort.SliceStable(boxOrder, func(a, b int) bool {
-		return c.boxes[boxOrder[a]].ZLevel < c.boxes[boxOrder[b]].ZLevel
-	})
 	for _, i := range boxOrder {
 		box := c.boxes[i]
 		if box.ZLevel > 0 {
@@ -106,7 +105,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		c.drawBoxAt(canvas, box, i == selectedBox, box.X-panX, box.Y-panY)
 		if showBoxNumbers {
 			boxScreenX, boxScreenY := box.X-panX, box.Y-panY
-			if !inBounds(boxScreenX, boxScreenY) {
+			if !c.isValidPos(canvas, boxScreenX, boxScreenY) {
 				continue
 			}
 			for idx, char := range fmt.Sprintf("%d", i) {
@@ -119,24 +118,12 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 
 	// editCursorAt maps a character offset in the text being edited to a screen cell.
 	editCursorAt := func(pos int) (int, int, bool) {
-		switch {
-		case editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes):
-			box := c.boxes[editBoxID]
-			x, y := cursorScreenPos(box.X+1, box.Y+1, pos, editText, panX, panY)
-			return x, y, true
-		case editBoxID >= 0 && editBoxID < len(c.boxes):
-			box := c.boxes[editBoxID]
-			x, y := cursorScreenPos(box.X+1, box.Y+contentStartLine(box), pos, editText, panX, panY)
-			return x, y, true
-		case editTextID >= 0 && editTextID < len(c.texts):
-			t := c.texts[editTextID]
-			x, y := cursorScreenPos(t.X, t.Y, pos, editText, panX, panY)
-			return x, y, true
-		case editTextX >= 0 && editTextY >= 0:
-			x, y := cursorScreenPos(editTextX, editTextY, pos, editText, panX, panY)
-			return x, y, true
+		originX, originY, ok := c.EditOrigin(editBoxID, editTextID, editTextX, editTextY)
+		if !ok {
+			return 0, 0, false
 		}
-		return 0, 0, false
+		x, y := cursorScreenPos(originX, originY, pos, editText, panX, panY)
+		return x, y, true
 	}
 
 	if editSelStart >= 0 && editSelEnd >= 0 && editSelStart != editSelEnd {
@@ -310,6 +297,22 @@ func (c *Canvas) drawTextAt(canvas [][]rune, lines []string, textX, textY int) {
 	}
 }
 
+// editTextID -2 means the edit is a box title; a box id otherwise wins over a text id.
+func (c *Canvas) EditOrigin(editBoxID, editTextID, editTextX, editTextY int) (int, int, bool) {
+	switch {
+	case editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes):
+		return c.boxes[editBoxID].X + 1, c.boxes[editBoxID].Y + 1, true
+	case editBoxID >= 0 && editBoxID < len(c.boxes):
+		box := c.boxes[editBoxID]
+		return box.X + 1, box.Y + contentStartLine(box), true
+	case editTextID >= 0 && editTextID < len(c.texts):
+		return c.texts[editTextID].X, c.texts[editTextID].Y, true
+	case editTextX >= 0 && editTextY >= 0:
+		return editTextX, editTextY, true
+	}
+	return 0, 0, false
+}
+
 // cursorScreenPos walks content to find the screen cell for a character offset.
 func cursorScreenPos(originX, originY, cursorPos int, content string, panX, panY int) (int, int) {
 	lines := strings.Split(content, "\n")
@@ -333,11 +336,7 @@ func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, p
 	for i, wp := range connection.Waypoints {
 		shifted.Waypoints[i] = Point{wp.X - panX, wp.Y - panY}
 	}
-	c.drawConnection(canvas, shifted, connection, panX, panY)
-}
-
-func (c *Canvas) drawConnection(canvas [][]rune, connection, originalConnection Connection, panX, panY int) {
-	pts := connPoints(connection)
+	pts := connPoints(shifted)
 
 	// Diagonal hops become an L: across first, then down.
 	var verts []Point
@@ -384,10 +383,10 @@ func (c *Canvas) drawConnection(canvas [][]rune, connection, originalConnection 
 	}
 
 	if connection.ArrowFrom {
-		c.drawConnEndArrow(canvas, connection.FromID, originalConnection.FromX, originalConnection.FromY, panX, panY)
+		c.drawConnEndArrow(canvas, connection.FromID, connection.FromX, connection.FromY, panX, panY)
 	}
 	if connection.ArrowTo {
-		c.drawConnEndArrow(canvas, connection.ToID, originalConnection.ToX, originalConnection.ToY, panX, panY)
+		c.drawConnEndArrow(canvas, connection.ToID, connection.ToX, connection.ToY, panX, panY)
 	}
 }
 

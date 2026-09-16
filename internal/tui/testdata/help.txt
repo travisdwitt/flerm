@@ -27,4 +27,4 @@ Box Operations:
   m                Move box under cursor
   d                Delete box under cursor
   c                Copy box under cursor
-Help (1-29 of 124 lines) | j/k to scroll, Esc to close
+Help (1-29 of 130 lines) | j/k or PgUp/PgDn to scroll, Esc or q to close

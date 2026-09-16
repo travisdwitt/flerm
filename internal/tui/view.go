@@ -6,15 +6,41 @@ import (
 	"strings"
 )
 
+// Inner colours reset the foreground only; \033[0m would punch a hole in the tint.
+const (
+	chromeBG    = "\033[48;5;236m"
+	chromeReset = "\033[0m"
+	chromeFG    = "\033[32m"
+	chromeFGOff = "\033[39m"
+)
+
+// Rows carrying their own escapes must arrive padded; len over-counts them.
+func chromeLine(s string, width int) string {
+	if pad := width - len([]rune(s)); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return chromeBG + s + chromeReset
+}
+
 func (m *model) renderBufferBar(width int) string {
 	if len(m.buffers) <= 1 {
 		return strings.Repeat(" ", width)
 	}
 	var bar strings.Builder
-	bar.WriteString("Open Charts: ")
+	visibleLen := 0
+	write := func(s string) {
+		bar.WriteString(s)
+		visibleLen += len([]rune(s))
+	}
+	bracket := func(s string) {
+		bar.WriteString(chromeFG)
+		write(s)
+		bar.WriteString(chromeFGOff)
+	}
+	write("Open Charts: ")
 	for i, buf := range m.buffers {
 		if i > 0 {
-			bar.WriteString(" | ")
+			write(" | ")
 		}
 		var bufName string
 		if buf.filename != "" {
@@ -27,19 +53,16 @@ func (m *model) renderBufferBar(width int) string {
 			bufName = fmt.Sprintf("Buffer %d", i+1)
 		}
 		if i == m.currentBufferIndex {
-
-			bar.WriteString("\033[32m[\033[0m")
-			bar.WriteString(bufName)
-			bar.WriteString("\033[32m]\033[0m")
+			bracket("[")
+			write(bufName)
+			bracket("]")
 		} else {
-			bar.WriteString(bufName)
+			// Reserve the bracket columns so selecting does not shift the bar.
+			write(" " + bufName + " ")
 		}
 	}
-	currentLen := bar.Len()
-
-	visibleLen := currentLen - (2 * 9)
 	if visibleLen < width {
-		bar.WriteString(strings.Repeat(" ", width-visibleLen))
+		write(strings.Repeat(" ", width-visibleLen))
 	} else {
 		return bar.String()[:width]
 	}
@@ -150,29 +173,11 @@ func (m model) View() string {
 
 	showCursor := (m.mode != ModeStartup && m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit)
 
-	var editBoxID, editTextID int = -1, -1
-	var editCursorPos int = 0
-	var editText string = ""
-	var editTextX, editTextY int = -1, -1
-	if m.mode == ModeEditing {
-		editBoxID = m.selectedBox
-		editTextID = m.selectedText
-		editCursorPos = m.editCursorPos
-		editText = m.editText
-	} else if m.mode == ModeTextInput {
-
-		editTextID = -1
-		editCursorPos = m.textInputCursorPos
-		editText = m.textInputText
-		editTextX = m.textInputX
-		editTextY = m.textInputY
-	} else if m.mode == ModeTitleEdit {
-
-		editBoxID = m.titleEditBoxID
-		editCursorPos = m.titleEditCursorPos
-		editText = m.titleEditText
-
-		editTextID = -2
+	editBoxID, editTextID, editTextX, editTextY := m.editTarget()
+	editText, cursor := m.editTextCursor()
+	editCursorPos := 0
+	if cursor != nil {
+		editCursorPos = *cursor
 	}
 
 	selectionStartX, selectionStartY := -1, -1
@@ -208,8 +213,7 @@ func (m model) View() string {
 	var result strings.Builder
 
 	if showBufferBar {
-		bufferBar := m.renderBufferBar(renderWidth)
-		result.WriteString(bufferBar)
+		result.WriteString(chromeLine(m.renderBufferBar(renderWidth), renderWidth))
 		result.WriteString("\n")
 	}
 
@@ -261,13 +265,13 @@ func (m model) View() string {
 			start, end := m.getEditSelectionBounds()
 			selectionHint = fmt.Sprintf(" | %d chars selected", end-start)
 		}
+		target := ""
 		if m.selectedBox != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Box %d | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", m.selectedBox, cursorDisplay, selectionHint)
+			target = fmt.Sprintf("Box %d | ", m.selectedBox)
 		} else if m.selectedText != -1 {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text %d | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", m.selectedText, cursorDisplay, selectionHint)
-		} else {
-			statusLine = fmt.Sprintf("Mode: EDIT | Text: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", cursorDisplay, selectionHint)
+			target = fmt.Sprintf("Text %d | ", m.selectedText)
 		}
+		statusLine = fmt.Sprintf("Mode: EDIT | %sText: %s%s | Home/End, Shift+←→↑↓/Home/End=select, y=copy, Ctrl+S/Esc=save", target, cursorDisplay, selectionHint)
 	case ModeTextInput:
 		displayText := strings.ReplaceAll(m.textInputText, "\n", " ")
 		cursorPos := m.textInputCursorPos
@@ -362,6 +366,9 @@ func (m model) View() string {
 			message = "Remove highlight? (y/n)"
 		case ConfirmQuit:
 			message = "Quit Flerm? (y/n)"
+			if m.unsavedChanges() {
+				message = "Quit Flerm? Unsaved changes will be lost. (y/n)"
+			}
 		case ConfirmNewChart:
 			message = "Create new chart? Unsaved changes will be lost. (y/n)"
 		case ConfirmCloseBuffer:
@@ -428,7 +435,7 @@ func (m model) View() string {
 
 	if m.mode != ModeStartup && !(m.mode == ModeFileInput && m.fileOp == FileOpOpen) {
 		result.WriteString("\n")
-		result.WriteString(statusLine)
+		result.WriteString(chromeLine(statusLine, renderWidth))
 	}
 
 	return result.String()
@@ -725,23 +732,6 @@ func (m model) renderStartupMenu() string {
 	return result.String()
 }
 
-// scrollbarChar returns the scrollbar glyph for visible row (0-based) of a
-// file list of total entries scrolled down by scroll.
-func scrollbarChar(row, scroll, total int) string {
-	thumb := fileListWindow * fileListWindow / total
-	if thumb < 1 {
-		thumb = 1
-	}
-	start := 0
-	if maxScroll := total - fileListWindow; maxScroll > 0 {
-		start = scroll * (fileListWindow - thumb) / maxScroll
-	}
-	if row >= start && row < start+thumb {
-		return "\u2588"
-	}
-	return "\u2591"
-}
-
 func (m model) renderFileMenu() string {
 	title := "Select a saved chart:"
 	const (
@@ -770,11 +760,6 @@ func (m model) renderFileMenu() string {
 			nameWidth = w
 		}
 	}
-	scrolls := len(m.allFiles) > fileListWindow
-	if scrolls {
-		nameWidth += 2 // reserve the scrollbar column
-	}
-
 	contentWidth := len([]rune(title))
 	for _, w := range []int{nameWidth, len(openHint), len(searchHint), len(emptyList)} {
 		if w > contentWidth {
@@ -799,11 +784,7 @@ func (m model) renderFileMenu() string {
 			if i == m.selectedFileIndex {
 				row = "> "
 			}
-			row += chartDisplayName(m.fileList[i])
-			if total > fileListWindow {
-				row += strings.Repeat(" ", contentWidth-len([]rune(row))-1) + scrollbarChar(i-m.fileScroll, m.fileScroll, total)
-			}
-			menuItems = append(menuItems, row)
+			menuItems = append(menuItems, row+chartDisplayName(m.fileList[i]))
 		}
 	}
 	for len(menuItems) < listRows {
@@ -935,10 +916,7 @@ func (m model) modeString() string {
 func (m model) helpView() string {
 	helpLines := helpText
 
-	visibleHeight := m.height - 1
-	if visibleHeight < 1 {
-		visibleHeight = 1
-	}
+	visibleHeight := m.helpPageHeight()
 
 	startLine := m.helpScroll
 	endLine := startLine + visibleHeight
@@ -962,7 +940,7 @@ func (m model) helpView() string {
 
 	result := strings.Join(visibleLines, "\n")
 
-	statusLine := fmt.Sprintf("Help (%d-%d of %d lines) | j/k to scroll, Esc to close",
+	statusLine := fmt.Sprintf("Help (%d-%d of %d lines) | j/k or PgUp/PgDn to scroll, Esc or q to close",
 		startLine+1, endLine, len(helpLines))
 	result += "\n" + statusLine
 

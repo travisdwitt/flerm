@@ -23,35 +23,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.help && m.mode != ModeStartup {
 			switch msg.String() {
-			case "esc", "escape", "q", "?":
+			case "esc", "escape", "q":
 				m.help = false
 				m.helpScroll = 0
-				return m, nil
 			case "j", "down":
-				helpLines := helpText
-				totalLines := len(helpLines)
-				visibleHeight := m.height - 1
-				if visibleHeight < 1 {
-					visibleHeight = 1
-				}
-				maxScroll := totalLines - visibleHeight
-				if maxScroll < 0 {
-					maxScroll = 0
-				}
-				if m.helpScroll < maxScroll {
-					m.helpScroll++
-				}
-				return m, nil
+				m.helpScroll = min(m.helpScroll+1, m.helpMaxScroll())
 			case "k", "up":
-				if m.helpScroll > 0 {
-					m.helpScroll--
-				}
-				return m, nil
-			default:
-				m.help = false
-				m.helpScroll = 0
-				return m, nil
+				m.helpScroll = max(m.helpScroll-1, 0)
+			case "pgdown":
+				m.helpScroll = min(m.helpScroll+m.helpPageHeight(), m.helpMaxScroll())
+			case "pgup":
+				m.helpScroll = max(m.helpScroll-m.helpPageHeight(), 0)
 			}
+			// Anything else is swallowed: only Esc or q closes the help screen.
+			return m, nil
 		}
 
 		switch m.mode {

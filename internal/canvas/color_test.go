@@ -54,11 +54,11 @@ func TestColorSaveLoadRoundTrip(t *testing.T) {
 	c.SetLineColor(0, 6)
 
 	path := filepath.Join(t.TempDir(), "colors.sav")
-	if err := c.SaveToFile(path); err != nil {
+	if err := c.SaveToFileWithPan(path, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	loaded := NewCanvas()
-	if err := loaded.LoadFromFile(path); err != nil {
+	if _, _, err := loaded.LoadFromFileWithPan(path); err != nil {
 		t.Fatal(err)
 	}
 	if loaded.boxes[0].Color != 3 {
@@ -88,7 +88,7 @@ func TestLoadOldFileWithoutColorSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NewCanvas()
-	if err := c.LoadFromFile(path); err != nil {
+	if _, _, err := c.LoadFromFileWithPan(path); err != nil {
 		t.Fatalf("old file should load: %v", err)
 	}
 	if len(c.boxes) != 1 || c.boxes[0].Color != -1 {

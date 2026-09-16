@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -571,5 +572,64 @@ func TestMenuKeyboardNavSkipsSeparator(t *testing.T) {
 	}
 	if m.menuItems[m.menuIndex].Label != "New Box" {
 		t.Fatalf("expected New Box, got %q (idx %d)", m.menuItems[m.menuIndex].Label, m.menuIndex)
+	}
+}
+
+// Box 0 sits at (5,3) with no title, so "Alpha" starts at screen cell (6,4).
+func TestTextMouseSelectCopyPaste(t *testing.T) {
+	m := newTestModel()
+	m.cursorX, m.cursorY = 6, 4
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = out.(model)
+	if m.mode != ModeEditing || m.editText != "Alpha" {
+		t.Fatalf("expected to be editing %q, got mode %v text %q", "Alpha", m.mode, m.editText)
+	}
+
+	out, _ = m.Update(press(tea.MouseButtonLeft, 8, 4))
+	m = out.(model)
+	if m.editCursorPos != 2 {
+		t.Fatalf("expected the click to put the cursor at 2, got %d", m.editCursorPos)
+	}
+	if m.hasEditSelection() {
+		t.Fatal("a click without a drag should not select anything")
+	}
+
+	out, _ = m.Update(dragMotion(6, 4))
+	m = out.(model)
+	out, _ = m.Update(release(6, 4))
+	m = out.(model)
+	if start, end := m.getEditSelectionBounds(); start != 0 || end != 2 {
+		t.Fatalf("expected 0-2 selected, got %d-%d", start, end)
+	}
+	if m.editCursorPos != 0 {
+		t.Fatalf("expected the cursor at 0 after the drag, got %d", m.editCursorPos)
+	}
+
+	restore, _ := clipboard.ReadAll()
+	if err := clipboard.WriteAll("probe"); err != nil {
+		t.Skipf("no usable clipboard here: %v", err)
+	}
+	defer clipboard.WriteAll(restore)
+
+	out, _ = m.Update(press(tea.MouseButtonRight, 6, 4))
+	m = out.(model)
+	if got, err := clipboard.ReadAll(); err != nil || got != "Al" {
+		t.Fatalf("expected %q on the clipboard, got %q (err %v)", "Al", got, err)
+	}
+	if m.editText != "Alpha" {
+		t.Fatalf("right click should not change the text, got %q", m.editText)
+	}
+
+	out, _ = m.Update(press(tea.MouseButtonMiddle, 6, 4))
+	m = out.(model)
+	if m.editText != "Alpha" {
+		t.Fatalf("expected pasting %q over %q to give %q, got %q", "Al", "Al", "Alpha", m.editText)
+	}
+
+	m.clearEditSelection()
+	out, _ = m.Update(press(tea.MouseButtonRight, 6, 4))
+	m = out.(model)
+	if m.editText != "Alpha" {
+		t.Fatalf("right click with no selection should be inert, got %q", m.editText)
 	}
 }

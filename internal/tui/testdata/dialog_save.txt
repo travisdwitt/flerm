@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
                                                                                                 
-Mode: FILE | Save filename: quarterly-plan | Enter=confirm, Esc=cancel
+Mode: FILE | Save filename: quarterly-plan | Enter=confirm, Esc=cancel                          

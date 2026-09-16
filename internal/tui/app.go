@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -11,9 +12,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func Run() error {
+func Run(noResume bool) error {
+	m := initialModel()
+	if noResume {
+		m.lastFile = ""
+	}
 	p := tea.NewProgram(
-		initialModel(),
+		m,
 		tea.WithAltScreen(),
 
 		tea.WithMouseAllMotion(),
@@ -124,10 +129,7 @@ const fileListWindow = 10
 
 // chartDisplayName strips the .sav extension used for saved charts.
 func chartDisplayName(file string) string {
-	if strings.HasSuffix(strings.ToLower(file), ".sav") {
-		return file[:len(file)-4]
-	}
-	return file
+	return strings.TrimSuffix(file, filepath.Ext(file))
 }
 
 // fuzzyMatch reports whether pattern's runes appear in order (not necessarily

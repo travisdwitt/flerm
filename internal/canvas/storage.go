@@ -12,15 +12,7 @@ func escapeNewlines(s string) string { return strings.ReplaceAll(s, "\n", "\\n")
 
 func unescapeNewlines(s string) string { return strings.ReplaceAll(s, "\\n", "\n") }
 
-func (c *Canvas) SaveToFile(filename string) error {
-	return c.save(filename, false, 0, 0)
-}
-
 func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
-	return c.save(filename, true, panX, panY)
-}
-
-func (c *Canvas) save(filename string, withPan bool, panX, panY int) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -87,9 +79,7 @@ func (c *Canvas) save(filename string, withPan bool, panX, panY int) error {
 	writeColors("LINECOLORS", func(i int) int { return c.connections[i].Color }, len(c.connections))
 	writeColors("TEXTCOLORS", func(i int) int { return c.texts[i].Color }, len(c.texts))
 
-	if withPan {
-		fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
-	}
+	fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
 	return nil
 }
 
@@ -110,11 +100,6 @@ func splitBoxLine(line string) []string {
 		}
 	}
 	return append(fields, current.String())
-}
-
-func (c *Canvas) LoadFromFile(filename string) error {
-	_, _, err := c.LoadFromFileWithPan(filename)
-	return err
 }
 
 func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
@@ -217,7 +202,7 @@ func parseBox(line string, id int) (Box, error) {
 		textFrom = 4
 	}
 	if len(fields) >= 6 {
-		if z, _ := strconv.Atoi(fields[4]); z >= 0 && z <= 3 {
+		if z, _ := strconv.Atoi(fields[4]); z >= 0 && z < numZLevels {
 			box.ZLevel = z
 		}
 		textFrom = 5

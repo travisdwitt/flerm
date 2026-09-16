@@ -1,5 +1,14 @@
 package tui
 
+// A negative color erases; SetHighlight would silently ignore it.
+func (m *model) applyHighlight(x, y, color int) {
+	if color < 0 {
+		m.getCanvas().ClearHighlight(x, y)
+		return
+	}
+	m.getCanvas().SetHighlight(x, y, color)
+}
+
 func (m *model) undo() {
 	buf := m.getCurrentBuffer()
 	if buf == nil || len(buf.undoStack) == 0 {
@@ -74,11 +83,7 @@ func (m *model) undo() {
 	case ActionHighlight:
 		data := action.Inverse.(HighlightData)
 		for _, cell := range data.Cells {
-			if cell.Color >= 0 {
-				m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
-			} else {
-				m.getCanvas().ClearHighlight(cell.X, cell.Y)
-			}
+			m.applyHighlight(cell.X, cell.Y, cell.Color)
 		}
 	case ActionChangeBorderStyle:
 		data := action.Inverse.(BorderStyleData)
@@ -157,7 +162,7 @@ func (m *model) redo() {
 	case ActionHighlight:
 		data := action.Data.(HighlightData)
 		for _, cell := range data.Cells {
-			m.getCanvas().SetHighlight(cell.X, cell.Y, cell.Color)
+			m.applyHighlight(cell.X, cell.Y, cell.Color)
 		}
 	case ActionChangeBorderStyle:
 		data := action.Data.(BorderStyleData)

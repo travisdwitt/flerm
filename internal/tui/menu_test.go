@@ -148,7 +148,7 @@ func TestResumeLastChart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &Config{Resume: true}
+	cfg := &Config{}
 	cfg.RememberLastFile(chart)
 	if got := cfg.LastFile(); got != chart {
 		t.Fatalf("expected %q remembered, got %q", chart, got)
@@ -179,16 +179,37 @@ func TestResumeLastChart(t *testing.T) {
 	if got := cfg.LastFile(); got != "" {
 		t.Fatalf("expected a missing chart to be forgotten, got %q", got)
 	}
-	off := &Config{Resume: false}
-	off.RememberLastFile(chart)
-	if got := off.LastFile(); got != "" {
-		t.Fatalf("expected resume=false to report no last chart, got %q", got)
-	}
-
 	start := newTestModel()
 	start.mode = ModeStartup
 	start.lastFile = ""
 	if strings.Contains(start.View(), "Resume") {
 		t.Fatal("start menu should not offer resume without a remembered chart")
+	}
+}
+
+func TestBufferBarDoesNotShiftOnSelect(t *testing.T) {
+	m := newTestModel()
+	m.addNewBuffer(cv.NewCanvas(), "/tmp/second-chart.sav")
+	m.addNewBuffer(cv.NewCanvas(), "")
+
+	plain := func(i int) string {
+		m.currentBufferIndex = i
+		return ansiRE.ReplaceAllString(m.renderBufferBar(120), "")
+	}
+	first, second, third := plain(0), plain(1), plain(2)
+
+	if len(first) != 120 || len(second) != 120 || len(third) != 120 {
+		t.Fatalf("expected every bar to fill the width, got %d/%d/%d", len(first), len(second), len(third))
+	}
+	if !strings.Contains(first, "[Buffer 1]") || !strings.Contains(second, "[second-chart]") {
+		t.Fatalf("expected the selected buffer to be bracketed:\n%q\n%q", first, second)
+	}
+
+	debracket := func(s string) string {
+		return strings.NewReplacer("[", " ", "]", " ").Replace(s)
+	}
+	if debracket(first) != debracket(second) || debracket(second) != debracket(third) {
+		t.Fatalf("selecting a buffer moved the others:\n%q\n%q\n%q",
+			debracket(first), debracket(second), debracket(third))
 	}
 }

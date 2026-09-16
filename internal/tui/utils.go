@@ -28,6 +28,15 @@ func (m *model) getPanOffset() (int, int) {
 	return 0, 0
 }
 
+func (m *model) unsavedChanges() bool {
+	for _, buf := range m.buffers {
+		if len(buf.undoStack) != buf.savedAt {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) addNewBuffer(canvas *Canvas, filename string) {
 	m.addNewBufferWithPan(canvas, filename, 0, 0)
 }

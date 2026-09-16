@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
                                                                                                 
-Mode: NORMAL | Cursor: (0,0) | ? for help | q to quit
+Mode: NORMAL | Cursor: (0,0) | ? for help | q to quit                                           
