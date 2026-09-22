@@ -18,7 +18,6 @@ func (c *Canvas) box(id int) (Box, bool) {
 	return c.boxes[id], true
 }
 
-// connPoints returns a connection's full polyline: origin, waypoints, endpoint.
 func connPoints(conn Connection) []Point {
 	pts := make([]Point, 0, len(conn.Waypoints)+2)
 	pts = append(pts, Point{conn.FromX, conn.FromY})
@@ -193,8 +192,6 @@ func (c *Canvas) ResizeBox(id, deltaWidth, deltaHeight int) {
 	c.reanchorConnectionsForResize(id, oldX, oldWidth)
 }
 
-// SetBoxSize sets an exact size, leaving the text lines alone (undo restores
-// the size a resize produced; the lines it produced are restored separately).
 func (c *Canvas) SetBoxSize(id, width, height int) {
 	if id < 0 || id >= len(c.boxes) {
 		return
@@ -209,8 +206,6 @@ func (c *Canvas) SetBoxSize(id, width, height int) {
 	c.reanchorConnectionsForResize(id, oldX, oldWidth)
 }
 
-// resizeAnchorX re-pins a horizontal connection endpoint to whichever vertical
-// edge of the box it sat on before the resize. tieRight breaks a dead-centre tie.
 func resizeAnchorX(oldX, oldBX, oldBW int, box Box, tieRight bool) int {
 	mid := oldBX + oldBW/2
 	right := oldX == oldBX+oldBW-1 || oldX > mid
@@ -247,7 +242,6 @@ func (c *Canvas) reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth int) {
 		if !horiz {
 			continue
 		}
-		// Decide the side from each endpoint's pre-resize geometry.
 		fromBX, fromBW := c.boxes[fromID].X, c.boxes[fromID].Width
 		toBX, toBW := c.boxes[toID].X, c.boxes[toID].Width
 		if fromID == id {
@@ -260,12 +254,10 @@ func (c *Canvas) reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth int) {
 	}
 }
 
-func clampNonNeg(x, y int) (int, int) { return max(x, 0), max(y, 0) }
-
 func (c *Canvas) MoveBoxOnly(id, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.boxes) {
 		box := &c.boxes[id]
-		box.X, box.Y = clampNonNeg(box.X+deltaX, box.Y+deltaY)
+		box.X, box.Y = box.X+deltaX, box.Y+deltaY
 	}
 }
 
@@ -280,20 +272,20 @@ func (c *Canvas) MoveBox(id, deltaX, deltaY int) {
 
 func (c *Canvas) SetBoxPositionOnly(id, x, y int) {
 	if id >= 0 && id < len(c.boxes) {
-		c.boxes[id].X, c.boxes[id].Y = clampNonNeg(x, y)
+		c.boxes[id].X, c.boxes[id].Y = x, y
 	}
 }
 
 func (c *Canvas) MoveText(id, deltaX, deltaY int) {
 	if id >= 0 && id < len(c.texts) {
 		t := &c.texts[id]
-		t.X, t.Y = clampNonNeg(t.X+deltaX, t.Y+deltaY)
+		t.X, t.Y = t.X+deltaX, t.Y+deltaY
 	}
 }
 
 func (c *Canvas) SetTextPosition(id, x, y int) {
 	if id >= 0 && id < len(c.texts) {
-		c.texts[id].X, c.texts[id].Y = clampNonNeg(x, y)
+		c.texts[id].X, c.texts[id].Y = x, y
 	}
 }
 
@@ -345,4 +337,40 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+func (c *Canvas) duplicateHighlights(cells []Point, dx, dy int) {
+	for _, cell := range cells {
+		if color, ok := c.highlights[cell]; ok {
+			c.highlights[Point{cell.X + dx, cell.Y + dy}] = color
+		}
+	}
+}
+
+func (c *Canvas) DuplicateBox(id, dx, dy int) int {
+	box, ok := c.box(id)
+	if !ok {
+		return -1
+	}
+	cells := c.GetBoxCells(id)
+	box.ID = len(c.boxes)
+	box.X, box.Y = box.X+dx, box.Y+dy
+	box.Lines = append([]string(nil), box.Lines...)
+	c.boxes = append(c.boxes, box)
+	c.duplicateHighlights(cells, dx, dy)
+	return box.ID
+}
+
+func (c *Canvas) DuplicateText(id, dx, dy int) int {
+	if id < 0 || id >= len(c.texts) {
+		return -1
+	}
+	cells := c.GetTextCells(id)
+	t := c.texts[id]
+	t.ID = len(c.texts)
+	t.X, t.Y = t.X+dx, t.Y+dy
+	t.Lines = append([]string(nil), t.Lines...)
+	c.texts = append(c.texts, t)
+	c.duplicateHighlights(cells, dx, dy)
+	return t.ID
 }

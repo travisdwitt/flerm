@@ -40,8 +40,6 @@ func manhattan(x1, y1, x2, y2 int) int { return abs(x1-x2) + abs(y1-y2) }
 
 func clamp(v, lo, hi int) int { return min(max(v, min(lo, hi)), max(lo, hi)) }
 
-// closestOnSegment finds the nearest cell on an axis-aligned segment. A
-// diagonal segment is treated as the L-shaped path the renderer draws for it.
 func closestOnSegment(a, b Point, cursorX, cursorY int) (int, int) {
 	switch {
 	case a.X == b.X:
@@ -58,7 +56,6 @@ func closestOnSegment(a, b Point, cursorX, cursorY int) (int, int) {
 	return x2, y2
 }
 
-// FindNearestEdgePoint snaps a cursor to the closest point on a box's outline.
 func (c *Canvas) FindNearestEdgePoint(box Box, cursorX, cursorY int) (int, int) {
 	right, bottom := box.X+box.Width-1, box.Y+box.Height-1
 	clampedX := clamp(cursorX, box.X, right)
@@ -96,7 +93,6 @@ func (c *Canvas) calculateConnectionPointsPreservingOrientation(fromID, toID int
 		return 0, 0, 0, 0
 	}
 
-	// Each endpoint leaves from the centre of the face pointing at the other box.
 	if preferHorizontal {
 		dir := 1
 		if fromBox.X+fromBox.Width/2 >= toBox.X+toBox.Width/2 {
@@ -198,8 +194,6 @@ func (c *Canvas) CycleConnectionArrowState(connIdx int) {
 	}
 }
 
-// connectionsEqual compares geometry only; arrows and colour are ignored so a
-// line can be matched after those change.
 func (c *Canvas) connectionsEqual(a, b Connection) bool {
 	return a.FromID == b.FromID && a.ToID == b.ToID &&
 		a.FromX == b.FromX && a.FromY == b.FromY &&
@@ -549,11 +543,6 @@ func (c *Canvas) findBestAnchorPoint(box Box, targetX, targetY int) (int, int) {
 	}
 }
 
-// Edges are named "left"/"right"/"top"/"bottom". Routing is written once in
-// along/perpendicular coordinates: "along" is the axis the source edge faces,
-// so a vertical source edge is just the horizontal case with X and Y swapped.
-
-// edgeAxis reports whether an edge faces along X, and which way it points.
 func edgeAxis(edge string) (horiz bool, dir int) {
 	switch edge {
 	case "right":
@@ -568,7 +557,6 @@ func edgeAxis(edge string) (horiz bool, dir int) {
 	return true, 0
 }
 
-// pt rebuilds a Point from along/perpendicular coordinates.
 func pt(horiz bool, along, perp int) Point {
 	if horiz {
 		return Point{along, perp}
@@ -576,8 +564,6 @@ func pt(horiz bool, along, perp int) Point {
 	return Point{perp, along}
 }
 
-// outward returns whichever of a, b lies further in direction dir, offset by
-// dir*off — i.e. a point clear of both on that side.
 func outward(dir, a, b, off int) int {
 	if dir > 0 {
 		return max(a, b) + off
@@ -585,8 +571,6 @@ func outward(dir, a, b, off int) int {
 	return min(a, b) - off
 }
 
-// parallelClearance is how far a line detours sideways when both endpoints face
-// the same axis; rows are cheaper to spend than columns.
 func parallelClearance(horiz bool) int {
 	if horiz {
 		return 3
@@ -623,7 +607,7 @@ func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) [
 		off := outward(dir, fa, ta, parallelClearance(horiz))
 		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
 
-	case toHoriz == horiz: // both facing the same way: go around the far box
+	case toHoriz == horiz: // both facing the same way
 		fFar, tFar := boxFar(fromBox, horiz, dir), boxFar(toBox, horiz, dir)
 		off := outward(dir, fFar, tFar, parallelClearance(horiz))
 		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
@@ -638,7 +622,6 @@ func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) [
 	}
 }
 
-// along splits a point into (source-edge axis, perpendicular axis) coordinates.
 func along(horiz bool, x, y int) (int, int) {
 	if horiz {
 		return x, y
@@ -646,7 +629,6 @@ func along(horiz bool, x, y int) (int, int) {
 	return y, x
 }
 
-// boxFar returns the box's bounding coordinate on the side dir points to.
 func boxFar(box Box, horiz bool, dir int) int {
 	if horiz {
 		if dir > 0 {

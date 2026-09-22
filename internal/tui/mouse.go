@@ -41,8 +41,6 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// Copy and paste re-enter Update with the equivalent keystroke, keeping the
-// clipboard logic in one place per mode.
 func (m model) handleTextMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action == tea.MouseActionPress {
 		switch msg.Button {
@@ -76,7 +74,6 @@ func (m model) handleTextMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	*cursor = pos
 
-	// Only ModeEditing renders a selection.
 	if m.mode != ModeEditing {
 		return m, nil
 	}
@@ -88,11 +85,6 @@ func (m model) handleTextMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleFileMouse drives the open dialog: the wheel and the scrollbar scroll
-// the list, a click picks a row, and a click on the row already picked opens
-// it, so a double-click opens without any click-timing state.
-// ponytail: second-click-opens instead of real double-click detection; add
-// timing if a stray second click on the same row turns out to be annoying.
 func (m model) handleFileMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.fileOp != FileOpOpen {
 		return m, nil
@@ -121,7 +113,6 @@ func (m model) handleFileMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// The delete prompt is keyboard-only; a stray click must not answer it.
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || m.showingDeleteConfirm {
 		return m, nil
 	}
@@ -131,7 +122,6 @@ func (m model) handleFileMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	if m.fileThumbLen() > 0 && msg.X == x+w-2 {
 		m.draggingFileScroll = true
-		// Grab the thumb by its middle so it lands under the pointer.
 		m.dragFileScrollTo(row - m.fileThumbLen()/2)
 		return m, nil
 	}
@@ -143,7 +133,6 @@ func (m model) handleFileMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	reopen := idx == m.selectedFileIndex
 	m.selectFileIndex(idx)
 	if reopen {
-		// Opening lives in one place: the Enter handler.
 		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	return m, nil
@@ -183,7 +172,7 @@ func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) tea.Cmd {
 		m.selectionStartX, m.selectionStartY = canvasX+panX, canvasY+panY
 		m.cursorX, m.cursorY = canvasX, canvasY
 		m.ensureCursorInBounds()
-	case msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft:
+	case msg.Action == tea.MouseActionMotion:
 		m.cursorX, m.cursorY = canvasX, canvasY
 		m.ensureCursorInBounds()
 	case msg.Action == tea.MouseActionRelease:
@@ -192,7 +181,7 @@ func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) tea.Cmd {
 		m.finalizeMultiSelect(canvasX+panX, canvasY+panY)
 	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight:
 		m.mode = ModeNormal
-		m.selectionStartX, m.selectionStartY = -1, -1
+		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
 		m.selectedBoxes, m.selectedTexts = []int{}, []int{}
 	}
 	return nil
@@ -348,15 +337,7 @@ func (m *model) beginBoxDrag(boxID, worldX, worldY int) {
 
 	m.dragConnSnapshot = canvas.SnapshotConnections()
 
-	m.originalHighlights = make(map[point]int)
-	for y := box.Y; y < box.Y+box.Height; y++ {
-		for x := box.X; x < box.X+box.Width; x++ {
-			if color := canvas.GetHighlight(x, y); color != -1 {
-				m.originalHighlights[point{X: x, Y: y}] = color
-			}
-		}
-	}
-	m.highlightMoveDelta = point{X: 0, Y: 0}
+	m.captureHighlights(canvas.GetBoxCells(boxID))
 
 	m.selBox = boxID
 	m.selText = -1
@@ -400,10 +381,6 @@ func (m *model) finishBoxDrag() {
 		deltaY := cur.Y - m.originalMoveY
 		if deltaX != 0 || deltaY != 0 {
 			moveData := MoveBoxData{ID: m.dragBoxID, DeltaX: deltaX, DeltaY: deltaY}
-			var highlightCells []HighlightCell
-			for origPos, color := range m.originalHighlights {
-				highlightCells = append(highlightCells, HighlightCell{X: origPos.X, Y: origPos.Y, Color: color})
-			}
 			originalState := OriginalBoxState{
 				ID:          m.dragBoxID,
 				X:           m.originalMoveX,
@@ -411,7 +388,7 @@ func (m *model) finishBoxDrag() {
 				Width:       cur.Width,
 				Height:      cur.Height,
 				Connections: m.originalBoxConnections[m.dragBoxID],
-				Highlights:  highlightCells,
+				Highlights:  m.capturedHighlightCells(),
 			}
 			m.recordAction(ActionMoveBox, moveData, originalState)
 		}
@@ -435,6 +412,7 @@ func (m *model) beginTextDrag(textID, worldX, worldY int) {
 	m.dragGrabOffsetY = text.Y - worldY
 	m.originalTextMoveX = text.X
 	m.originalTextMoveY = text.Y
+	m.captureHighlights(canvas.GetTextCells(textID))
 	m.selText = textID
 	m.selBox = -1
 	m.selConn = -1
@@ -452,6 +430,11 @@ func (m *model) dragTextMoveTo(canvasX, canvasY int) {
 	desiredY := worldY + m.dragGrabOffsetY
 	cur := canvas.Texts()[m.dragTextID]
 	canvas.MoveText(m.dragTextID, desiredX-cur.X, desiredY-cur.Y)
+	if len(m.originalHighlights) > 0 {
+		moved := canvas.Texts()[m.dragTextID]
+		m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(
+			moved.X-m.originalTextMoveX, moved.Y-m.originalTextMoveY)
+	}
 	m.cursorX = canvasX
 	m.cursorY = canvasY
 	m.ensureCursorInBounds()
@@ -465,11 +448,16 @@ func (m *model) finishTextDrag() {
 		deltaY := cur.Y - m.originalTextMoveY
 		if deltaX != 0 || deltaY != 0 {
 			moveData := MoveTextData{ID: m.dragTextID, DeltaX: deltaX, DeltaY: deltaY}
-			originalState := OriginalTextState{ID: m.dragTextID, X: m.originalTextMoveX, Y: m.originalTextMoveY}
+			originalState := OriginalTextState{
+				ID: m.dragTextID, X: m.originalTextMoveX, Y: m.originalTextMoveY,
+				Highlights: m.capturedHighlightCells(),
+			}
 			m.recordAction(ActionMoveText, moveData, originalState)
 		}
 	}
 	m.draggingText = false
+	m.originalHighlights = make(map[point]int)
+	m.highlightMoveDelta = point{X: 0, Y: 0}
 }
 
 func (m *model) panViewTo(canvasX, canvasY int) {
@@ -483,7 +471,6 @@ func (m *model) panViewTo(canvasX, canvasY int) {
 	m.panMoved = true
 }
 
-// A negative color erases instead of painting.
 func (m *model) beginHighlightPaint(worldX, worldY, color int) {
 	if m.getCanvas() == nil {
 		return
@@ -679,6 +666,7 @@ func buildMenuItems(box, text, conn int) []MenuItem {
 				{Label: "Color", Action: MenuSubmenu, Submenu: colorSubmenu()},
 			}},
 			MenuItem{Label: "New Line", Action: MenuNewLine},
+			MenuItem{Label: "Duplicate Box", Action: MenuDuplicate},
 			MenuItem{Label: "Delete Box", Action: MenuDeleteBox},
 			MenuItem{Separator: true},
 		)
@@ -686,6 +674,7 @@ func buildMenuItems(box, text, conn int) []MenuItem {
 		items = append(items,
 			MenuItem{Label: "Edit Text", Action: MenuEditText},
 			MenuItem{Label: "Color", Action: MenuSubmenu, Submenu: colorSubmenu()},
+			MenuItem{Label: "Duplicate Text", Action: MenuDuplicate},
 			MenuItem{Label: "Delete Text", Action: MenuDeleteText},
 			MenuItem{Separator: true},
 		)
@@ -700,6 +689,7 @@ func buildMenuItems(box, text, conn int) []MenuItem {
 	items = append(items,
 		MenuItem{Label: "New Box", Action: MenuNewBox},
 		MenuItem{Label: "New Text", Action: MenuNewText},
+		MenuItem{Label: "Select Area", Action: MenuMultiSelect},
 	)
 	return items
 }
@@ -1001,6 +991,25 @@ func (m *model) activateMenuItem(action MenuAction, arg int) tea.Cmd {
 		m.mode = ModeNormal
 		m.menuItems = nil
 
+	case MenuMultiSelect:
+		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
+		m.selectedBoxes = []int{}
+		m.selectedTexts = []int{}
+		m.selectedConnections = []int{}
+		m.cursorX, m.cursorY = m.menuX, m.menuY
+		m.ensureCursorInBounds()
+		m.mode = ModeMultiSelect
+		m.menuItems = nil
+
+	case MenuDuplicate:
+		if m.menuTargetBox != -1 {
+			m.duplicateByID(false, m.menuTargetBox)
+		} else {
+			m.duplicateByID(true, m.menuTargetText)
+		}
+		m.mode = ModeNormal
+		m.menuItems = nil
+
 	case MenuDeleteBox:
 		m.deleteBoxByID(m.menuTargetBox)
 		m.selBox, m.selText, m.selConn = -1, -1, -1
@@ -1077,6 +1086,41 @@ func (m *model) applyMenuColor(color int) {
 		data := ColorData{Kind: kind, ID: id, OldColor: old, NewColor: color}
 		m.recordAction(ActionSetColor, data, data)
 	}
+}
+
+const dupOffsetX, dupOffsetY = 2, 1
+
+func (m *model) duplicateAt(worldX, worldY int) {
+	canvas := m.getCanvas()
+	if canvas == nil {
+		return
+	}
+	if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+		m.duplicateByID(false, boxID)
+		return
+	}
+	if textID := canvas.GetTextAt(worldX, worldY); textID != -1 {
+		m.duplicateByID(true, textID)
+	}
+}
+
+func (m *model) duplicateByID(isText bool, srcID int) {
+	canvas := m.getCanvas()
+	if canvas == nil || srcID < 0 {
+		return
+	}
+	data := DuplicateData{IsText: isText, SrcID: srcID, DX: dupOffsetX, DY: dupOffsetY}
+	if isText {
+		data.NewID = canvas.DuplicateText(srcID, data.DX, data.DY)
+	} else {
+		data.NewID = canvas.DuplicateBox(srcID, data.DX, data.DY)
+	}
+	if data.NewID == -1 {
+		return
+	}
+	m.recordAction(ActionDuplicate, data, data)
+	m.successMessage = ""
+	m.ensureCursorInBounds()
 }
 
 func (m *model) deleteBoxByID(boxID int) {

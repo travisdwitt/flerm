@@ -118,12 +118,17 @@ type model struct {
 
 	draggingGroup          bool
 	groupLastX, groupLastY int
+	groupConnSnapshot      []Connection
 
 	paintingHighlight      bool
 	paintColor             int
 	paintedCells           []HighlightCell
 	paintedSeen            map[point]bool
 	lastPaintX, lastPaintY int
+
+	effect      effectKind
+	effectFrame int
+	particles   []particle
 
 	menuItems      []MenuItem
 	menuIndex      int
@@ -222,10 +227,23 @@ type OriginalBoxState struct {
 	Highlights  []HighlightCell
 }
 
+type GroupMoveState struct {
+	BoxPositions  map[int]point
+	TextPositions map[int]point
+	Connections   []Connection
+	Highlights    []HighlightCell
+}
+
+type GroupMoveData struct {
+	Before GroupMoveState
+	After  GroupMoveState
+}
+
 type OriginalTextState struct {
-	ID int
-	X  int
-	Y  int
+	ID         int
+	X          int
+	Y          int
+	Highlights []HighlightCell
 }
 
 type AddConnectionData struct {
@@ -261,6 +279,13 @@ const (
 	ColorKindLine
 	ColorKindText
 )
+
+type DuplicateData struct {
+	IsText bool
+	SrcID  int
+	NewID  int
+	DX, DY int
+}
 
 type ColorData struct {
 	Kind     int

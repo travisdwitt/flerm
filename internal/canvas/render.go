@@ -72,7 +72,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 	for _, connection := range c.connections {
 		c.drawConnectionWithPan(canvas, connection, panX, panY)
 	}
-	if previewFromX >= 0 && previewFromY >= 0 {
+	if previewFromX != CoordUnset && previewFromY != CoordUnset {
 		c.drawConnectionWithPan(canvas, Connection{
 			FromID: -1, ToID: -1,
 			FromX: previewFromX, FromY: previewFromY,
@@ -84,11 +84,10 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 	for _, text := range c.texts {
 		c.drawTextAt(canvas, text.Lines, text.X-panX, text.Y-panY)
 	}
-	if editTextX >= 0 && editTextY >= 0 && editText != "" {
+	if editTextX != CoordUnset && editTextY != CoordUnset && editText != "" {
 		c.drawTextAt(canvas, strings.Split(editText, "\n"), editTextX-panX, editTextY-panY)
 	}
 
-	// Higher z-levels draw last so their shadows fall over lower boxes.
 	boxOrder := make([]int, 0, len(c.boxes))
 	for z := 0; z < numZLevels; z++ {
 		for i, box := range c.boxes {
@@ -116,7 +115,6 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		}
 	}
 
-	// editCursorAt maps a character offset in the text being edited to a screen cell.
 	editCursorAt := func(pos int) (int, int, bool) {
 		originX, originY, ok := c.EditOrigin(editBoxID, editTextID, editTextX, editTextY)
 		if !ok {
@@ -141,7 +139,7 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 		putRune(cursorX, cursorY, '█')
 	}
 
-	if selectionStartX >= 0 && selectionStartY >= 0 {
+	if selectionStartX != CoordUnset && selectionStartY != CoordUnset {
 		x0, x1 := minmax(selectionStartX-panX, selectionEndX-panX)
 		y0, y1 := minmax(selectionStartY-panY, selectionEndY-panY)
 		x0, y0 = max(x0, 0), max(y0, 0)
@@ -190,7 +188,6 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 
 func minmax(a, b int) (int, int) { return min(a, b), max(a, b) }
 
-// boxRune picks the light box-drawing rune for a selection rectangle edge.
 func boxRune(corner, left, top bool) rune {
 	if !corner {
 		return '─'
@@ -221,7 +218,6 @@ func (c *Canvas) drawBoxShadow(canvas [][]rune, box Box, shadowOffset, panX, pan
 	}
 }
 
-// borderRunes returns topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical.
 func borderRunes(style BorderStyle, selected bool) [6]rune {
 	if selected {
 		return [6]rune{'#', '#', '#', '#', '#', '#'}
@@ -259,7 +255,6 @@ func (c *Canvas) drawBoxAt(canvas [][]rune, box Box, isSelected bool, boxX, boxY
 	put(boxX, bottom, b[2])
 	put(right, bottom, b[3])
 
-	// Text is clipped to the inside of the border on every side.
 	maxWidth := max(box.Width-2*boxInsetX, 0)
 	putLines := func(lines []string, startY, limitY int) {
 		for i, line := range lines {
@@ -297,7 +292,6 @@ func (c *Canvas) drawTextAt(canvas [][]rune, lines []string, textX, textY int) {
 	}
 }
 
-// editTextID -2 means the edit is a box title; a box id otherwise wins over a text id.
 func (c *Canvas) EditOrigin(editBoxID, editTextID, editTextX, editTextY int) (int, int, bool) {
 	switch {
 	case editTextID == -2 && editBoxID >= 0 && editBoxID < len(c.boxes):
@@ -307,13 +301,12 @@ func (c *Canvas) EditOrigin(editBoxID, editTextID, editTextX, editTextY int) (in
 		return box.X + boxInsetX, box.Y + contentStartLine(box), true
 	case editTextID >= 0 && editTextID < len(c.texts):
 		return c.texts[editTextID].X, c.texts[editTextID].Y, true
-	case editTextX >= 0 && editTextY >= 0:
+	case editTextX != CoordUnset && editTextY != CoordUnset:
 		return editTextX, editTextY, true
 	}
 	return 0, 0, false
 }
 
-// cursorScreenPos walks content to find the screen cell for a character offset.
 func cursorScreenPos(originX, originY, cursorPos int, content string, panX, panY int) (int, int) {
 	lines := strings.Split(content, "\n")
 	currentPos := 0
@@ -338,7 +331,6 @@ func (c *Canvas) drawConnectionWithPan(canvas [][]rune, connection Connection, p
 	}
 	pts := connPoints(shifted)
 
-	// Diagonal hops become an L: across first, then down.
 	var verts []Point
 	addV := func(p Point) {
 		if len(verts) == 0 || verts[len(verts)-1] != p {
@@ -430,8 +422,6 @@ func (c *Canvas) isValidPos(canvas [][]rune, x, y int) bool {
 	return y >= 0 && y < len(canvas) && x >= 0 && x < len(canvas[y])
 }
 
-// colorCode returns the SGR sequence for a palette index: background for blank
-// cells, foreground for cells holding a glyph.
 func colorCode(colorIndex int, blank bool) string {
 	switch colorIndex {
 	case colorEditSelect:
@@ -453,7 +443,6 @@ func colorCode(colorIndex int, blank bool) string {
 	if blank {
 		base = 40
 	}
-	// Index 0 (gray) and 7 (white) share the palette's white slot.
 	offsets := []int{7, 1, 2, 3, 4, 5, 6, 7}
 	return fmt.Sprintf("\x1b[%dm", base+offsets[colorIndex])
 }

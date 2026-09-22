@@ -28,7 +28,6 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+c", "q":
-		// Unsaved work confirms even with confirmations off.
 		if m.unsavedChanges() || (m.config != nil && m.config.Confirmations) {
 			m.mode = ModeConfirm
 			m.confirmAction = ConfirmQuit
@@ -173,13 +172,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.originalMoveX, m.originalMoveY = box.X, box.Y
 
 				m.originalBoxConnections[boxID] = m.getCanvas().GetConnectionsForBox(boxID)
-				for y := box.Y; y < box.Y+box.Height; y++ {
-					for x := box.X; x < box.X+box.Width; x++ {
-						if color := m.getCanvas().GetHighlight(x, y); color != -1 {
-							m.originalHighlights[point{X: x, Y: y}] = color
-						}
-					}
-				}
+				m.captureHighlights(m.getCanvas().GetBoxCells(boxID))
 			}
 			m.mode = ModeMove
 		} else if textID != -1 {
@@ -196,19 +189,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if textID < len(m.getCanvas().Texts()) {
 				text := m.getCanvas().Texts()[textID]
 				m.originalTextMoveX, m.originalTextMoveY = text.X, text.Y
-				maxWidth := 0
-				for _, line := range text.Lines {
-					if len(line) > maxWidth {
-						maxWidth = len(line)
-					}
-				}
-				for y := text.Y; y < text.Y+len(text.Lines); y++ {
-					for x := text.X; x < text.X+maxWidth; x++ {
-						if color := m.getCanvas().GetHighlight(x, y); color != -1 {
-							m.originalHighlights[point{X: x, Y: y}] = color
-						}
-					}
-				}
+				m.captureHighlights(m.getCanvas().GetTextCells(textID))
 			}
 			m.mode = ModeMove
 		} else if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
@@ -223,6 +204,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.originalHighlights = make(map[point]int)
 			m.originalHighlights[point{X: worldX, Y: worldY}] = highlightColor
 			m.highlightMoveDelta = point{X: 0, Y: 0}
+			m.groupConnSnapshot = m.getCanvas().SnapshotConnections()
 			m.mode = ModeMove
 		}
 		return m, nil
@@ -572,6 +554,11 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			copy(copiedBox.Lines, box.Lines)
 			m.clipboard = &copiedBox
 		}
+		return m, nil
+	case "y":
+		m.zPanMode = false
+		panX, panY := m.getPanOffset()
+		m.duplicateAt(m.cursorX+panX, m.cursorY+panY)
 		return m, nil
 	case "p":
 		if m.clipboard != nil {

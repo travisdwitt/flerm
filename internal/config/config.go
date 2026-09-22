@@ -76,8 +76,6 @@ func (c *Config) GetSavePath(filename string) string {
 	return filepath.Join(c.SaveDirectory, filename)
 }
 
-// lastFileRecord holds the path of the most recently opened chart, so the start
-// menu can offer to resume it on the next run.
 func (c *Config) lastFileRecord() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -97,8 +95,6 @@ func (c *Config) RememberLastFile(path string) {
 	os.WriteFile(record, []byte(path+"\n"), 0644)
 }
 
-// LastFile returns the remembered chart, or "" if nothing was opened yet or the
-// file has since been moved or deleted.
 func (c *Config) LastFile() string {
 	record := c.lastFileRecord()
 	if record == "" {

@@ -58,16 +58,15 @@ func (m *model) syncCursorPositions() {
 func (m *model) editTarget() (editBoxID, editTextID, editTextX, editTextY int) {
 	switch m.mode {
 	case ModeEditing:
-		return m.selectedBox, m.selectedText, -1, -1
+		return m.selectedBox, m.selectedText, CoordUnset, CoordUnset
 	case ModeTextInput:
 		return -1, -1, m.textInputX, m.textInputY
 	case ModeTitleEdit:
-		return m.titleEditBoxID, -2, -1, -1
+		return m.titleEditBoxID, -2, CoordUnset, CoordUnset
 	}
-	return -1, -1, -1, -1
+	return -1, -1, CoordUnset, CoordUnset
 }
 
-// Returns a nil cursor outside the three edit modes.
 func (m *model) editTextCursor() (string, *int) {
 	switch m.mode {
 	case ModeEditing:
@@ -80,7 +79,6 @@ func (m *model) editTextCursor() (string, *int) {
 	return "", nil
 }
 
-// The inverse of the renderer's cursorScreenPos; off-text clicks clamp to an edge.
 func (m *model) editPosAt(screenX, screenY int, text string) (int, bool) {
 	originX, originY, ok := m.getCanvas().EditOrigin(m.editTarget())
 	if !ok {
@@ -92,9 +90,6 @@ func (m *model) editPosAt(screenX, screenY int, text string) (int, bool) {
 	return m.cursorPosToLinear(row, col, text), true
 }
 
-// startEditSelection anchors a selection at the cursor unless one is already
-// running. A collapsed selection counts as none, so the anchor never goes
-// stale after a shift-key round trip.
 func (m *model) startEditSelection() {
 	if !m.hasEditSelection() {
 		m.editSelectionStart = m.editCursorPos

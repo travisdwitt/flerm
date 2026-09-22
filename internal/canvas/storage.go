@@ -61,8 +61,6 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 		fmt.Fprintf(file, "%d,%d,%d\n", cell.X, cell.Y, colorIndex)
 	}
 
-	// Colour sections list only the objects that have one, so older versions of
-	// Flerm (which skip unknown sections) still read the file.
 	writeColors := func(header string, colorOf func(i int) int, n int) {
 		var lines []string
 		for i := 0; i < n; i++ {
@@ -83,7 +81,6 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 	return nil
 }
 
-// splitBoxLine splits on commas, honouring the "\," escape used in box titles.
 func splitBoxLine(line string) []string {
 	var fields []string
 	var current strings.Builder
@@ -117,7 +114,6 @@ func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
 		return 0, 0, fmt.Errorf("invalid file format")
 	}
 
-	// Section count line, e.g. "BOXES:3".
 	section := func(name string) (int, error) {
 		if !scanner.Scan() {
 			return 0, fmt.Errorf("missing %s header", strings.ToLower(name))
@@ -157,7 +153,6 @@ func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
 		}
 	}
 
-	// Everything past this point is optional and self-describing.
 	panX, panY := 0, 0
 	for scanner.Scan() {
 		header, arg, ok := strings.Cut(scanner.Text(), ":")
@@ -183,8 +178,6 @@ func (c *Canvas) LoadFromFileWithPan(filename string) (int, int, error) {
 	return panX, panY, scanner.Err()
 }
 
-// parseBox reads one BOXES line. Older files carry fewer fields; anything
-// missing falls back to a default.
 func parseBox(line string, id int) (Box, error) {
 	fields := splitBoxLine(line)
 	if len(fields) < 3 {
@@ -216,8 +209,6 @@ func parseBox(line string, id int) (Box, error) {
 
 	box.SetText(unescapeNewlines(strings.Join(fields[textFrom:], ",")))
 	if len(fields) >= 5 {
-		// SetText already sized the box to fit; never shrink below that, or a
-		// chart saved before the padding widened would clip its last column.
 		box.Width, box.Height = max(width, box.Width), max(height, box.Height)
 	}
 	return box, nil

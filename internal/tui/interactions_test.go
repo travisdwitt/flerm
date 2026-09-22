@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -59,11 +60,9 @@ func TestTextClickWithoutMoveNoUndo(t *testing.T) {
 func TestNewLineFromLine(t *testing.T) {
 	m := newTestModel()
 	c := m.getCanvas()
-	// Connection box0 -> box1 with an explicit vertical segment at x=25.
 	c.AddConnectionWithWaypoints(0, 1, 11, 4, 40, 21, []point{{X: 25, Y: 4}, {X: 25, Y: 21}})
 	connsBefore := len(c.Connections())
 
-	// Right-click a point on the vertical segment (not over any box).
 	out, _ := m.Update(press(tea.MouseButtonRight, 25, 10))
 	m = out.(model)
 	if m.menuTargetConn == -1 {
@@ -78,7 +77,6 @@ func TestNewLineFromLine(t *testing.T) {
 		t.Fatalf("expected line-origin draw, got drawing=%v from=%d fromLine=%d", m.mouseLineDrawing, m.connectionFrom, m.connectionFromLine)
 	}
 
-	// Complete onto box1.
 	out, _ = m.Update(press(tea.MouseButtonLeft, 42, 21))
 	m = out.(model)
 	c = m.getCanvas()
@@ -93,7 +91,6 @@ func TestNewLineFromLine(t *testing.T) {
 
 func TestNewLineNodeBend(t *testing.T) {
 	m := newTestModel()
-	// Start a line from box 0 via its menu.
 	out, _ := m.Update(press(tea.MouseButtonRight, 8, 4))
 	m = out.(model)
 	idx := menuLabelIndex(m.menuItems, "New Line")
@@ -102,7 +99,6 @@ func TestNewLineNodeBend(t *testing.T) {
 		t.Fatalf("expected box-origin draw from box 0, got drawing=%v from=%d", m.mouseLineDrawing, m.connectionFrom)
 	}
 
-	// Click an empty cell to drop a node, then click box 1 to finish.
 	out, _ = m.Update(press(tea.MouseButtonLeft, 8, 15))
 	m = out.(model)
 	if len(m.connectionWaypoints) != 1 || m.connectionWaypoints[0] != (point{X: 8, Y: 15}) {
@@ -196,7 +192,7 @@ func TestGroupDragMovesAndHighlights(t *testing.T) {
 	b0, b1 := c.Boxes()[0], c.Boxes()[1]
 
 	// The whole group is highlighted.
-	rr := c.RenderRaw(120, 40, -1, -1, -1, nil, -1, -1, 0, 0, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+	rr := c.RenderRaw(120, 40, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, 0, 0, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
 	m.overlaySelection(rr, 0, 0)
 	if rr.ColorMap[b0.Y][b0.X] != colorMouseSelect || rr.ColorMap[b1.Y][b1.X] != colorMouseSelect {
 		t.Fatal("expected both boxes highlighted while selected")
@@ -237,7 +233,7 @@ func TestMultiSelectEscCancels(t *testing.T) {
 	if m.mode != ModeNormal {
 		t.Fatalf("expected Esc to cancel to ModeNormal, got %v", m.mode)
 	}
-	if m.selectionStartX != -1 {
+	if m.selectionStartX != CoordUnset {
 		t.Fatalf("expected selection reset on cancel, got selectionStartX=%d", m.selectionStartX)
 	}
 }
@@ -249,7 +245,7 @@ func TestConnectionRendersWithoutGaps(t *testing.T) {
 	// A path that doubles back vertically (up at x=30) and ends at a free point.
 	c.AddConnectionWithWaypoints(0, -1, 8, 3, 40, 12,
 		[]point{{X: 20, Y: 3}, {X: 20, Y: 8}, {X: 30, Y: 8}, {X: 30, Y: 3}})
-	rr := c.RenderRaw(50, 16, -1, -1, -1, nil, -1, -1, 0, 0, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+	rr := c.RenderRaw(50, 16, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, 0, 0, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
 
 	// Every cell on the path must be drawn (no breaks).
 	for _, p := range c.GetConnectionCells(0) {
@@ -288,8 +284,7 @@ func TestHighlightPaintDrag(t *testing.T) {
 			t.Fatalf("expected highlight color 2 at (%d,30), got %d", x, c.GetHighlight(x, 30))
 		}
 	}
-	// It renders on empty canvas (no visibility filter).
-	rr := c.RenderRaw(120, 40, -1, -1, -1, nil, -1, -1, 0, 0, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+	rr := c.RenderRaw(120, 40, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, 0, 0, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
 	if rr.ColorMap[30][32] != 2 {
 		t.Fatalf("expected painted cell to render color 2, got %d", rr.ColorMap[30][32])
 	}
@@ -299,8 +294,6 @@ func TestHighlightPaintDrag(t *testing.T) {
 	}
 }
 
-// TestEscapeKeepsTypedText checks that Esc commits an in-progress edit the way
-// Ctrl+S does, in every text-entry mode, and that undo still reverts it.
 func TestEscapeKeepsTypedText(t *testing.T) {
 	typeKeys := func(m model, s string) model {
 		for _, r := range s {
@@ -311,7 +304,6 @@ func TestEscapeKeepsTypedText(t *testing.T) {
 		return out.(model)
 	}
 
-	// Box text: 'e' on box 0, retype, Esc.
 	m := newTestModel()
 	m.cursorX, m.cursorY = 6, 4
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
@@ -335,7 +327,6 @@ func TestEscapeKeepsTypedText(t *testing.T) {
 		t.Fatalf("expected undo to restore %q, got %q", "Alpha", got)
 	}
 
-	// Box title: 'T' on box 0, type, Esc.
 	m = newTestModel()
 	m.cursorX, m.cursorY = 6, 4
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
@@ -352,7 +343,6 @@ func TestEscapeKeepsTypedText(t *testing.T) {
 		t.Fatalf("expected undo to clear the title, got %q", got)
 	}
 
-	// Free text: 't' on empty canvas space, type, Esc.
 	m = newTestModel()
 	m.cursorX, m.cursorY = 60, 30
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
@@ -368,8 +358,6 @@ func TestEscapeKeepsTypedText(t *testing.T) {
 	}
 }
 
-// TestShiftHomeEndSelectAndCopy covers Shift+Home/End selection and 'y' copying
-// the selection to the system clipboard instead of replacing it.
 func TestShiftHomeEndSelectAndCopy(t *testing.T) {
 	m := newTestModel()
 	m.mode = ModeEditing
@@ -385,7 +373,6 @@ func TestShiftHomeEndSelectAndCopy(t *testing.T) {
 		return out.(model)
 	}
 
-	// Shift+Home selects back to the line start, Shift+End forward again.
 	m = key(m, tea.KeyShiftHome)
 	if start, end := m.getEditSelectionBounds(); start != 0 || end != len(m.editText) {
 		t.Fatalf("expected the whole line selected, got %d-%d", start, end)
@@ -401,7 +388,6 @@ func TestShiftHomeEndSelectAndCopy(t *testing.T) {
 		t.Fatalf("expected 0-5 selected, got %d-%d", start, end)
 	}
 
-	// 'y' copies rather than replacing the selection.
 	restore, _ := clipboard.ReadAll()
 	if err := clipboard.WriteAll("probe"); err != nil {
 		t.Skipf("no usable clipboard here: %v", err)
@@ -420,8 +406,6 @@ func TestShiftHomeEndSelectAndCopy(t *testing.T) {
 		t.Fatal("expected the selection to survive a copy")
 	}
 
-	// With no selection, 'y' is still just a character (the cursor sits at the
-	// line start, where Shift+Home left it).
 	m.clearEditSelection()
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = out.(model)
@@ -441,7 +425,7 @@ func TestHelpScrollAndExit(t *testing.T) {
 	}
 
 	m := newTestModel()
-	m.height = 11 // a 10-line page plus the status line
+	m.height = 11
 	m = key(m, "?")
 	if !m.help {
 		t.Fatal("expected '?' to open the help screen")
@@ -576,5 +560,352 @@ func TestHighlightRightDragErases(t *testing.T) {
 		if m.getCanvas().GetHighlight(x, 30) != -1 {
 			t.Fatalf("expected redo to erase (%d,30) again, got %d", x, m.getCanvas().GetHighlight(x, 30))
 		}
+	}
+}
+
+func TestDuplicateBoxKeepsStyleAndHighlights(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.Boxes()[0].Title = "Title"
+	c.Boxes()[0].BorderStyle = BorderStyleDouble
+	c.SetBoxColor(0, 3)
+	c.Boxes()[0].UpdateSize()
+	src := c.Boxes()[0]
+	c.SetHighlight(src.X, src.Y, 5)
+
+	m.cursorX, m.cursorY = src.X+1, src.Y+1
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = out.(model)
+
+	c = m.getCanvas()
+	if len(c.Boxes()) != 3 {
+		t.Fatalf("expected a third box, got %d", len(c.Boxes()))
+	}
+	dup := c.Boxes()[2]
+	if dup.X != src.X+dupOffsetX || dup.Y != src.Y+dupOffsetY {
+		t.Fatalf("expected copy at (%d,%d), got (%d,%d)", src.X+dupOffsetX, src.Y+dupOffsetY, dup.X, dup.Y)
+	}
+	if dup.Title != "Title" || dup.BorderStyle != BorderStyleDouble || dup.Color != 3 || dup.GetText() != src.GetText() {
+		t.Fatalf("copy lost styling: %+v", dup)
+	}
+	if got := c.GetHighlight(src.X+dupOffsetX, src.Y+dupOffsetY); got != 5 {
+		t.Fatalf("expected the highlight copied to the offset cell, got %d", got)
+	}
+	if got := c.GetHighlight(src.X, src.Y); got != 5 {
+		t.Fatalf("expected the source highlight untouched, got %d", got)
+	}
+
+	m.undo()
+	if len(m.getCanvas().Boxes()) != 2 {
+		t.Fatal("undo should remove the copy")
+	}
+	if got := m.getCanvas().GetHighlight(src.X+dupOffsetX, src.Y+dupOffsetY); got != -1 {
+		t.Fatalf("undo should drop the copied highlight, got %d", got)
+	}
+	m.redo()
+	if len(m.getCanvas().Boxes()) != 3 || m.getCanvas().Boxes()[2].Title != "Title" {
+		t.Fatal("redo should restore the copy with its styling")
+	}
+}
+
+func TestDuplicateTextFromContextMenu(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.AddText(60, 10, "hello")
+	c.SetTextColor(0, 2)
+	c.SetHighlight(60, 10, 4)
+
+	m = click(m, tea.MouseButtonRight, 61, 10)
+	idx := menuLabelIndex(m.menuItems, "Duplicate Text")
+	if idx == -1 {
+		t.Fatal("expected a Duplicate Text item in the text context menu")
+	}
+	m.menuIndex = idx
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(model)
+
+	c = m.getCanvas()
+	if len(c.Texts()) != 2 {
+		t.Fatalf("expected a second text, got %d", len(c.Texts()))
+	}
+	dup := c.Texts()[1]
+	if dup.X != 60+dupOffsetX || dup.Y != 10+dupOffsetY || dup.GetText() != "hello" || dup.Color != 2 {
+		t.Fatalf("unexpected copy: %+v", dup)
+	}
+	if got := c.GetHighlight(60+dupOffsetX, 10+dupOffsetY); got != 4 {
+		t.Fatalf("expected the highlight copied, got %d", got)
+	}
+}
+
+func moveHighlightCase(t *testing.T, m model, hx, hy, dx, dy int, move func(model) model) {
+	t.Helper()
+	m.getCanvas().SetHighlight(hx, hy, 4)
+	m = move(m)
+
+	c := m.getCanvas()
+	if got := c.GetHighlight(hx+dx, hy+dy); got != 4 {
+		t.Fatalf("after move: want highlight at (%d,%d), got %d", hx+dx, hy+dy, got)
+	}
+	if got := c.GetHighlight(hx, hy); got != -1 {
+		t.Fatalf("after move: highlight left behind at (%d,%d), got %d", hx, hy, got)
+	}
+
+	m.undo()
+	c = m.getCanvas()
+	if got := c.GetHighlight(hx, hy); got != 4 {
+		t.Fatalf("after undo: want highlight back at (%d,%d), got %d", hx, hy, got)
+	}
+	if got := c.GetHighlight(hx+dx, hy+dy); got != -1 {
+		t.Fatalf("after undo: highlight stranded at (%d,%d), got %d", hx+dx, hy+dy, got)
+	}
+
+	m.redo()
+	c = m.getCanvas()
+	if got := c.GetHighlight(hx+dx, hy+dy); got != 4 {
+		t.Fatalf("after redo: want highlight at (%d,%d), got %d", hx+dx, hy+dy, got)
+	}
+	if got := c.GetHighlight(hx, hy); got != -1 {
+		t.Fatalf("after redo: highlight left behind at (%d,%d), got %d", hx, hy, got)
+	}
+}
+
+func keyMove(steps int) func(model) model {
+	return func(m model) model {
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+		m = out.(model)
+		for i := 0; i < steps; i++ {
+			out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+			m = out.(model)
+		}
+		out, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		return out.(model)
+	}
+}
+
+func TestMoveCarriesHighlights(t *testing.T) {
+	tests := []struct {
+		name           string
+		setup          func(model) model
+		hx, hy, dx, dy int
+		move           func(model) model
+	}{
+		{
+			name: "box drag",
+			hx:   5, hy: 3, dx: 10, dy: 5,
+			move: func(m model) model {
+				out, _ := m.Update(press(tea.MouseButtonLeft, 6, 4))
+				m = out.(model)
+				out, _ = m.Update(dragMotion(16, 9))
+				m = out.(model)
+				out, _ = m.Update(release(16, 9))
+				return out.(model)
+			},
+		},
+		{
+			name:  "text drag",
+			setup: func(m model) model { m.getCanvas().AddText(60, 10, "hello"); return m },
+			hx:    60, hy: 10, dx: 10, dy: 5,
+			move: func(m model) model {
+				out, _ := m.Update(press(tea.MouseButtonLeft, 61, 10))
+				m = out.(model)
+				out, _ = m.Update(dragMotion(71, 15))
+				m = out.(model)
+				out, _ = m.Update(release(71, 15))
+				return out.(model)
+			},
+		},
+		{
+			name:  "box keyboard move",
+			setup: func(m model) model { m.cursorX, m.cursorY = 6, 4; return m },
+			hx:    5, hy: 3, dx: 3, dy: 0,
+			move: keyMove(3),
+		},
+		{
+			name: "text keyboard move",
+			setup: func(m model) model {
+				m.getCanvas().AddText(60, 10, "hello")
+				m.cursorX, m.cursorY = 60, 10
+				return m
+			},
+			hx: 60, hy: 10, dx: 3, dy: 0,
+			move: keyMove(3),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel()
+			if tc.setup != nil {
+				m = tc.setup(m)
+			}
+			moveHighlightCase(t, m, tc.hx, tc.hy, tc.dx, tc.dy, tc.move)
+		})
+	}
+}
+
+func TestGroupMoveIsOneUndoStep(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.AddText(10, 8, "note")
+	c.SetHighlight(5, 3, 4)
+	c.SetHighlight(10, 8, 6)
+	b0 := c.Boxes()[0]
+	tx := c.Texts()[0]
+
+	m.selectionStartX, m.selectionStartY = 0, 0
+	m.mode = ModeMultiSelect
+	m.finalizeMultiSelect(30, 15)
+	if m.mode != ModeMove {
+		t.Fatalf("expected ModeMove after selecting an area, got %v", m.mode)
+	}
+	if len(m.selectedBoxes) != 1 || len(m.selectedTexts) != 1 {
+		t.Fatalf("expected box 0 and the text selected, got %v / %v", m.selectedBoxes, m.selectedTexts)
+	}
+
+	undosBefore := len(m.getCurrentBuffer().undoStack)
+	m.handleMultiSelectMove(4, 2)
+	m.commitMove()
+
+	if got := len(m.getCurrentBuffer().undoStack) - undosBefore; got != 1 {
+		t.Fatalf("a group move should record exactly one undo step, got %d", got)
+	}
+	c = m.getCanvas()
+	if c.Boxes()[0].X != b0.X+4 || c.Texts()[0].X != tx.X+4 {
+		t.Fatal("expected both objects moved")
+	}
+	if c.GetHighlight(9, 5) != 4 || c.GetHighlight(14, 10) != 6 {
+		t.Fatalf("highlights did not follow the group: %d %d", c.GetHighlight(9, 5), c.GetHighlight(14, 10))
+	}
+
+	m.undo()
+	c = m.getCanvas()
+	if c.Boxes()[0].X != b0.X || c.Boxes()[0].Y != b0.Y || c.Texts()[0].X != tx.X || c.Texts()[0].Y != tx.Y {
+		t.Fatal("one undo should restore every object's position")
+	}
+	if c.GetHighlight(5, 3) != 4 || c.GetHighlight(10, 8) != 6 {
+		t.Fatal("undo should bring the highlights back")
+	}
+	if c.GetHighlight(9, 5) != -1 || c.GetHighlight(14, 10) != -1 {
+		t.Fatal("undo should not strand highlights at the moved positions")
+	}
+
+	m.redo()
+	c = m.getCanvas()
+	if c.Boxes()[0].X != b0.X+4 || c.Texts()[0].X != tx.X+4 {
+		t.Fatal("redo should reapply the group move")
+	}
+	if c.GetHighlight(9, 5) != 4 || c.GetHighlight(14, 10) != 6 {
+		t.Fatal("redo should carry the highlights along")
+	}
+	if c.GetHighlight(5, 3) != -1 || c.GetHighlight(10, 8) != -1 {
+		t.Fatal("redo should not leave highlights at the original positions")
+	}
+}
+
+func TestGroupMoveRestoresConnections(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.AddConnection(0, 1)
+	before := c.SnapshotConnections()
+
+	m.selectionStartX, m.selectionStartY = 0, 0
+	m.mode = ModeMultiSelect
+	m.finalizeMultiSelect(80, 40)
+	m.handleMultiSelectMove(5, 3)
+	m.commitMove()
+
+	m.undo()
+	after := m.getCanvas().Connections()
+	for i, conn := range before {
+		if after[i].FromX != conn.FromX || after[i].FromY != conn.FromY ||
+			after[i].ToX != conn.ToX || after[i].ToY != conn.ToY {
+			t.Fatalf("connection %d not restored: %+v want %+v", i, after[i], conn)
+		}
+	}
+}
+
+func TestSelectAreaFromContextMenu(t *testing.T) {
+	m := newTestModel()
+	m = click(m, tea.MouseButtonRight, 90, 30)
+	idx := menuLabelIndex(m.menuItems, "Select Area")
+	if idx == -1 {
+		t.Fatal("expected a Select Area item in the context menu")
+	}
+	m.menuIndex = idx
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(model)
+
+	if m.mode != ModeMultiSelect {
+		t.Fatalf("expected ModeMultiSelect, got %v", m.mode)
+	}
+	if m.selectionStartX != CoordUnset || m.selectionStartY != CoordUnset {
+		t.Fatalf("expected no anchor until the user presses, got (%d,%d)", m.selectionStartX, m.selectionStartY)
+	}
+
+	out, _ = m.Update(release(90, 30))
+	m = out.(model)
+	if m.mode != ModeMultiSelect {
+		t.Fatalf("the menu click's release ended the selection early, mode=%v", m.mode)
+	}
+
+	out, _ = m.Update(motion(20, 12))
+	m = out.(model)
+	if m.cursorX != 20 || m.cursorY != 12 {
+		t.Fatalf("expected the cursor to follow the pointer, got (%d,%d)", m.cursorX, m.cursorY)
+	}
+	if m.selectionStartX != CoordUnset {
+		t.Fatal("moving the mouse should not anchor the selection")
+	}
+
+	out, _ = m.Update(press(tea.MouseButtonLeft, 3, 2))
+	m = out.(model)
+	if m.selectionStartX != 3 || m.selectionStartY != 2 {
+		t.Fatalf("expected the press to anchor at (3,2), got (%d,%d)", m.selectionStartX, m.selectionStartY)
+	}
+	out, _ = m.Update(dragMotion(30, 16))
+	m = out.(model)
+	out, _ = m.Update(release(30, 16))
+	m = out.(model)
+
+	if m.mode != ModeMove {
+		t.Fatalf("expected ModeMove after the drag, got %v", m.mode)
+	}
+	if len(m.selectedBoxes) != 1 || m.selectedBoxes[0] != 0 {
+		t.Fatalf("expected box 0 selected by the drag, got %v", m.selectedBoxes)
+	}
+}
+
+func TestExportVisualTXTIncludesNegativeCoordinates(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.MoveBox(0, -20, -10)
+	c.AddText(-18, -12, "offgrid")
+
+	path := t.TempDir() + "/out.txt"
+	if err := m.exportVisualTXT(path); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{"Alpha", "offgrid"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("expected %q in the export, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestExportPNGWithNegativeCoordinates(t *testing.T) {
+	m := newTestModel()
+	c := m.getCanvas()
+	c.MoveBox(0, -30, -15)
+
+	path := t.TempDir() + "/out.png"
+	if err := c.ExportToPNG(path, 120, 40, 0, 0); err != nil {
+		t.Fatalf("png export: %v", err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		t.Fatalf("expected a non-empty png, err=%v", err)
 	}
 }

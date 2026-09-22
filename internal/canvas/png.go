@@ -58,7 +58,6 @@ func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, pan
 	return dc.SavePNG(filename)
 }
 
-// pngColor maps a palette index to ink; anything unset draws black.
 func pngColor(index int) color.Color {
 	palette := []color.Color{
 		color.RGBA{128, 128, 128, 255}, color.RGBA{205, 0, 0, 255},

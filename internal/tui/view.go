@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// Inner colours reset the foreground only; \033[0m would punch a hole in the tint.
 const (
 	chromeBG    = "\033[48;5;236m"
 	chromeReset = "\033[0m"
@@ -14,7 +13,6 @@ const (
 	chromeFGOff = "\033[39m"
 )
 
-// Rows carrying their own escapes must arrive padded; len over-counts them.
 func chromeLine(s string, width int) string {
 	if pad := width - len([]rune(s)); pad > 0 {
 		s += strings.Repeat(" ", pad)
@@ -53,7 +51,6 @@ func (m *model) renderBufferBar(width int) string {
 			write(bufName)
 			bracket("]")
 		} else {
-			// Reserve the bracket columns so selecting does not shift the bar.
 			write(" " + bufName + " ")
 		}
 	}
@@ -129,7 +126,7 @@ func (m model) View() string {
 		renderHeight = 1
 	}
 
-	var previewFromX, previewFromY, previewToX, previewToY int = -1, -1, -1, -1
+	previewFromX, previewFromY, previewToX, previewToY := CoordUnset, CoordUnset, CoordUnset, CoordUnset
 	var previewWaypoints []point
 	if m.connectionFrom != -1 || m.connectionFromLine != -1 {
 		previewFromX = m.connectionFromX
@@ -176,9 +173,9 @@ func (m model) View() string {
 		editCursorPos = *cursor
 	}
 
-	selectionStartX, selectionStartY := -1, -1
-	selectionEndX, selectionEndY := -1, -1
-	if m.mode == ModeMultiSelect && m.selectionStartX >= 0 && m.selectionStartY >= 0 {
+	selectionStartX, selectionStartY := CoordUnset, CoordUnset
+	selectionEndX, selectionEndY := CoordUnset, CoordUnset
+	if m.mode == ModeMultiSelect && m.selectionStartX != CoordUnset && m.selectionStartY != CoordUnset {
 		selectionStartX = m.selectionStartX
 		selectionStartY = m.selectionStartY
 		selectionEndX = m.cursorX + panX
@@ -312,7 +309,11 @@ func (m model) View() string {
 			statusLine = "Mode: MOVE | hjkl/arrows=move, Enter=finish, Esc=cancel"
 		}
 	case ModeMultiSelect:
-		statusLine = "Mode: MULTI-SELECT | hjkl/arrows=draw selection, Enter=select and move, Esc=cancel"
+		if m.selectionStartX == CoordUnset || m.selectionStartY == CoordUnset {
+			statusLine = "Mode: MULTI-SELECT | drag to select, or Enter to start a selection at the cursor, Esc=cancel"
+		} else {
+			statusLine = "Mode: MULTI-SELECT | hjkl/arrows=draw selection, Enter=select and move, Esc=cancel"
+		}
 	case ModeFileInput:
 		var opStr string
 		switch m.fileOp {
@@ -624,98 +625,141 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 	}
 }
 
-func (m model) renderStartupMenu() string {
-	logo := []string{
-		"    ___ __                      ",
-		"  .'  _|  |.-----.----.--------.",
-		"  |   _|  ||  -__|   _|        |",
-		"  |__| |__||_____|__| |__|__|__|",
-	}
+type startupLayout struct {
+	logo      []string
+	logoInk   map[point]string
+	logoBase  string
+	menuItems []string
+	logoW     int
+	contentW  int
+	boxW      int
+	boxH      int
+	boxX      int
+	boxY      int
+}
 
-	menuItems := []string{
-		"  n: New",
-		"  o: Open",
+func (l startupLayout) logoOrigin() (int, int) {
+	return l.boxX + 1 + (l.contentW-l.logoW)/2, l.boxY + 2
+}
+
+func (m model) startupLayout() startupLayout {
+	l := startupLayout{
+		logo: []string{
+			"    ___ __                      ",
+			"  .'  _|  |.-----.----.--------.",
+			"  |   _|  ||  -__|   _|        |",
+			"  |__| |__||_____|__| |__|__|__|",
+		},
+		menuItems: []string{
+			"  n: New",
+			"  o: Open",
+		},
+		logoBase: logoGreen,
+	}
+	switch m.effect {
+	case effectSnow:
+		l.logo, l.logoInk = christmasLogo, christmasLogoInk
+	case effectBlood:
+		l.logo, l.logoInk = halloweenLogo, halloweenLogoInk
+	case effectFireworks:
+		l.logo, l.logoInk = newYearLogo, newYearLogoInk
+	case effectFireworksUSA:
+		l.logo, l.logoInk, l.logoBase = julyFourthLogo, julyFourthLogoInk, ansiBlue
 	}
 	if m.lastFile != "" {
 		name := chartDisplayName(filepath.Base(m.lastFile))
 		if r := []rune(name); len(r) > 24 {
 			name = string(r[:23]) + "\u2026"
 		}
-		menuItems = append(menuItems, "  r: Resume "+name)
+		l.menuItems = append(l.menuItems, "  r: Resume "+name)
 	}
-	menuItems = append(menuItems, "  q: Quit")
+	l.menuItems = append(l.menuItems, "  q: Quit")
 
-	logoWidth := len(logo[0])
+	l.logoW = len(l.logo[0])
 	menuWidth := 0
-	for _, item := range menuItems {
+	for _, item := range l.menuItems {
 		if w := len([]rune(item)); w > menuWidth {
 			menuWidth = w
 		}
 	}
+	l.contentW = max(l.logoW, menuWidth)
+	l.boxW = l.contentW + 4
+	l.boxH = len(l.logo) + len(l.menuItems) + 6
+	l.boxX = m.width/2 - l.boxW/2
+	l.boxY = m.height/2 - l.boxH/2
+	return l
+}
 
-	contentWidth := logoWidth
-	if menuWidth > contentWidth {
-		contentWidth = menuWidth
-	}
-
-	boxWidth := contentWidth + 4
-	boxHeight := len(logo) + len(menuItems) + 6
-
-	centerX := m.width/2 - boxWidth/2
-	centerY := m.height/2 - boxHeight/2
+func (m model) renderStartupMenu() string {
+	l := m.startupLayout()
+	logo, menuItems := l.logo, l.menuItems
+	contentWidth, logoWidth := l.contentW, l.logoW
+	boxWidth, boxHeight := l.boxW, l.boxH
+	centerX, centerY := l.boxX, l.boxY
+	particles := m.particleOverlay()
+	bleeds := m.effect == effectBlood
 
 	var result strings.Builder
 
 	for y := 0; y < m.height; y++ {
 		for x := 0; x < m.width; x++ {
+			cell := " "
 			if y < centerY || y >= centerY+boxHeight || x < centerX || x >= centerX+boxWidth {
-				result.WriteString(" ")
+				if glyph, ok := particles[point{X: x, Y: y}]; ok {
+					cell = glyph
+				}
 			} else {
 				relY := y - centerY
 				relX := x - centerX
+				inside := false
 
 				if relY == 0 {
 					if relX == 0 {
-						result.WriteString("┌")
+						cell = "┌"
 					} else if relX == boxWidth-1 {
-						result.WriteString("┐")
+						cell = "┐"
 					} else {
-						result.WriteString("─")
+						cell = "─"
 					}
 				} else if relY == boxHeight-1 {
 					if relX == 0 {
-						result.WriteString("└")
+						cell = "└"
 					} else if relX == boxWidth-1 {
-						result.WriteString("┘")
+						cell = "┘"
 					} else {
-						result.WriteString("─")
+						cell = "─"
 					}
 				} else if relX == 0 || relX == boxWidth-1 {
-					result.WriteString("│")
-				} else if relY == 1 {
-					result.WriteString(" ")
+					cell = "│"
 				} else if relY >= 2 && relY < 2+len(logo) {
 					logoLineIdx := relY - 2
 					logoX := relX - 1 - (contentWidth-logoWidth)/2
 					if logoX >= 0 && logoX < len(logo[logoLineIdx]) {
-						result.WriteString("\033[32m" + string(logo[logoLineIdx][logoX]) + "\033[0m")
-					} else {
-						result.WriteString(" ")
+						ink := l.logoBase
+						if c, ok := l.logoInk[point{X: logoX, Y: logoLineIdx}]; ok {
+							ink = c
+						}
+						cell = ink + string(logo[logoLineIdx][logoX]) + ansiReset
 					}
-				} else if relY == 2+len(logo) || relY == 3+len(logo) {
-					result.WriteString(" ")
 				} else if relY >= 4+len(logo) && relY < 4+len(logo)+len(menuItems) {
 					item := []rune(menuItems[relY-4-len(logo)])
 					menuX := relX - 1
 					if menuX >= 0 && menuX < len(item) {
-						result.WriteString(string(item[menuX]))
+						cell = string(item[menuX])
 					} else {
-						result.WriteString(" ")
+						inside = true
 					}
 				} else {
-					result.WriteString(" ")
+					inside = true
+				}
+
+				if inside && bleeds {
+					if glyph, ok := particles[point{X: x, Y: y}]; ok {
+						cell = glyph
+					}
 				}
 			}
+			result.WriteString(cell)
 		}
 		if y < m.height-1 {
 			result.WriteString("\n")
@@ -725,8 +769,6 @@ func (m model) renderStartupMenu() string {
 	return result.String()
 }
 
-// Fixed strings in the open dialog. They set the box's minimum width, so it
-// keeps one size as the list is filtered.
 const (
 	fileOpenHint    = "  Enter: Open  d: Delete  ?: Search  Esc: Cancel"
 	fileSearchHint  = "  Enter: Open  Esc: Exit search"
@@ -736,8 +778,6 @@ const (
 	fileSearchLabel = "  Search: "
 )
 
-// fileMenuTitle is the open dialog's heading. The count doubles as the scroll
-// cue: it says how long the list is, and how much of it a filter left.
 func (m model) fileMenuTitle() string {
 	n := len(m.allFiles)
 	if n == 0 {
@@ -749,7 +789,6 @@ func (m model) fileMenuTitle() string {
 	return fmt.Sprintf("Select a saved chart (%d):", n)
 }
 
-// fileConfirmLine is the delete prompt, or "" when nothing is being confirmed.
 func (m model) fileConfirmLine() string {
 	if !m.showingDeleteConfirm || m.confirmFileIndex < 0 || m.confirmFileIndex >= len(m.fileList) {
 		return ""
@@ -757,15 +796,9 @@ func (m model) fileConfirmLine() string {
 	return fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartDisplayName(m.fileList[m.confirmFileIndex]))
 }
 
-// fileMenuBounds is the open dialog's screen rectangle plus its list-row
-// count. The renderer and the mouse hit-test both read the geometry from here
-// so they cannot disagree about where a row sits.
 func (m model) fileMenuBounds() (x, y, w, rows int) {
 	rows = m.fileListRows()
 
-	// The width comes from the unfiltered chart list and reserves the title's
-	// count at its widest, so starting a search or narrowing it never resizes
-	// the box.
 	contentWidth := len([]rune(m.fileMenuTitle()))
 	if n := len(m.allFiles); n > 0 {
 		contentWidth = len(fmt.Sprintf("Select a saved chart (%d of %d):", n, n))
@@ -816,15 +849,12 @@ func (m model) renderFileMenu() string {
 	}
 
 	if m.fileSearch {
-		// Show the tail of a filter too long for the box rather than widen it.
 		filter := []rune(m.fileFilter)
 		if fits := contentWidth - len(fileSearchLabel) - 1; len(filter) > fits && fits > 0 {
 			filter = filter[len(filter)-fits:]
 		}
 		menuItems = append(menuItems, fileSearchLabel+string(filter)+"\u2588")
 	} else {
-		// The search line's row stays reserved so opening search never
-		// resizes the box.
 		menuItems = append(menuItems, "")
 	}
 

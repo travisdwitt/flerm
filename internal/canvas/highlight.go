@@ -49,12 +49,11 @@ func (c *Canvas) GetBoxBorderCells(boxID int) []Point {
 	return cells
 }
 
-// titleDividerY reports the row of the rule under a box title, or -1 if untitled.
-func titleDividerY(box Box) int {
+func titleDividerY(box Box) (int, bool) {
 	if box.Title == "" {
-		return -1
+		return 0, false
 	}
-	return box.Y + 1 + len(strings.Split(box.Title, "\n"))
+	return box.Y + 1 + len(strings.Split(box.Title, "\n")), true
 }
 
 func (c *Canvas) GetBoxTitleDividerCells(boxID int) []Point {
@@ -62,8 +61,8 @@ func (c *Canvas) GetBoxTitleDividerCells(boxID int) []Point {
 	if !ok {
 		return nil
 	}
-	dividerY := titleDividerY(box)
-	if dividerY < 0 {
+	dividerY, ok := titleDividerY(box)
+	if !ok {
 		return nil
 	}
 	cells := make([]Point, 0, box.Width)
@@ -78,8 +77,8 @@ func (c *Canvas) GetBoxTitleBarCells(boxID int) []Point {
 	if !ok {
 		return nil
 	}
-	dividerY := titleDividerY(box)
-	if dividerY < 0 {
+	dividerY, ok := titleDividerY(box)
+	if !ok {
 		return []Point{}
 	}
 	cells := make([]Point, 0)
@@ -95,8 +94,6 @@ func (c *Canvas) GetBoxTitleBarCells(boxID int) []Point {
 	return cells
 }
 
-// lineCells returns the cells covered by lines laid out starting at (x, y),
-// clipped to maxLen columns (a negative maxLen means unclipped).
 func lineCells(lines []string, x, y, maxLen int) []Point {
 	cells := make([]Point, 0)
 	for i, line := range lines {
@@ -156,8 +153,6 @@ func (c *Canvas) GetHighlightsForText(textID int) []HighlightCell {
 	return c.highlightsForCells(c.GetTextCells(textID))
 }
 
-// GetBoxContentHighlights maps highlighted cells inside a box back to character
-// offsets in its text, so a tooltip can re-colour the same characters.
 func (c *Canvas) GetBoxContentHighlights(boxID int) map[int]int {
 	result := make(map[int]int)
 	box, ok := c.box(boxID)

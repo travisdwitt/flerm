@@ -1,5 +1,7 @@
 package canvas
 
+import "math"
+
 type BorderStyle int
 
 const (
@@ -10,8 +12,6 @@ const (
 )
 
 const (
-	// boxInsetX is the columns between a box's left edge and its text: the
-	// border plus one blank padding column. Same on the right.
 	boxInsetX        = 2
 	minBoxWidth      = 8
 	minBoxHeight     = 3
@@ -22,3 +22,5 @@ const (
 	ColorMenuSelect  = 102
 	ColorMenuBorder  = 103
 )
+
+const CoordUnset = math.MinInt32

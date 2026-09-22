@@ -147,8 +147,8 @@ func (m model) handleMultiSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "escape":
 		m.mode = ModeNormal
-		m.selectionStartX = -1
-		m.selectionStartY = -1
+		m.selectionStartX = CoordUnset
+		m.selectionStartY = CoordUnset
 		m.selectedBoxes = []int{}
 		m.selectedTexts = []int{}
 		return m, nil
@@ -162,6 +162,10 @@ func (m model) handleMultiSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
 	case "enter":
 		panX, panY := m.getPanOffset()
+		if m.selectionStartX == CoordUnset || m.selectionStartY == CoordUnset {
+			m.selectionStartX, m.selectionStartY = m.cursorX+panX, m.cursorY+panY
+			return m, nil
+		}
 		m.finalizeMultiSelect(m.cursorX+panX, m.cursorY+panY)
 		return m, nil
 	default:
@@ -519,9 +523,6 @@ func (m model) handleFileInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleFileSearchKey handles keys while the open dialog's fuzzy search is
-// active: typed runes filter the list, up/down move within the matches, Enter
-// opens the highlighted chart, Esc leaves search with the full list restored.
 func (m model) handleFileSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEscape:

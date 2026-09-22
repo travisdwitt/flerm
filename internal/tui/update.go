@@ -5,7 +5,7 @@ import (
 )
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.effectTick()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -14,11 +14,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
+	case effectTickMsg:
+		if !m.inStartMenuFlow() {
+			m.effect = effectNone
+			return m, nil
+		}
+		m.advanceEffect()
+		return m, m.effectTick()
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ensureCursorInBounds()
-		// The open dialog's list window is sized from the terminal height.
 		m.clampFileScroll()
 		return m, nil
 
@@ -37,7 +44,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgup":
 				m.helpScroll = max(m.helpScroll-m.helpPageHeight(), 0)
 			}
-			// Anything else is swallowed: only Esc or q closes the help screen.
 			return m, nil
 		}
 

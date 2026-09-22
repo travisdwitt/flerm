@@ -31,6 +31,8 @@ const (
 	MenuEditTitle
 	MenuSetBorderStyle
 	MenuSetColor
+	MenuDuplicate
+	MenuMultiSelect
 	MenuSubmenu
 )
 
@@ -75,4 +77,6 @@ const (
 	ActionChangeBorderStyle
 	ActionEditTitle
 	ActionSetColor
+	ActionDuplicate
+	ActionGroupMove
 )

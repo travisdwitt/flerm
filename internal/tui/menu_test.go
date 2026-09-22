@@ -82,8 +82,6 @@ func TestMenuEditTitleEntersMode(t *testing.T) {
 	}
 }
 
-// TestFileSearchAndScroll covers the open dialog's fuzzy search and its
-// scroll window, sized here to 10 rows by the terminal height.
 func TestFileSearchAndScroll(t *testing.T) {
 	m := newTestModel()
 	m.mode = ModeFileInput
@@ -96,7 +94,6 @@ func TestFileSearchAndScroll(t *testing.T) {
 	m.selectedFileIndex = 0
 	m.applyFileFilter()
 
-	// Scroll window: moving past item 10 scrolls, and the view shows 10 rows.
 	for i := 0; i < 10; i++ {
 		m.moveFileSelection(1)
 	}
@@ -106,12 +103,11 @@ func TestFileSearchAndScroll(t *testing.T) {
 	if !strings.Contains(m.View(), "> mu") || strings.Contains(m.View(), "alpha") {
 		t.Fatal("view should show the scrolled window, not the first item")
 	}
-	m.moveFileSelection(-1) // back inside the window: no further scrolling
+	m.moveFileSelection(-1)
 	if m.fileScroll != 1 {
 		t.Fatalf("expected scroll to stay at 1, got %d", m.fileScroll)
 	}
 
-	// '?' enters search; typed runes fuzzy-filter; Enter opens the match.
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	m = out.(model)
 	if !m.fileSearch {
@@ -128,7 +124,6 @@ func TestFileSearchAndScroll(t *testing.T) {
 		t.Fatalf("expected filter to reset scroll and select gamma, got scroll %d name %q", m.fileScroll, m.filename)
 	}
 
-	// Esc leaves search with the full list back.
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	m = out.(model)
 	if m.fileSearch || m.mode != ModeFileInput || len(m.fileList) != 12 {
@@ -136,8 +131,6 @@ func TestFileSearchAndScroll(t *testing.T) {
 	}
 }
 
-// TestResumeLastChart covers the start menu's resume option: what gets
-// remembered, what the menu offers, and the flermrc toggle.
 func TestResumeLastChart(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -214,8 +207,6 @@ func TestBufferBarDoesNotShiftOnSelect(t *testing.T) {
 	}
 }
 
-// TestSaveExtensionAndLegacyOpen covers the file extensions: new charts are
-// written as .flerm, while charts left over as .sav still open by bare name.
 func TestSaveExtensionAndLegacyOpen(t *testing.T) {
 	dir := t.TempDir()
 	legacy := filepath.Join(dir, "old-chart.sav")
@@ -239,7 +230,6 @@ func TestSaveExtensionAndLegacyOpen(t *testing.T) {
 		t.Fatalf("expected new_chart.flerm, got %q", got)
 	}
 
-	// The open dialog lists both extensions, stripped to the same display name.
 	m.mode = ModeFileInput
 	m.fileOp = FileOpOpen
 	m.allFiles = nil
@@ -248,7 +238,6 @@ func TestSaveExtensionAndLegacyOpen(t *testing.T) {
 		t.Fatalf("expected both charts listed, got %v", m.allFiles)
 	}
 
-	// A typed name without an extension still finds the legacy chart.
 	m.filename = "old-chart"
 	m.selectedFileIndex = -1
 	m.fileList = nil
@@ -265,9 +254,6 @@ func TestSaveExtensionAndLegacyOpen(t *testing.T) {
 	}
 }
 
-// TestFileMenuMouse covers the open dialog's mouse handling: the wheel
-// scrolls, a click picks a row, a second click on it opens, and dragging the
-// scrollbar scrolls without disturbing the highlight.
 func TestFileMenuMouse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
@@ -284,16 +270,15 @@ func TestFileMenuMouse(t *testing.T) {
 	m.config = &Config{SaveDirectory: dir}
 	m.mode = ModeFileInput
 	m.fileOp = FileOpOpen
-	m.width, m.height = 96, 18 // a 10-row list window for 12 charts
+	m.width, m.height = 96, 18
 	m.scanTxtFiles()
 
 	x, y, w, rows := m.fileMenuBounds()
 	if len(m.fileList) != 12 || rows != 10 {
 		t.Fatalf("expected 12 charts in a 10-row window, got %d in %d", len(m.fileList), rows)
 	}
-	listY := y + 3 // first list row, matching renderFileMenu's chrome
+	listY := y + 3
 
-	// The wheel scrolls the window and leaves the highlight where it was.
 	out, _ := m.Update(press(tea.MouseButtonWheelDown, x+2, listY))
 	m = out.(model)
 	if m.fileScroll != 2 || m.selectedFileIndex != 0 {
@@ -305,14 +290,12 @@ func TestFileMenuMouse(t *testing.T) {
 		t.Fatalf("expected wheel up to scroll back to 0, got %d", m.fileScroll)
 	}
 
-	// A click picks the row under the pointer. Sorted, index 4 is kappa.
 	out, _ = m.Update(press(tea.MouseButtonLeft, x+3, listY+4))
 	m = out.(model)
 	if m.selectedFileIndex != 4 || m.filename != "kappa" {
 		t.Fatalf("expected the click to select kappa at 4, got %d/%q", m.selectedFileIndex, m.filename)
 	}
 
-	// Dragging the scrollbar to the bottom scrolls without reselecting.
 	out, _ = m.Update(press(tea.MouseButtonLeft, x+w-2, listY+rows-1))
 	m = out.(model)
 	if !m.draggingFileScroll || m.fileScroll != m.fileScrollMax() {
@@ -330,7 +313,6 @@ func TestFileMenuMouse(t *testing.T) {
 			m.draggingFileScroll, m.selectedFileIndex)
 	}
 
-	// Clicking the already-selected row opens it.
 	out, _ = m.Update(press(tea.MouseButtonLeft, x+3, listY+4))
 	m = out.(model)
 	if m.mode != ModeNormal {

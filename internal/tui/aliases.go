@@ -18,6 +18,7 @@ type (
 )
 
 const (
+	CoordUnset       = cv.CoordUnset
 	numColors        = cv.NumColors
 	colorMouseSelect = cv.ColorMouseSelect
 	colorMenuSelect  = cv.ColorMenuSelect

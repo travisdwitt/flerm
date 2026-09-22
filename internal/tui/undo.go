@@ -1,6 +1,5 @@
 package tui
 
-// A negative color erases; SetHighlight would silently ignore it.
 func (m *model) applyHighlight(x, y, color int) {
 	if color < 0 {
 		m.getCanvas().ClearHighlight(x, y)
@@ -52,23 +51,16 @@ func (m *model) undo() {
 	case ActionMoveBox:
 		data := action.Inverse.(OriginalBoxState)
 		moveData := action.Data.(MoveBoxData)
-
-		for _, highlight := range data.Highlights {
-			m.getCanvas().ClearHighlight(highlight.X+moveData.DeltaX, highlight.Y+moveData.DeltaY)
-		}
-
 		m.getCanvas().SetBoxPositionOnly(data.ID, data.X, data.Y)
-
 		if len(data.Connections) > 0 {
 			m.getCanvas().RestoreConnections(data.Connections)
 		}
-
-		for _, highlight := range data.Highlights {
-			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
-		}
+		m.moveRecordedHighlights(data.Highlights, moveData.DeltaX, moveData.DeltaY, 0, 0)
 	case ActionMoveText:
 		data := action.Inverse.(OriginalTextState)
+		moveData := action.Data.(MoveTextData)
 		m.getCanvas().SetTextPosition(data.ID, data.X, data.Y)
+		m.moveRecordedHighlights(data.Highlights, moveData.DeltaX, moveData.DeltaY, 0, 0)
 	case ActionAddConnection:
 		data := action.Inverse.(AddConnectionData)
 		m.getCanvas().RemoveSpecificConnection(data.Connection)
@@ -97,6 +89,16 @@ func (m *model) undo() {
 	case ActionSetColor:
 		data := action.Inverse.(ColorData)
 		m.applyObjectColor(data.Kind, data.ID, data.OldColor)
+	case ActionGroupMove:
+		data := action.Inverse.(GroupMoveData)
+		m.applyGroupMoveState(data.After, data.Before)
+	case ActionDuplicate:
+		data := action.Inverse.(DuplicateData)
+		if data.IsText {
+			m.getCanvas().DeleteText(data.NewID)
+		} else {
+			m.getCanvas().DeleteBox(data.NewID)
+		}
 	}
 
 	buf.redoStack = append(buf.redoStack, action)
@@ -145,9 +147,11 @@ func (m *model) redo() {
 	case ActionMoveBox:
 		data := action.Data.(MoveBoxData)
 		m.getCanvas().MoveBox(data.ID, data.DeltaX, data.DeltaY)
+		m.moveRecordedHighlights(action.Inverse.(OriginalBoxState).Highlights, 0, 0, data.DeltaX, data.DeltaY)
 	case ActionMoveText:
 		data := action.Data.(MoveTextData)
 		m.getCanvas().MoveText(data.ID, data.DeltaX, data.DeltaY)
+		m.moveRecordedHighlights(action.Inverse.(OriginalTextState).Highlights, 0, 0, data.DeltaX, data.DeltaY)
 	case ActionAddConnection:
 		data := action.Data.(AddConnectionData)
 		m.getCanvas().RestoreConnection(data.Connection)
@@ -176,6 +180,16 @@ func (m *model) redo() {
 	case ActionSetColor:
 		data := action.Data.(ColorData)
 		m.applyObjectColor(data.Kind, data.ID, data.NewColor)
+	case ActionGroupMove:
+		data := action.Data.(GroupMoveData)
+		m.applyGroupMoveState(data.Before, data.After)
+	case ActionDuplicate:
+		data := action.Data.(DuplicateData)
+		if data.IsText {
+			m.getCanvas().DuplicateText(data.SrcID, data.DX, data.DY)
+		} else {
+			m.getCanvas().DuplicateBox(data.SrcID, data.DX, data.DY)
+		}
 	}
 
 	buf.undoStack = append(buf.undoStack, action)

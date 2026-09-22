@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	cv "flerm/internal/canvas"
 	"flerm/internal/config"
@@ -13,10 +14,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func Run(noResume bool) error {
+func Run(noResume bool, dateOverride string) error {
 	m := initialModel()
 	if noResume {
 		m.lastFile = ""
+	}
+	if dateOverride != "" {
+		m.effect = effectForOverride(dateOverride)
+	} else {
+		m.effect = effectForDate(time.Now())
 	}
 	p := tea.NewProgram(
 		m,
@@ -62,8 +68,8 @@ func initialModel() model {
 		config:                 cfg,
 		highlightMode:          false,
 		selectedColor:          0,
-		selectionStartX:        -1,
-		selectionStartY:        -1,
+		selectionStartX:        CoordUnset,
+		selectionStartY:        CoordUnset,
 		selectedBoxes:          []int{},
 		selectedTexts:          []int{},
 		selectedConnections:    []int{},
@@ -100,8 +106,6 @@ func (m *model) ensureCursorInBounds() {
 	}
 }
 
-// replaceBuffer0 makes the given chart the only chart being edited, used by
-// both the start menu and opening a chart from the start menu.
 func (m *model) replaceBuffer0(canvas *Canvas, filename string, panX, panY int) {
 	m.buffers[0] = Buffer{
 		canvas:    canvas,
@@ -114,8 +118,6 @@ func (m *model) replaceBuffer0(canvas *Canvas, filename string, panX, panY int) 
 	m.currentBufferIndex = 0
 }
 
-// rememberChart records a chart as the most recently opened one, for the start
-// menu's resume option.
 func (m *model) rememberChart(path string) {
 	if m.config == nil {
 		return
@@ -124,9 +126,6 @@ func (m *model) rememberChart(path string) {
 	m.lastFile = path
 }
 
-// fileListRows is how many saved charts the open dialog shows at once: as many
-// as the terminal fits, since the dialog draws 6 rows of chrome around the
-// list and wants a row of margin above and below it.
 func (m model) fileListRows() int {
 	rows := m.height - 8
 	if rows > len(m.allFiles) {
@@ -138,13 +137,10 @@ func (m model) fileListRows() int {
 	return rows
 }
 
-// fileScrollMax is the largest fileScroll that still fills the list window.
 func (m model) fileScrollMax() int {
 	return max(len(m.fileList)-m.fileListRows(), 0)
 }
 
-// fileThumbLen is the scrollbar thumb's height in list rows, or 0 when the
-// whole list fits and no scrollbar is drawn.
 func (m model) fileThumbLen() int {
 	rows := m.fileListRows()
 	if len(m.fileList) <= rows {
@@ -153,8 +149,6 @@ func (m model) fileThumbLen() int {
 	return max(rows*rows/len(m.fileList), 1)
 }
 
-// fileScrollThumb returns the first and one-past-last list row the scrollbar
-// thumb covers, or 0, 0 when there is no scrollbar.
 func (m model) fileScrollThumb() (int, int) {
 	length := m.fileThumbLen()
 	if length == 0 {
@@ -165,8 +159,6 @@ func (m model) fileScrollThumb() (int, int) {
 	return start, start + length
 }
 
-// dragFileScrollTo scrolls so the scrollbar thumb starts at list row row, the
-// inverse of fileScrollThumb.
 func (m *model) dragFileScrollTo(row int) {
 	length := m.fileThumbLen()
 	if length == 0 {
@@ -177,34 +169,22 @@ func (m *model) dragFileScrollTo(row int) {
 	m.scrollFileList(0)
 }
 
-// scrollFileList scrolls the window by delta rows without moving the
-// highlight, the way a wheel or a scrollbar drag is expected to behave.
 func (m *model) scrollFileList(delta int) {
 	m.fileScroll = min(max(m.fileScroll+delta, 0), m.fileScrollMax())
 }
 
-// saveExt is the extension new charts are saved with; chartExts are all the
-// extensions recognized when opening, so charts written by older versions
-// under .sav keep working.
 const saveExt = ".flerm"
 
 var chartExts = []string{saveExt, ".sav"}
 
-// hasChartExt reports whether file already carries a recognized chart
-// extension.
 func hasChartExt(file string) bool {
 	return slices.Contains(chartExts, strings.ToLower(filepath.Ext(file)))
 }
 
-// chartDisplayName strips the extension used for saved charts.
 func chartDisplayName(file string) string {
 	return strings.TrimSuffix(file, filepath.Ext(file))
 }
 
-// resolveChartPath finds the chart a typed name refers to, looking in the
-// configured save directory before the working directory and trying each
-// recognized extension when the name carries none. It returns "" if no such
-// chart exists.
 func (m *model) resolveChartPath(name string) string {
 	names := []string{name}
 	if !hasChartExt(name) {
@@ -227,10 +207,6 @@ func (m *model) resolveChartPath(name string) string {
 	return ""
 }
 
-// fuzzyMatch reports whether pattern's runes appear in order (not necessarily
-// adjacent) in s, case-insensitively.
-// ponytail: subsequence filter only, keeps the alphabetical order; add
-// relevance scoring if picking from many similar names gets annoying.
 func fuzzyMatch(s, pattern string) bool {
 	want := []rune(strings.ToLower(pattern))
 	i := 0
@@ -242,8 +218,6 @@ func fuzzyMatch(s, pattern string) bool {
 	return i == len(want)
 }
 
-// applyFileFilter rebuilds the displayed chart list from allFiles and the
-// current fuzzy filter, keeping the selection and scroll window valid.
 func (m *model) applyFileFilter() {
 	if m.fileFilter == "" {
 		m.fileList = m.allFiles
@@ -267,8 +241,6 @@ func (m *model) applyFileFilter() {
 	m.clampFileScroll()
 }
 
-// fileSelectionCurrent reports whether the typed filename still matches the
-// highlighted entry, i.e. the user has not started typing a name of their own.
 func (m *model) fileSelectionCurrent() bool {
 	if m.filename == "" {
 		return true
@@ -279,16 +251,12 @@ func (m *model) fileSelectionCurrent() bool {
 	return m.filename == chartDisplayName(m.fileList[m.selectedFileIndex])
 }
 
-// refilterFromTop re-applies the fuzzy filter and highlights the first match,
-// the way a search prompt is expected to behave as you type.
 func (m *model) refilterFromTop() {
 	m.selectedFileIndex = 0
 	m.fileScroll = 0
 	m.applyFileFilter()
 }
 
-// selectFileIndex highlights idx, keeping the typed filename and the scroll
-// window in sync. Both the arrow keys and a mouse click land here.
 func (m *model) selectFileIndex(idx int) {
 	if idx < 0 || idx >= len(m.fileList) {
 		return
@@ -298,7 +266,6 @@ func (m *model) selectFileIndex(idx int) {
 	m.clampFileScroll()
 }
 
-// moveFileSelection moves the highlight by delta, wrapping at both ends.
 func (m *model) moveFileSelection(delta int) {
 	if len(m.fileList) == 0 {
 		return
@@ -316,7 +283,6 @@ func (m *model) moveFileSelection(delta int) {
 	m.selectFileIndex(idx)
 }
 
-// clampFileScroll scrolls the window just far enough to show the selection.
 func (m *model) clampFileScroll() {
 	rows := m.fileListRows()
 	if m.selectedFileIndex >= 0 {

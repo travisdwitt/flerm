@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// Golden-file rendering harness. Regenerate with:
-//
-//	go test ./internal/tui -run TestSnapshots -update
-//
-// The .txt files under testdata/ are the app's actual screen output with ANSI
-// stripped, so a visual change to any view shows up as a reviewable diff.
-
 var updateSnapshots = flag.Bool("update", false, "rewrite testdata snapshots")
 
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;?]*[a-zA-Z]")
@@ -41,8 +34,6 @@ func snapshot(t *testing.T, name string, m model) {
 	}
 }
 
-// chartModel builds a representative flowchart: styled boxes, a titled box,
-// arrowed connections, a free text label, and a highlight.
 func chartModel(w, h int) model {
 	m := initialModel()
 	m.mode = ModeNormal
@@ -85,7 +76,7 @@ func TestSnapshots(t *testing.T) {
 	start := initialModel()
 	start.mode = ModeStartup
 	start.width, start.height = 96, 30
-	start.lastFile = "" // whatever this machine last opened must not leak in
+	start.lastFile = ""
 	snapshot(t, "startup", start)
 
 	resume := start
@@ -98,7 +89,6 @@ func TestSnapshots(t *testing.T) {
 	save.filename = "quarterly-plan"
 	snapshot(t, "dialog_save", save)
 
-	// Height 18 leaves a 10-row list window, so the list still scrolls.
 	openDlg := chartModel(96, 18)
 	openDlg.mode = ModeFileInput
 	openDlg.fileOp = FileOpOpen
@@ -126,8 +116,6 @@ func TestSnapshots(t *testing.T) {
 	snapshot(t, "message_error", errm)
 }
 
-// TestViewNeverPanics is the cheap guard: every mode must render at every
-// plausible terminal size, including degenerate ones.
 func TestViewNeverPanics(t *testing.T) {
 	sizes := [][2]int{{0, 0}, {1, 1}, {8, 3}, {20, 6}, {40, 10}, {80, 24}, {300, 100}}
 	modes := []Mode{ModeStartup, ModeNormal, ModeEditing, ModeTextInput, ModeResize,

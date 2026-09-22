@@ -3,11 +3,12 @@ package canvas
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func renderColorMap(c *Canvas, w, h int) [][]int {
-	rr := c.RenderRaw(w, h, -1, -1, -1, nil, -1, -1, 0, 0, -1, -1, false, -1, -1, 0, "", -1, -1, -1, -1, -1, -1, false, -1, -1)
+	rr := c.RenderRaw(w, h, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, 0, 0, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
 	return rr.ColorMap
 }
 
@@ -97,4 +98,73 @@ func TestLoadOldFileWithoutColorSections(t *testing.T) {
 	if len(c.texts) != 1 || c.texts[0].Color != -1 {
 		t.Fatalf("expected 1 text with color -1")
 	}
+}
+
+func TestNegativeCoordinatesSurviveMoveAndRoundTrip(t *testing.T) {
+	c := NewCanvas()
+	c.AddBox(3, 2, "Alpha")
+	c.AddText(4, 6, "note")
+	c.SetHighlight(3, 2, 4)
+
+	c.MoveBox(0, -10, -5)
+	if got := c.Boxes()[0]; got.X != -7 || got.Y != -3 {
+		t.Fatalf("expected the box at (-7,-3), got (%d,%d)", got.X, got.Y)
+	}
+	c.MoveText(0, -9, -8)
+	if got := c.Texts()[0]; got.X != -5 || got.Y != -2 {
+		t.Fatalf("expected the text at (-5,-2), got (%d,%d)", got.X, got.Y)
+	}
+	c.SetHighlight(-7, -3, 4)
+	if c.GetHighlight(-7, -3) != 4 {
+		t.Fatal("expected a highlight to be settable at a negative cell")
+	}
+
+	minX, minY, maxX, maxY := c.GetFullBounds()
+	if minX != -7 || minY != -3 {
+		t.Fatalf("bounds should reach into negative space, got (%d,%d)-(%d,%d)", minX, minY, maxX, maxY)
+	}
+
+	path := t.TempDir() + "/neg.txt"
+	if err := c.SaveToFileWithPan(path, -12, -9); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded := NewCanvas()
+	panX, panY, err := loaded.LoadFromFileWithPan(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if panX != -12 || panY != -9 {
+		t.Fatalf("expected the negative pan restored, got (%d,%d)", panX, panY)
+	}
+	if got := loaded.Boxes()[0]; got.X != -7 || got.Y != -3 {
+		t.Fatalf("box did not round-trip, got (%d,%d)", got.X, got.Y)
+	}
+	if got := loaded.Texts()[0]; got.X != -5 || got.Y != -2 {
+		t.Fatalf("text did not round-trip, got (%d,%d)", got.X, got.Y)
+	}
+	if loaded.GetHighlight(-7, -3) != 4 {
+		t.Fatal("highlight at a negative cell did not round-trip")
+	}
+}
+
+func TestRenderShowsNegativeCoordinatesWhenPanned(t *testing.T) {
+	c := NewCanvas()
+	c.AddText(-6, -2, "left")
+
+	if rr := c.RenderRaw(40, 10, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, 0, 0, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1); strings.Contains(joinCanvas(rr), "left") {
+		t.Fatal("text at a negative position should be off-screen at pan 0")
+	}
+	rr := c.RenderRaw(40, 10, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, -8, -4, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
+	if !strings.Contains(joinCanvas(rr), "left") {
+		t.Fatal("panning to negative space should reveal the text")
+	}
+}
+
+func joinCanvas(rr *RenderResult) string {
+	var b strings.Builder
+	for _, row := range rr.Canvas {
+		b.WriteString(string(row))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
