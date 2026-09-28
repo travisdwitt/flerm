@@ -1,6 +1,6 @@
 BINARY := flerm
 
-.PHONY: build install run test fmt clean
+.PHONY: build install run fmt clean
 
 build:
 	go build -o $(BINARY) ./cmd/flerm
@@ -10,9 +10,6 @@ install:
 
 run:
 	go run ./cmd/flerm
-
-test:
-	go test ./...
 
 fmt:
 	gofmt -w cmd internal

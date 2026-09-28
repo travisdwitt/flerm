@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"path/filepath"
+	"slices"
 
 	cv "flerm/internal/canvas"
 
@@ -9,887 +9,394 @@ import (
 )
 
 func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEscape {
-		m.zPanMode = false
-		m.highlightMode = false
-		m.connectionFrom = -1
-		m.connectionFromLine = -1
-		m.connectionFromX = 0
-		m.connectionFromY = 0
-		m.connectionWaypoints = nil
-		m.mouseLineDrawing = false
-		m.selectedBox = -1
-		m.selectedText = -1
-		m.selBox = -1
-		m.selText = -1
-		m.selConn = -1
-		return m, nil
+	key := msg.String()
+	if _, ok := arrowDeltas[key]; ok {
+		return m.handleNavigation(key)
 	}
+	canvas := m.getCanvas()
+	worldX, worldY := m.worldCursor()
 
-	switch msg.String() {
-	case "ctrl+c", "q":
-		if m.unsavedChanges() || (m.config != nil && m.config.Confirmations) {
-			m.mode = ModeConfirm
-			m.confirmAction = ConfirmQuit
-			return m, nil
-		}
-
-		return m, tea.Quit
-	case "n":
-		if m.config != nil && m.config.Confirmations {
-			m.mode = ModeConfirm
-			m.confirmAction = ConfirmNewChart
-			m.createNewBuffer = false
-			return m, nil
-		}
-
-		buf := m.getCurrentBuffer()
-		if buf != nil {
-			buf.canvas = cv.NewCanvas()
-			buf.filename = ""
-			buf.undoStack = []Action{}
-			buf.redoStack = []Action{}
-		}
-		m.cursorX = 0
-		m.cursorY = 0
-		m.errorMessage = ""
-		m.successMessage = ""
-		return m, nil
-	case "N":
-
-		m.addNewBuffer(cv.NewCanvas(), "")
-		m.cursorX = 0
-		m.cursorY = 0
-		m.errorMessage = ""
-		m.successMessage = ""
-		return m, nil
-	case "{":
-
-		if len(m.buffers) > 1 {
-			m.currentBufferIndex--
-			if m.currentBufferIndex < 0 {
-				m.currentBufferIndex = len(m.buffers) - 1
-			}
-		}
-		return m, nil
-	case "}":
-
-		if len(m.buffers) > 1 {
-			m.currentBufferIndex++
-			if m.currentBufferIndex >= len(m.buffers) {
-				m.currentBufferIndex = 0
-			}
-		}
-		return m, nil
-	case "?":
-		m.help = !m.help
-		return m, nil
-	case "h", "left", "H", "shift+h", "shift+left":
-		return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
-	case "l", "right", "L", "shift+l", "shift+right":
-		return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
-	case "k", "up", "K", "shift+k", "shift+up":
-		return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
-	case "j", "down", "J", "shift+j", "shift+down":
-		return m.handleNavigation(msg.String(), m.getMoveSpeed(msg.String()))
-	case "z":
-
-		m.zPanMode = !m.zPanMode
-		return m, nil
-	case "b":
-		m.zPanMode = false
-		boxID := len(m.getCanvas().Boxes())
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		m.getCanvas().AddBox(worldX, worldY, "Box")
-		addData := AddBoxData{X: worldX, Y: worldY, Text: "Box", ID: boxID}
-		deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
-		m.recordAction(ActionAddBox, addData, deleteData)
-		m.successMessage = ""
-		m.ensureCursorInBounds()
-		return m, nil
-	case "B":
-
-		m.mode = ModeBoxJump
-		m.boxJumpInput = ""
-		return m, nil
-	case "T":
-
-		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		if boxID != -1 && boxID < len(m.getCanvas().Boxes()) {
-			m.mode = ModeTitleEdit
-			m.titleEditBoxID = boxID
-			m.titleEditText = m.getCanvas().Boxes()[boxID].Title
-			m.originalTitleText = m.titleEditText
-			m.titleEditCursorPos = len(m.titleEditText)
-		}
-		return m, nil
-	case "t":
-		m.zPanMode = false
-		m.mode = ModeTextInput
-		panX, panY := m.getPanOffset()
-		m.textInputX, m.textInputY = m.cursorX+panX, m.cursorY+panY
-		m.textInputText = ""
-		m.textInputCursorPos = 0
-		return m, nil
-	case "r":
-		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		if boxID != -1 {
-			m.selectedBox = boxID
-			if boxID < len(m.getCanvas().Boxes()) {
-				m.originalWidth = m.getCanvas().Boxes()[boxID].Width
-				m.originalHeight = m.getCanvas().Boxes()[boxID].Height
-			}
-			m.mode = ModeResize
-		}
-		return m, nil
-	case "m":
-		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		textID := m.getCanvas().GetTextAt(worldX, worldY)
-		if boxID != -1 {
-			m.selectedBox = boxID
-			m.selectedText = -1
-			m.selectedBoxes = []int{}
-			m.selectedTexts = []int{}
-			m.selectedConnections = []int{}
-			m.originalBoxPositions = make(map[int]point)
-			m.originalTextPositions = make(map[int]point)
-			m.originalConnections = make(map[int]Connection)
-			m.originalHighlights = make(map[point]int)
-			m.originalBoxConnections = make(map[int][]Connection)
-			m.highlightMoveDelta = point{X: 0, Y: 0}
-			if boxID < len(m.getCanvas().Boxes()) {
-				box := m.getCanvas().Boxes()[boxID]
-				m.originalMoveX, m.originalMoveY = box.X, box.Y
-
-				m.originalBoxConnections[boxID] = m.getCanvas().GetConnectionsForBox(boxID)
-				m.captureHighlights(m.getCanvas().GetBoxCells(boxID))
-			}
-			m.mode = ModeMove
-		} else if textID != -1 {
-			m.selectedText = textID
-			m.selectedBox = -1
-			m.selectedBoxes = []int{}
-			m.selectedTexts = []int{}
-			m.selectedConnections = []int{}
-			m.originalBoxPositions = make(map[int]point)
-			m.originalTextPositions = make(map[int]point)
-			m.originalConnections = make(map[int]Connection)
-			m.originalHighlights = make(map[point]int)
-			m.highlightMoveDelta = point{X: 0, Y: 0}
-			if textID < len(m.getCanvas().Texts()) {
-				text := m.getCanvas().Texts()[textID]
-				m.originalTextMoveX, m.originalTextMoveY = text.X, text.Y
-				m.captureHighlights(m.getCanvas().GetTextCells(textID))
-			}
-			m.mode = ModeMove
-		} else if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
-			m.selectedBox = -1
-			m.selectedText = -1
-			m.selectedBoxes = []int{}
-			m.selectedTexts = []int{}
-			m.selectedConnections = []int{}
-			m.originalBoxPositions = make(map[int]point)
-			m.originalTextPositions = make(map[int]point)
-			m.originalConnections = make(map[int]Connection)
-			m.originalHighlights = make(map[point]int)
-			m.originalHighlights[point{X: worldX, Y: worldY}] = highlightColor
-			m.highlightMoveDelta = point{X: 0, Y: 0}
-			m.groupConnSnapshot = m.getCanvas().SnapshotConnections()
-			m.mode = ModeMove
-		}
-		return m, nil
-	case "M":
-		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		m.selectionStartX = m.cursorX + panX
-		m.selectionStartY = m.cursorY + panY
-		m.selectedBoxes = []int{}
-		m.selectedTexts = []int{}
-		m.mode = ModeMultiSelect
-		return m, nil
-	case "e":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		textID := m.getCanvas().GetTextAt(worldX, worldY)
-		if boxID != -1 {
-			m.selectedBox = boxID
-			m.selectedText = -1
-			m.mode = ModeEditing
-			m.editText = m.getCanvas().GetBoxText(boxID)
-			m.originalEditText = m.editText
-			m.editCursorPos = len(m.editText)
-			m.editSelectionStart = -1
-			m.editSelectionEnd = -1
-			m.syncCursorPositions()
-		} else if textID != -1 {
-			m.selectedText = textID
-			m.selectedBox = -1
-			m.mode = ModeEditing
-			m.editText = m.getCanvas().GetTextText(textID)
-			m.originalEditText = m.editText
-			m.editCursorPos = len(m.editText)
-			m.editSelectionStart = -1
-			m.editSelectionEnd = -1
-			m.syncCursorPositions()
-		}
-		return m, nil
-	case "A":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		lineConnIdx, _, _ := m.getCanvas().FindNearestPointOnConnection(worldX, worldY)
-		if lineConnIdx != -1 {
-			oldConn := m.getCanvas().Connections()[lineConnIdx]
-			m.getCanvas().CycleConnectionArrowState(lineConnIdx)
-			newConn := m.getCanvas().Connections()[lineConnIdx]
-			cycleData := CycleArrowData{lineConnIdx, oldConn, newConn}
-			m.recordAction(ActionCycleArrow, cycleData, cycleData)
-			m.successMessage = ""
-		}
-		return m, nil
-	case "a":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		lineConnIdx, lineX, lineY := m.getCanvas().FindNearestPointOnConnection(worldX, worldY)
-
-		if m.connectionFrom == -1 && m.connectionFromLine == -1 {
-			if boxID != -1 {
-				fromBox := m.getCanvas().Boxes()[boxID]
-				m.connectionFrom = boxID
-				m.connectionFromLine = -1
-				m.connectionFromX, m.connectionFromY = m.getCanvas().FindNearestEdgePoint(fromBox, worldX, worldY)
-				m.connectionWaypoints = nil
-			} else if lineConnIdx != -1 {
-				m.connectionFrom = -1
-				m.connectionFromLine = lineConnIdx
-				m.connectionFromX, m.connectionFromY = lineX, lineY
-				m.connectionWaypoints = nil
-			}
-		} else {
-			if boxID != -1 {
-				toBox := m.getCanvas().Boxes()[boxID]
-				toX, toY := m.getCanvas().FindNearestEdgePoint(toBox, worldX, worldY)
-
-				connection := Connection{
-					FromID:    m.connectionFrom,
-					ToID:      boxID,
-					FromX:     m.connectionFromX,
-					FromY:     m.connectionFromY,
-					ToX:       toX,
-					ToY:       toY,
-					Waypoints: m.connectionWaypoints,
-					Color:     -1,
-				}
-
-				m.getCanvas().AddConnectionWithWaypoints(m.connectionFrom, boxID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
-				addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
-				inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: boxID, Connection: connection}
-				m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
-				m.successMessage = ""
-				m.connectionFrom = -1
-				m.connectionFromLine = -1
-				m.connectionFromX = 0
-				m.connectionFromY = 0
-				m.connectionWaypoints = nil
-			} else if lineConnIdx != -1 {
-				toX, toY := lineX, lineY
-
-				connection := Connection{
-					FromID:    m.connectionFrom,
-					ToID:      -1,
-					FromX:     m.connectionFromX,
-					FromY:     m.connectionFromY,
-					ToX:       toX,
-					ToY:       toY,
-					Waypoints: m.connectionWaypoints,
-					Color:     -1,
-				}
-
-				m.getCanvas().AddConnectionWithWaypoints(m.connectionFrom, -1, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints)
-				addConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
-				inverseConnectionData := AddConnectionData{FromID: m.connectionFrom, ToID: -1, Connection: connection}
-				m.recordAction(ActionAddConnection, addConnectionData, inverseConnectionData)
-				m.successMessage = ""
-				m.connectionFrom = -1
-				m.connectionFromLine = -1
-				m.connectionFromX = 0
-				m.connectionFromY = 0
-				m.connectionWaypoints = nil
-			} else {
-				m.connectionWaypoints = append(m.connectionWaypoints, point{X: worldX, Y: worldY})
-			}
-		}
-		return m, nil
-	case "d":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
-			m.getCanvas().ClearHighlight(worldX, worldY)
-			cell := HighlightCell{X: worldX, Y: worldY, Color: -1, HadColor: true, OldColor: highlightColor}
-			inverseCell := HighlightCell{X: worldX, Y: worldY, Color: highlightColor, HadColor: true, OldColor: -1}
-			m.recordAction(ActionHighlight, HighlightData{Cells: []HighlightCell{cell}}, HighlightData{Cells: []HighlightCell{inverseCell}})
-			return m, nil
-		}
-
-		lineConnIdx, _, _ := m.getCanvas().FindNearestPointOnConnection(worldX, worldY)
-		if lineConnIdx != -1 {
-			if m.config != nil && m.config.Confirmations {
-				m.mode = ModeConfirm
-				m.confirmAction = ConfirmDeleteConnection
-				m.confirmConnIdx = lineConnIdx
-				return m, nil
-			}
-
-			if lineConnIdx >= 0 && lineConnIdx < len(m.getCanvas().Connections()) {
-				conn := m.getCanvas().Connections()[lineConnIdx]
-				deleteData := AddConnectionData{FromID: conn.FromID, ToID: conn.ToID, Connection: conn}
-				m.getCanvas().RemoveSpecificConnection(conn)
-				m.recordAction(ActionDeleteConnection, deleteData, deleteData)
-				m.successMessage = ""
-			}
-		} else {
-			boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-			textID := m.getCanvas().GetTextAt(worldX, worldY)
-
-			if boxID != -1 {
-				if m.config != nil && m.config.Confirmations {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmDeleteBox
-					m.confirmBoxID = boxID
-					return m, nil
-				}
-
-				if boxID >= 0 && boxID < len(m.getCanvas().Boxes()) {
-					box := m.getCanvas().Boxes()[boxID]
-					connectedConnections := make([]Connection, 0)
-					for _, connection := range m.getCanvas().Connections() {
-						if connection.FromID == boxID || connection.ToID == boxID {
-							connectedConnections = append(connectedConnections, connection)
-						}
-					}
-					highlights := m.getCanvas().GetHighlightsForBox(boxID)
-					deleteData := DeleteBoxData{Box: box, ID: boxID, Connections: connectedConnections, Highlights: highlights}
-					addData := AddBoxData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID}
-					m.recordAction(ActionDeleteBox, deleteData, addData)
-					m.getCanvas().DeleteBox(boxID)
-					m.ensureCursorInBounds()
-				}
-			} else if textID != -1 {
-				if m.config != nil && m.config.Confirmations {
-					m.mode = ModeConfirm
-					m.confirmAction = ConfirmDeleteText
-					m.confirmTextID = textID
-					return m, nil
-				}
-
-				if textID >= 0 && textID < len(m.getCanvas().Texts()) {
-					text := m.getCanvas().Texts()[textID]
-					highlights := m.getCanvas().GetHighlightsForText(textID)
-					deleteData := DeleteTextData{Text: text, ID: textID, Highlights: highlights}
-					addData := AddTextData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID}
-					m.recordAction(ActionDeleteText, deleteData, addData)
-				}
-				m.getCanvas().DeleteText(textID)
-				m.ensureCursorInBounds()
-			}
-		}
-		return m, nil
-	case "D":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		highlightedCells := make([]HighlightCell, 0)
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		textID := m.getCanvas().GetTextAt(worldX, worldY)
-		lineConnIdx, _, _ := m.getCanvas().FindNearestPointOnConnection(worldX, worldY)
-		if boxID != -1 {
-			for _, cell := range m.getCanvas().GetBoxCells(boxID) {
-				if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-					highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
-					m.getCanvas().ClearHighlight(cell.X, cell.Y)
-				}
-			}
-		} else if textID != -1 {
-			for _, cell := range m.getCanvas().GetTextCells(textID) {
-				if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-					highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
-					m.getCanvas().ClearHighlight(cell.X, cell.Y)
-				}
-			}
-		} else if lineConnIdx != -1 {
-			for _, cell := range m.getCanvas().GetConnectionCells(lineConnIdx) {
-				if color := m.getCanvas().GetHighlight(cell.X, cell.Y); color != -1 {
-					highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: color})
-					m.getCanvas().ClearHighlight(cell.X, cell.Y)
-				}
-			}
-		} else if highlightColor := m.getCanvas().GetHighlight(worldX, worldY); highlightColor != -1 {
-			for _, cell := range m.getCanvas().GetAdjacentHighlightsOfColor(worldX, worldY, highlightColor) {
-				if oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y); oldColor != -1 {
-					highlightedCells = append(highlightedCells, HighlightCell{X: cell.X, Y: cell.Y, Color: -1, HadColor: true, OldColor: oldColor})
-					m.getCanvas().ClearHighlight(cell.X, cell.Y)
-				}
-			}
-		}
-		if len(highlightedCells) > 0 {
-			inverseCells := make([]HighlightCell, len(highlightedCells))
-			for i, cell := range highlightedCells {
-				inverseCells[i] = HighlightCell{X: cell.X, Y: cell.Y, Color: cell.OldColor, HadColor: cell.HadColor, OldColor: -1}
-			}
-			m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
-		}
-		return m, nil
-	case "s":
-		m.mode = ModeFileInput
-		m.fileOp = FileOpSave
-		if buf := m.getCurrentBuffer(); buf != nil && buf.filename != "" {
-			m.filename = chartDisplayName(filepath.Base(buf.filename))
-		} else {
-			m.filename = ""
-		}
-		m.errorMessage = ""
-		m.successMessage = ""
-		m.fromStartup = false
-		return m, nil
-	case "o":
-		m.mode = ModeFileInput
-		m.fileOp = FileOpOpen
-		m.filename = ""
-		m.errorMessage = ""
-		m.successMessage = ""
-		m.fromStartup = false
-		m.openInNewBuffer = false
-		m.scanTxtFiles()
-		return m, nil
-	case "O":
-		m.mode = ModeFileInput
-		m.fileOp = FileOpOpen
-		m.filename = ""
-		m.errorMessage = ""
-		m.successMessage = ""
-		m.fromStartup = false
-		m.openInNewBuffer = true
-		m.scanTxtFiles()
-		return m, nil
-	case "S":
-		m.mode = ModeConfirm
-		m.confirmAction = ConfirmChooseExportType
-		m.filename = ""
-		m.errorMessage = ""
-		m.successMessage = ""
-		return m, nil
-	case "x":
-
-		if len(m.buffers) > 0 {
-			if m.config != nil && m.config.Confirmations {
-				m.mode = ModeConfirm
-				m.confirmAction = ConfirmCloseBuffer
-				return m, nil
-			}
-
-			if len(m.buffers) > 1 {
-				newIndex := m.currentBufferIndex - 1
-				if newIndex < 0 {
-					newIndex = 0
-				}
-				m.buffers = append(m.buffers[:m.currentBufferIndex], m.buffers[m.currentBufferIndex+1:]...)
-				m.currentBufferIndex = newIndex
-			} else {
-
-				canvas := cv.NewCanvas()
-				m.buffers = []Buffer{
-					{
-						canvas:    canvas,
-						undoStack: []Action{},
-						redoStack: []Action{},
-						filename:  "",
-						panX:      0,
-						panY:      0,
-					},
-				}
-				m.currentBufferIndex = 0
-				m.mode = ModeStartup
-			}
-			m.cursorX = 0
-			m.cursorY = 0
-			m.errorMessage = ""
-			m.successMessage = ""
-		}
-		return m, nil
-	case "u":
-		m.undo()
-		m.successMessage = ""
-		return m, nil
-	case "U":
-		m.redo()
-		m.successMessage = ""
-		return m, nil
-	case "c":
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-		if boxID != -1 && boxID < len(m.getCanvas().Boxes()) {
-			box := m.getCanvas().Boxes()[boxID]
-			copiedBox := Box{
-				X:           box.X,
-				Y:           box.Y,
-				Width:       box.Width,
-				Height:      box.Height,
-				ID:          box.ID,
-				Lines:       make([]string, len(box.Lines)),
-				Title:       box.Title,
-				BorderStyle: box.BorderStyle,
-				Color:       box.Color,
-			}
-			copy(copiedBox.Lines, box.Lines)
-			m.clipboard = &copiedBox
-		}
-		return m, nil
-	case "y":
-		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		m.duplicateAt(m.cursorX+panX, m.cursorY+panY)
-		return m, nil
-	case "p":
-		if m.clipboard != nil {
-			boxID := len(m.getCanvas().Boxes())
-			text := m.clipboard.GetText()
-			panX, panY := m.getPanOffset()
-			worldX, worldY := m.cursorX+panX, m.cursorY+panY
-			m.getCanvas().AddBox(worldX, worldY, text)
-			if boxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
-
-				m.getCanvas().Boxes()[boxID].Title = m.clipboard.Title
-				m.getCanvas().Boxes()[boxID].BorderStyle = m.clipboard.BorderStyle
-				m.getCanvas().Boxes()[boxID].Color = m.clipboard.Color
-				m.getCanvas().Boxes()[boxID].UpdateSize()
-			}
-			addData := AddBoxData{X: worldX, Y: worldY, Text: text, ID: boxID}
-			deleteData := DeleteBoxData{ID: boxID, Connections: nil, Highlights: nil}
-			m.recordAction(ActionAddBox, addData, deleteData)
-			m.ensureCursorInBounds()
-		}
-		return m, nil
+	switch key {
 	case "esc", "escape":
 		m.zPanMode = false
 		m.highlightMode = false
-		m.connectionFrom = -1
-		m.connectionFromLine = -1
-		m.connectionFromX = 0
-		m.connectionFromY = 0
-		m.connectionWaypoints = nil
-		m.selectedBox = -1
-		return m, nil
+		m.cancelMouseLine()
+		m.selectedBox, m.selectedText = -1, -1
+		m.selBox, m.selText, m.selConn = -1, -1, -1
+	case "ctrl+c", "q":
+		if m.unsavedChanges() || m.config.Confirmations {
+			m.confirm(ConfirmQuit, -1)
+			return m, nil
+		}
+		return m, tea.Quit
+	case "n":
+		if m.config.Confirmations {
+			m.confirm(ConfirmNewChart, -1)
+		} else {
+			m.newChart()
+		}
+	case "N":
+		m.addNewBuffer(Buffer{canvas: cv.NewCanvas()})
+		m.resetView()
+	case "{", "}":
+		if n := len(m.buffers); n > 1 {
+			delta := 1
+			if key == "{" {
+				delta = -1
+			}
+			m.currentBufferIndex = (m.currentBufferIndex + delta + n) % n
+		}
+	case "?":
+		m.help = !m.help
+	case "z":
+		m.zPanMode = !m.zPanMode
+	case "b":
+		m.zPanMode = false
+		m.addBoxRecorded(worldX, worldY, "Box")
+	case "B":
+		m.mode = ModeBoxJump
+		m.boxJumpInput = ""
+	case "T":
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			m.beginEdit(ModeTitleEdit, boxID, -1, canvas.Boxes()[boxID].Title)
+		}
+	case "t":
+		m.textInputX, m.textInputY = worldX, worldY
+		m.beginEdit(ModeTextInput, -1, -1, "")
+	case "r":
+		m.zPanMode = false
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			box := canvas.Boxes()[boxID]
+			m.selectedBox = boxID
+			m.originalWidth, m.originalHeight = box.Width, box.Height
+			m.mode = ModeResize
+		}
+	case "m":
+		m.zPanMode = false
+		m.beginMove(worldX, worldY)
+	case "M":
+		m.zPanMode = false
+		m.selectionStartX, m.selectionStartY = worldX, worldY
+		m.selectedBoxes, m.selectedTexts = nil, nil
+		m.mode = ModeMultiSelect
+	case "e":
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			m.beginEdit(ModeEditing, boxID, -1, canvas.GetBoxText(boxID))
+		} else if textID := canvas.GetTextAt(worldX, worldY); textID != -1 {
+			m.beginEdit(ModeEditing, -1, textID, canvas.GetTextText(textID))
+		}
+	case "A":
+		if idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); idx != -1 {
+			old := canvas.Connections()[idx]
+			canvas.CycleConnectionArrowState(idx)
+			data := CycleArrowData{idx, old, canvas.Connections()[idx]}
+			m.recordAction(ActionCycleArrow, data, data)
+			m.successMessage = ""
+		}
+	case "a":
+		if m.connectionFrom == -1 && m.connectionFromLine == -1 {
+			m.beginLine(worldX, worldY)
+		} else {
+			m.extendLine(worldX, worldY)
+		}
+	case "d":
+		m.deleteAt(worldX, worldY)
+	case "D":
+		m.clearHighlightsAt(worldX, worldY)
+	case "s":
+		m.beginFileOp(FileOpSave, m.currentChartName())
+	case "o", "O":
+		m.beginFileOp(FileOpOpen, "")
+		m.openInNewBuffer = key == "O"
+		m.scanTxtFiles()
+	case "S":
+		m.confirm(ConfirmChooseExportType, -1)
+		m.filename = ""
+		m.errorMessage, m.successMessage = "", ""
+	case "x":
+		if m.config.Confirmations {
+			m.confirm(ConfirmCloseBuffer, -1)
+		} else {
+			m.closeBuffer()
+		}
+	case "u":
+		m.undo()
+		m.successMessage = ""
+	case "U":
+		m.redo()
+		m.successMessage = ""
+	case "c":
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			box := canvas.Boxes()[boxID]
+			box.Lines = slices.Clone(box.Lines)
+			m.clipboard = &box
+		}
+	case "y":
+		m.zPanMode = false
+		m.duplicateAt(worldX, worldY)
+	case "p":
+		if m.clipboard != nil {
+			boxID := m.addBoxRecorded(worldX, worldY, m.clipboard.GetText())
+			canvas.SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
+			canvas.SetBorderStyle(boxID, m.clipboard.BorderStyle)
+			canvas.SetBoxColor(boxID, m.clipboard.Color)
+			canvas.SetBoxTitle(boxID, m.clipboard.Title)
+		}
 	case "tab":
 		if m.highlightMode {
-
 			m.selectedColor = (m.selectedColor + 1) % numColors
-		} else {
-
-			panX, panY := m.getPanOffset()
-			worldX, worldY := m.cursorX+panX, m.cursorY+panY
-			if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
-
-				oldStyle := m.getCanvas().CycleBorderStyle(boxID)
-				newStyle := m.getCanvas().Boxes()[boxID].BorderStyle
-				borderData := BorderStyleData{BoxID: boxID, OldStyle: oldStyle, NewStyle: newStyle}
-				m.recordAction(ActionChangeBorderStyle, borderData, borderData)
-			}
+		} else if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			old := canvas.CycleBorderStyle(boxID)
+			data := BorderStyleData{BoxID: boxID, OldStyle: old, NewStyle: canvas.Boxes()[boxID].BorderStyle}
+			m.recordAction(ActionChangeBorderStyle, data, data)
 		}
-		return m, nil
 	case "Z":
 		m.zPanMode = false
-		panX, panY := m.getPanOffset()
-		worldX, worldY := m.cursorX+panX, m.cursorY+panY
-		if boxID := m.getCanvas().GetBoxAt(worldX, worldY); boxID != -1 {
-			m.getCanvas().CycleBoxZLevel(boxID)
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			canvas.CycleBoxZLevel(boxID)
 		}
-		return m, nil
 	case " ":
-		if m.highlightMode {
-
-			panX, panY := m.getPanOffset()
-			worldX, worldY := m.cursorX+panX, m.cursorY+panY
-			boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-			if boxID != -1 && boxID < len(m.getCanvas().Boxes()) {
-				box := m.getCanvas().Boxes()[boxID]
-				highlightedCells := make([]HighlightCell, 0)
-
-				borderCells := m.getCanvas().GetBoxBorderCells(boxID)
-				dividerCells := m.getCanvas().GetBoxTitleDividerCells(boxID)
-
-				borderHighlighted := false
-				titleBarHighlighted := false
-
-				bottomY := box.Y + box.Height - 1
-				for _, cell := range borderCells {
-					if cell.Y == bottomY {
-						if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
-							borderHighlighted = true
-							break
-						}
-					}
-				}
-
-				if box.Title != "" && len(dividerCells) > 0 {
-					for _, cell := range dividerCells {
-						if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
-							titleBarHighlighted = true
-							break
-						}
-					}
-				}
-
-				if box.Title == "" {
-					if borderHighlighted {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().ClearHighlight(cell.X, cell.Y)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: -1,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					} else {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: m.selectedColor,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					}
-				} else {
-
-					if !borderHighlighted && !titleBarHighlighted {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: m.selectedColor,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					} else if borderHighlighted && !titleBarHighlighted {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().ClearHighlight(cell.X, cell.Y)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: -1,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-						for _, cell := range dividerCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: m.selectedColor,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					} else if !borderHighlighted && titleBarHighlighted {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: m.selectedColor,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					} else {
-
-						for _, cell := range borderCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().ClearHighlight(cell.X, cell.Y)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: -1,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-						for _, cell := range dividerCells {
-							oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-							m.getCanvas().ClearHighlight(cell.X, cell.Y)
-							highlightedCells = append(highlightedCells, HighlightCell{
-								X: cell.X, Y: cell.Y, Color: -1,
-								HadColor: oldColor != -1, OldColor: oldColor,
-							})
-						}
-					}
-				}
-
-				if len(highlightedCells) > 0 {
-					inverseCells := make([]HighlightCell, len(highlightedCells))
-					for i, cell := range highlightedCells {
-						oldColorForInverse := cell.OldColor
-						if oldColorForInverse < 0 {
-							oldColorForInverse = -1
-						}
-						inverseCells[i] = HighlightCell{
-							X: cell.X, Y: cell.Y,
-							Color:    oldColorForInverse,
-							HadColor: cell.HadColor, OldColor: cell.Color,
-						}
-					}
-					m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
-				}
-			}
-
-		} else {
-
+		if !m.highlightMode {
 			m.highlightMode = true
+		} else if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			box := canvas.Boxes()[boxID]
+			border := canvas.GetBoxBorderCells(boxID)
+			var bottom []point
+			for _, cell := range border {
+				if cell.Y == box.Y+box.Height-1 {
+					bottom = append(bottom, cell)
+				}
+			}
+			m.recordHighlights(m.cycleHighlightGroups(m.anyHighlighted(bottom), border, canvas.GetBoxTitleDividerCells(boxID)))
 		}
-		return m, nil
 	case "enter":
-		if m.highlightMode {
-			panX, panY := m.getPanOffset()
-			worldX, worldY := m.cursorX+panX, m.cursorY+panY
-			boxID := m.getCanvas().GetBoxAt(worldX, worldY)
-			textID := m.getCanvas().GetTextAt(worldX, worldY)
-			lineConnIdx, _, _ := m.getCanvas().FindNearestPointOnConnection(worldX, worldY)
-			highlightedCells := make([]HighlightCell, 0)
-
-			if boxID != -1 {
-
-				contentTextCells := m.getCanvas().GetBoxContentTextCells(boxID)
-				titleTextCells := m.getCanvas().GetBoxTitleTextCells(boxID)
-
-				contentHighlighted := false
-				titleHighlighted := false
-
-				for _, cell := range contentTextCells {
-					if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
-						contentHighlighted = true
-						break
-					}
-				}
-				for _, cell := range titleTextCells {
-					if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
-						titleHighlighted = true
-						break
-					}
-				}
-
-				if !contentHighlighted && !titleHighlighted {
-
-					for _, cell := range contentTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: m.selectedColor,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-				} else if contentHighlighted && !titleHighlighted {
-
-					for _, cell := range contentTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().ClearHighlight(cell.X, cell.Y)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: -1,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-					for _, cell := range titleTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: m.selectedColor,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-				} else if !contentHighlighted && titleHighlighted {
-
-					for _, cell := range contentTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: m.selectedColor,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-				} else {
-
-					for _, cell := range contentTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().ClearHighlight(cell.X, cell.Y)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: -1,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-					for _, cell := range titleTextCells {
-						oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-						m.getCanvas().ClearHighlight(cell.X, cell.Y)
-						highlightedCells = append(highlightedCells, HighlightCell{
-							X: cell.X, Y: cell.Y, Color: -1,
-							HadColor: oldColor != -1, OldColor: oldColor,
-						})
-					}
-				}
-			} else if textID != -1 {
-
-				for _, cell := range m.getCanvas().GetTextCells(textID) {
-					oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-					m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-					highlightedCells = append(highlightedCells, HighlightCell{
-						X:        cell.X,
-						Y:        cell.Y,
-						Color:    m.selectedColor,
-						HadColor: oldColor != -1,
-						OldColor: oldColor,
-					})
-				}
-			} else if lineConnIdx != -1 {
-
-				for _, cell := range m.getCanvas().GetConnectionCells(lineConnIdx) {
-					oldColor := m.getCanvas().GetHighlight(cell.X, cell.Y)
-					m.getCanvas().SetHighlight(cell.X, cell.Y, m.selectedColor)
-					highlightedCells = append(highlightedCells, HighlightCell{
-						X:        cell.X,
-						Y:        cell.Y,
-						Color:    m.selectedColor,
-						HadColor: oldColor != -1,
-						OldColor: oldColor,
-					})
-				}
-			}
-
-			if len(highlightedCells) > 0 {
-				inverseCells := make([]HighlightCell, len(highlightedCells))
-				for i, cell := range highlightedCells {
-					oldColorForInverse := cell.OldColor
-					if oldColorForInverse < 0 {
-						oldColorForInverse = -1
-					}
-					inverseCells[i] = HighlightCell{
-						X:        cell.X,
-						Y:        cell.Y,
-						Color:    oldColorForInverse,
-						HadColor: cell.HadColor,
-						OldColor: cell.Color,
-					}
-				}
-				m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
+		if !m.highlightMode {
+			break
+		}
+		switch boxID, textID := canvas.GetBoxAt(worldX, worldY), canvas.GetTextAt(worldX, worldY); {
+		case boxID != -1:
+			content := canvas.GetBoxContentTextCells(boxID)
+			m.recordHighlights(m.cycleHighlightGroups(m.anyHighlighted(content), content, canvas.GetBoxTitleTextCells(boxID)))
+		case textID != -1:
+			m.recordHighlights(m.paintCells(canvas.GetTextCells(textID), m.selectedColor))
+		default:
+			if idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); idx != -1 {
+				m.recordHighlights(m.paintCells(canvas.GetConnectionCells(idx), m.selectedColor))
 			}
 		}
-		return m, nil
 	}
 	return m, nil
+}
+
+func (m *model) addBoxRecorded(x, y int, text string) int {
+	canvas := m.getCanvas()
+	id := len(canvas.Boxes())
+	canvas.AddBox(x, y, text)
+	m.recordAction(ActionAddBox, AddData{X: x, Y: y, Text: text, ID: id}, DeleteBoxData{ID: id})
+	m.successMessage = ""
+	m.ensureCursorInBounds()
+	return id
+}
+
+func (m *model) deleteAt(x, y int) {
+	canvas := m.getCanvas()
+	if canvas.GetHighlight(x, y) != -1 {
+		m.recordHighlights(m.paintCells([]point{{X: x, Y: y}}, -1))
+		return
+	}
+	ask := m.config.Confirmations
+	if idx, _, _ := canvas.FindNearestPointOnConnection(x, y); idx != -1 {
+		if ask {
+			m.confirm(ConfirmDeleteConnection, idx)
+		} else {
+			m.deleteConnByIdx(idx)
+		}
+	} else if boxID := canvas.GetBoxAt(x, y); boxID != -1 {
+		if ask {
+			m.confirm(ConfirmDeleteBox, boxID)
+		} else {
+			m.deleteBoxByID(boxID)
+		}
+	} else if textID := canvas.GetTextAt(x, y); textID != -1 {
+		if ask {
+			m.confirm(ConfirmDeleteText, textID)
+		} else {
+			m.deleteTextByID(textID)
+		}
+	}
+}
+
+func (m *model) clearHighlightsAt(x, y int) {
+	canvas := m.getCanvas()
+	var cells []point
+	switch boxID, textID := canvas.GetBoxAt(x, y), canvas.GetTextAt(x, y); {
+	case boxID != -1:
+		cells = canvas.GetBoxCells(boxID)
+	case textID != -1:
+		cells = canvas.GetTextCells(textID)
+	default:
+		if idx, _, _ := canvas.FindNearestPointOnConnection(x, y); idx != -1 {
+			cells = canvas.GetConnectionCells(idx)
+		} else if color := canvas.GetHighlight(x, y); color != -1 {
+			cells = canvas.GetAdjacentHighlightsOfColor(x, y, color)
+		}
+	}
+	m.recordHighlights(m.paintCells(m.highlighted(cells), -1))
+}
+
+func (m *model) highlighted(cells []point) []point {
+	var out []point
+	for _, cell := range cells {
+		if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
+			out = append(out, cell)
+		}
+	}
+	return out
+}
+
+func (m *model) anyHighlighted(cells []point) bool {
+	return len(m.highlighted(cells)) > 0
+}
+
+func (m *model) paintCell(x, y, color int) HighlightCell {
+	old := m.getCanvas().GetHighlight(x, y)
+	m.applyHighlight(x, y, color)
+	return HighlightCell{X: x, Y: y, Color: color, HadColor: old != -1, OldColor: old}
+}
+
+func (m *model) paintCells(cells []point, color int) []HighlightCell {
+	out := make([]HighlightCell, 0, len(cells))
+	for _, cell := range cells {
+		out = append(out, m.paintCell(cell.X, cell.Y, color))
+	}
+	return out
+}
+
+func (m *model) cycleHighlightGroups(primaryLit bool, primary, secondary []point) []HighlightCell {
+	switch {
+	case primaryLit && m.anyHighlighted(secondary):
+		return append(m.paintCells(primary, -1), m.paintCells(secondary, -1)...)
+	case primaryLit:
+		return append(m.paintCells(primary, -1), m.paintCells(secondary, m.selectedColor)...)
+	}
+	return m.paintCells(primary, m.selectedColor)
+}
+
+func (m *model) recordHighlights(cells []HighlightCell) {
+	if len(cells) == 0 {
+		return
+	}
+	inverse := make([]HighlightCell, len(cells))
+	for i, c := range cells {
+		inverse[i] = HighlightCell{X: c.X, Y: c.Y, Color: c.OldColor, HadColor: c.HadColor, OldColor: c.Color}
+	}
+	m.recordAction(ActionHighlight, HighlightData{Cells: cells}, HighlightData{Cells: inverse})
+}
+
+func (m *model) beginLine(x, y int) bool {
+	canvas := m.getCanvas()
+	if boxID := canvas.GetBoxAt(x, y); boxID != -1 {
+		m.connectionFrom, m.connectionFromLine = boxID, -1
+		m.connectionFromX, m.connectionFromY = canvas.FindNearestEdgePoint(canvas.Boxes()[boxID], x, y)
+	} else if idx, lx, ly := canvas.FindNearestPointOnConnection(x, y); idx != -1 {
+		m.connectionFrom, m.connectionFromLine = -1, idx
+		m.connectionFromX, m.connectionFromY = lx, ly
+	} else {
+		return false
+	}
+	m.connectionWaypoints = nil
+	return true
+}
+
+func (m *model) extendLine(x, y int) {
+	canvas := m.getCanvas()
+	toID, toX, toY := -1, 0, 0
+	if boxID := canvas.GetBoxAt(x, y); boxID != -1 {
+		toID = boxID
+		toX, toY = canvas.FindNearestEdgePoint(canvas.Boxes()[boxID], x, y)
+	} else if idx, lx, ly := canvas.FindNearestPointOnConnection(x, y); idx != -1 {
+		toX, toY = lx, ly
+	} else {
+		m.connectionWaypoints = append(m.connectionWaypoints, point{X: x, Y: y})
+		return
+	}
+	if conn, ok := canvas.AddConnectionWithWaypoints(m.connectionFrom, toID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints); ok {
+		m.recordAction(ActionAddConnection, conn, conn)
+	}
+	m.successMessage = ""
+	m.cancelMouseLine()
+}
+
+func (m *model) cancelMouseLine() {
+	m.mouseLineDrawing = false
+	m.connectionFrom, m.connectionFromLine = -1, -1
+	m.connectionFromX, m.connectionFromY = 0, 0
+	m.connectionWaypoints = nil
+}
+
+func (m *model) deleteBoxByID(boxID int) {
+	canvas := m.getCanvas()
+	if boxID < 0 || boxID >= len(canvas.Boxes()) {
+		return
+	}
+	box := canvas.Boxes()[boxID]
+	m.recordAction(ActionDeleteBox,
+		DeleteBoxData{Box: box, ID: boxID, Connections: canvas.GetConnectionsForBox(boxID), Highlights: canvas.GetHighlightsForBox(boxID)},
+		AddData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID})
+	canvas.DeleteBox(boxID)
+	m.ensureCursorInBounds()
+}
+
+func (m *model) deleteTextByID(textID int) {
+	canvas := m.getCanvas()
+	if textID < 0 || textID >= len(canvas.Texts()) {
+		return
+	}
+	text := canvas.Texts()[textID]
+	m.recordAction(ActionDeleteText,
+		DeleteTextData{Text: text, ID: textID, Highlights: canvas.GetHighlightsForText(textID)},
+		AddData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID})
+	canvas.DeleteText(textID)
+	m.ensureCursorInBounds()
+}
+
+func (m *model) deleteConnByIdx(connIdx int) {
+	canvas := m.getCanvas()
+	if connIdx < 0 || connIdx >= len(canvas.Connections()) {
+		return
+	}
+	conn := canvas.Connections()[connIdx]
+	canvas.RemoveSpecificConnection(conn)
+	m.recordAction(ActionDeleteConnection, conn, conn)
+	m.successMessage = ""
+}
+
+const dupOffsetX, dupOffsetY = 2, 1
+
+func (m *model) duplicateAt(worldX, worldY int) {
+	canvas := m.getCanvas()
+	if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+		m.duplicateByID(false, boxID)
+	} else if textID := canvas.GetTextAt(worldX, worldY); textID != -1 {
+		m.duplicateByID(true, textID)
+	}
+}
+
+func (m *model) duplicateByID(isText bool, srcID int) {
+	canvas := m.getCanvas()
+	if srcID < 0 {
+		return
+	}
+	data := DuplicateData{IsText: isText, SrcID: srcID, DX: dupOffsetX, DY: dupOffsetY}
+	if isText {
+		data.NewID = canvas.DuplicateText(srcID, data.DX, data.DY)
+	} else {
+		data.NewID = canvas.DuplicateBox(srcID, data.DX, data.DY)
+	}
+	if data.NewID == -1 {
+		return
+	}
+	m.recordAction(ActionDuplicate, data, data)
+	m.successMessage = ""
+	m.ensureCursorInBounds()
 }

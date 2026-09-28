@@ -15,18 +15,20 @@ type Connection struct {
 	Color     int
 }
 
+func cloneConn(conn Connection) Connection {
+	conn.Waypoints = slices.Clone(conn.Waypoints)
+	return conn
+}
+
 func (c *Canvas) FindNearestPointOnConnection(cursorX, cursorY int) (int, int, int) {
 	bestDist, bestConnIdx := -1, -1
 	bestX, bestY := -1, -1
 
 	for i, conn := range c.connections {
-		points := connPoints(conn)
-		for j := 0; j < len(points)-1; j++ {
-			segX, segY := closestOnSegment(points[j], points[j+1], cursorX, cursorY)
-			if dist := manhattan(segX, segY, cursorX, cursorY); bestDist == -1 || dist < bestDist {
-				bestDist, bestConnIdx = dist, i
-				bestX, bestY = segX, segY
-			}
+		x, y := findNearestPointOnPath(cursorX, cursorY, connPoints(conn))
+		if dist := manhattan(x, y, cursorX, cursorY); bestDist == -1 || dist < bestDist {
+			bestDist, bestConnIdx = dist, i
+			bestX, bestY = x, y
 		}
 	}
 
@@ -56,6 +58,19 @@ func closestOnSegment(a, b Point, cursorX, cursorY int) (int, int) {
 	return x2, y2
 }
 
+func findNearestPointOnPath(x, y int, pathPoints []Point) (int, int) {
+	bestX, bestY := x, y
+	bestDist := -1
+	for i := 0; i < len(pathPoints)-1; i++ {
+		segX, segY := closestOnSegment(pathPoints[i], pathPoints[i+1], x, y)
+		if dist := manhattan(segX, segY, x, y); bestDist == -1 || dist < bestDist {
+			bestDist = dist
+			bestX, bestY = segX, segY
+		}
+	}
+	return bestX, bestY
+}
+
 func (c *Canvas) FindNearestEdgePoint(box Box, cursorX, cursorY int) (int, int) {
 	right, bottom := box.X+box.Width-1, box.Y+box.Height-1
 	clampedX := clamp(cursorX, box.X, right)
@@ -76,15 +91,7 @@ func (c *Canvas) FindNearestEdgePoint(box Box, cursorX, cursorY int) (int, int) 
 	return edgeX, edgeY
 }
 
-func (c *Canvas) CalculateConnectionPoints(fromID, toID int) (fromX, fromY, toX, toY int) {
-	if fromID < 0 || fromID >= len(c.boxes) || toID < 0 || toID >= len(c.boxes) {
-		return 0, 0, 0, 0
-	}
-	fromBox := c.boxes[fromID]
-	toBox := c.boxes[toID]
-	preferHorizontal := abs((fromBox.X+fromBox.Width/2)-(toBox.X+toBox.Width/2)) > abs((fromBox.Y+fromBox.Height/2)-(toBox.Y+toBox.Height/2))
-	return c.calculateConnectionPointsPreservingOrientation(fromID, toID, preferHorizontal)
-}
+func center(box Box) (int, int) { return box.X + box.Width/2, box.Y + box.Height/2 }
 
 func (c *Canvas) calculateConnectionPointsPreservingOrientation(fromID, toID int, preferHorizontal bool) (fromX, fromY, toX, toY int) {
 	fromBox, okFrom := c.box(fromID)
@@ -92,21 +99,21 @@ func (c *Canvas) calculateConnectionPointsPreservingOrientation(fromID, toID int
 	if !okFrom || !okTo {
 		return 0, 0, 0, 0
 	}
+	fcx, fcy := center(fromBox)
+	tcx, tcy := center(toBox)
 
 	if preferHorizontal {
 		dir := 1
-		if fromBox.X+fromBox.Width/2 >= toBox.X+toBox.Width/2 {
+		if fcx >= tcx {
 			dir = -1
 		}
-		return faceX(fromBox, dir), fromBox.Y + fromBox.Height/2,
-			faceX(toBox, -dir), toBox.Y + toBox.Height/2
+		return faceX(fromBox, dir), fcy, faceX(toBox, -dir), tcy
 	}
 	dir := 1
-	if fromBox.Y+fromBox.Height/2 >= toBox.Y+toBox.Height/2 {
+	if fcy >= tcy {
 		dir = -1
 	}
-	return fromBox.X + fromBox.Width/2, faceY(fromBox, dir),
-		toBox.X + toBox.Width/2, faceY(toBox, -dir)
+	return fcx, faceY(fromBox, dir), tcx, faceY(toBox, -dir)
 }
 
 func faceX(box Box, dir int) int {
@@ -124,55 +131,40 @@ func faceY(box Box, dir int) int {
 }
 
 func (c *Canvas) AddConnection(fromID, toID int) {
-	if fromID >= len(c.boxes) || toID >= len(c.boxes) {
+	fromBox, okFrom := c.box(fromID)
+	toBox, okTo := c.box(toID)
+	if !okFrom || !okTo {
 		return
 	}
-
-	fromX, fromY, toX, toY := c.CalculateConnectionPoints(fromID, toID)
-
-	connection := Connection{
-		FromID: fromID,
-		ToID:   toID,
-		FromX:  fromX,
-		FromY:  fromY,
-		ToX:    toX,
-		ToY:    toY,
-		Color:  -1,
-	}
-	c.connections = append(c.connections, connection)
+	fcx, fcy := center(fromBox)
+	tcx, tcy := center(toBox)
+	fromX, fromY, toX, toY := c.calculateConnectionPointsPreservingOrientation(fromID, toID, abs(fcx-tcx) > abs(fcy-tcy))
+	c.connections = append(c.connections, Connection{
+		FromID: fromID, ToID: toID,
+		FromX: fromX, FromY: fromY, ToX: toX, ToY: toY,
+		Color: -1,
+	})
 }
 
-func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY int, waypoints []Point) {
-	if fromID != -1 && fromID >= len(c.boxes) {
-		return
+func (c *Canvas) AddConnectionWithWaypoints(fromID, toID, fromX, fromY, toX, toY int, waypoints []Point) (Connection, bool) {
+	if fromID >= len(c.boxes) || toID >= len(c.boxes) {
+		return Connection{}, false
 	}
-	if toID != -1 && toID >= len(c.boxes) {
-		return
-	}
-
-	connection := Connection{
-		FromID:    fromID,
-		ToID:      toID,
-		FromX:     fromX,
-		FromY:     fromY,
-		ToX:       toX,
-		ToY:       toY,
+	conn := Connection{
+		FromID: fromID, ToID: toID,
+		FromX: fromX, FromY: fromY, ToX: toX, ToY: toY,
 		Waypoints: waypoints,
-		ArrowFrom: false,
 		ArrowTo:   true,
 		Color:     -1,
 	}
-	c.connections = append(c.connections, connection)
+	c.connections = append(c.connections, conn)
+	return conn, true
 }
 
 func (c *Canvas) RemoveSpecificConnection(target Connection) {
-	newConnections := make([]Connection, 0)
-	for _, connection := range c.connections {
-		if !c.connectionsEqual(connection, target) {
-			newConnections = append(newConnections, connection)
-		}
-	}
-	c.connections = newConnections
+	c.connections = slices.DeleteFunc(c.connections, func(conn Connection) bool {
+		return connectionsEqual(conn, target)
+	})
 }
 
 func (c *Canvas) CycleConnectionArrowState(connIdx int) {
@@ -180,21 +172,19 @@ func (c *Canvas) CycleConnectionArrowState(connIdx int) {
 		return
 	}
 	conn := &c.connections[connIdx]
-	if !conn.ArrowFrom && !conn.ArrowTo {
+	switch {
+	case !conn.ArrowFrom && !conn.ArrowTo:
 		conn.ArrowTo = true
-	} else if !conn.ArrowFrom && conn.ArrowTo {
-		conn.ArrowFrom = true
-		conn.ArrowTo = false
-	} else if conn.ArrowFrom && !conn.ArrowTo {
-		conn.ArrowFrom = true
+	case !conn.ArrowFrom:
+		conn.ArrowFrom, conn.ArrowTo = true, false
+	case !conn.ArrowTo:
 		conn.ArrowTo = true
-	} else {
-		conn.ArrowFrom = false
-		conn.ArrowTo = false
+	default:
+		conn.ArrowFrom, conn.ArrowTo = false, false
 	}
 }
 
-func (c *Canvas) connectionsEqual(a, b Connection) bool {
+func connectionsEqual(a, b Connection) bool {
 	return a.FromID == b.FromID && a.ToID == b.ToID &&
 		a.FromX == b.FromX && a.FromY == b.FromY &&
 		a.ToX == b.ToX && a.ToY == b.ToY &&
@@ -210,179 +200,117 @@ type connectionPathInfo struct {
 	points  []Point
 }
 
-func (c *Canvas) updateBranchConnections(updatedConnections []connectionPathInfo) {
+func (c *Canvas) updateBranchConnections(updated []connectionPathInfo) {
 	for i := range c.connections {
 		conn := &c.connections[i]
-
-		if conn.FromID < 0 {
-			for _, updated := range updatedConnections {
-				if updated.connIdx == i {
-					continue
-				}
-				if c.PointWasOnPath(conn.FromX, conn.FromY, updated.points) {
-					updatedConn := c.connections[updated.connIdx]
-					newPoints := []Point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
-					newPoints = append(newPoints, updatedConn.Waypoints...)
-					newPoints = append(newPoints, Point{X: updatedConn.ToX, Y: updatedConn.ToY})
-					newX, newY := c.findNearestPointOnPath(conn.FromX, conn.FromY, newPoints)
-					if newX == conn.FromX && newY == conn.FromY {
-						break
-					}
-					if !adjustEndpointKeepingPath(conn, true, newX-conn.FromX, newY-conn.FromY) {
-						if conn.ToID >= 0 && conn.ToID < len(c.boxes) {
-							toBox := c.boxes[conn.ToID]
-							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, &toBox)
-						}
-					}
-					simplifyConnectionPath(conn)
-					break
-				}
+		for _, from := range []bool{true, false} {
+			id, other, x, y := conn.ToID, conn.FromID, &conn.ToX, &conn.ToY
+			if from {
+				id, other, x, y = conn.FromID, conn.ToID, &conn.FromX, &conn.FromY
 			}
-		}
-
-		if conn.ToID < 0 {
-			for _, updated := range updatedConnections {
-				if updated.connIdx == i {
+			if id >= 0 {
+				continue
+			}
+			for _, u := range updated {
+				if u.connIdx == i || !pointWasOnPath(*x, *y, u.points) {
 					continue
 				}
-				if c.PointWasOnPath(conn.ToX, conn.ToY, updated.points) {
-					updatedConn := c.connections[updated.connIdx]
-					newPoints := []Point{{X: updatedConn.FromX, Y: updatedConn.FromY}}
-					newPoints = append(newPoints, updatedConn.Waypoints...)
-					newPoints = append(newPoints, Point{X: updatedConn.ToX, Y: updatedConn.ToY})
-					newX, newY := c.findNearestPointOnPath(conn.ToX, conn.ToY, newPoints)
-					if newX == conn.ToX && newY == conn.ToY {
-						break
-					}
-					if !adjustEndpointKeepingPath(conn, false, newX-conn.ToX, newY-conn.ToY) {
-						if conn.FromID >= 0 && conn.FromID < len(c.boxes) {
-							fromBox := c.boxes[conn.FromID]
-							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, &fromBox, nil)
-						}
-					}
-					simplifyConnectionPath(conn)
+				newX, newY := findNearestPointOnPath(*x, *y, connPoints(c.connections[u.connIdx]))
+				if newX == *x && newY == *y {
 					break
 				}
+				if !adjustEndpointKeepingPath(conn, from, newX-*x, newY-*y) {
+					if box, ok := c.box(other); ok {
+						if from {
+							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, &box)
+						} else {
+							conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, &box, nil)
+						}
+					}
+				}
+				simplifyConnectionPath(conn)
+				break
 			}
 		}
 	}
 }
 
-func (c *Canvas) PointWasOnPath(x, y int, pathPoints []Point) bool {
+func pointWasOnPath(x, y int, pathPoints []Point) bool {
 	for i := 0; i < len(pathPoints)-1; i++ {
-		if c.pointOnSegment(x, y, pathPoints[i].X, pathPoints[i].Y, pathPoints[i+1].X, pathPoints[i+1].Y) {
+		if pointOnSegment(x, y, pathPoints[i], pathPoints[i+1]) {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *Canvas) pointOnSegment(px, py, x1, y1, x2, y2 int) bool {
-
-	minX, maxX := min(x1, x2), max(x1, x2)
-	minY, maxY := min(y1, y2), max(y1, y2)
-
-	tolerance := 2
+func pointOnSegment(px, py int, a, b Point) bool {
+	const tolerance = 2
+	minX, maxX := minmax(a.X, b.X)
+	minY, maxY := minmax(a.Y, b.Y)
 	if px < minX-tolerance || px > maxX+tolerance || py < minY-tolerance || py > maxY+tolerance {
 		return false
 	}
-
-	if y1 == y2 {
-		return abs(py-y1) <= tolerance && px >= minX-tolerance && px <= maxX+tolerance
+	switch {
+	case a.Y == b.Y:
+		return abs(py-a.Y) <= tolerance
+	case a.X == b.X:
+		return abs(px-a.X) <= tolerance
 	}
-
-	if x1 == x2 {
-		return abs(px-x1) <= tolerance && py >= minY-tolerance && py <= maxY+tolerance
-	}
-
-	dist1 := abs(px-x1) + abs(py-y1)
-	dist2 := abs(px-x2) + abs(py-y2)
-	return dist1 <= tolerance*2 || dist2 <= tolerance*2
-}
-
-func (c *Canvas) findNearestPointOnPath(x, y int, pathPoints []Point) (int, int) {
-	bestX, bestY := x, y
-	bestDist := -1
-
-	for i := 0; i < len(pathPoints)-1; i++ {
-		segX, segY := closestOnSegment(pathPoints[i], pathPoints[i+1], x, y)
-		dist := abs(segX-x) + abs(segY-y)
-		if bestDist == -1 || dist < bestDist {
-			bestDist = dist
-			bestX, bestY = segX, segY
-		}
-	}
-
-	return bestX, bestY
+	return manhattan(px, py, a.X, a.Y) <= tolerance*2 || manhattan(px, py, b.X, b.Y) <= tolerance*2
 }
 
 func (c *Canvas) rerouteConnectionsForMovedBox(id, deltaX, deltaY int) {
-	if id < 0 || id >= len(c.boxes) || (deltaX == 0 && deltaY == 0) {
+	box := c.boxPtr(id)
+	if box == nil || (deltaX == 0 && deltaY == 0) {
 		return
 	}
-	box := &c.boxes[id]
 
-	var updatedConnections []connectionPathInfo
+	var updated []connectionPathInfo
 
 	for i := range c.connections {
 		conn := &c.connections[i]
-
-		isFromThisBox := conn.FromID == id
-		isToThisBox := conn.ToID == id
-		if !isFromThisBox && !isToThisBox {
+		isFrom := conn.FromID == id
+		if !isFrom && conn.ToID != id {
 			continue
 		}
+		updated = append(updated, connectionPathInfo{connIdx: i, points: connPoints(*conn)})
 
-		oldPoints := []Point{{X: conn.FromX, Y: conn.FromY}}
-		oldPoints = append(oldPoints, conn.Waypoints...)
-		oldPoints = append(oldPoints, Point{X: conn.ToX, Y: conn.ToY})
-		updatedConnections = append(updatedConnections, connectionPathInfo{connIdx: i, points: oldPoints})
-
-		fromIsValidBox := conn.FromID >= 0 && conn.FromID < len(c.boxes)
-		toIsValidBox := conn.ToID >= 0 && conn.ToID < len(c.boxes)
+		ax, ay, ref := &conn.ToX, &conn.ToY, Point{conn.FromX, conn.FromY}
+		if isFrom {
+			ax, ay, ref = &conn.FromX, &conn.FromY, Point{conn.ToX, conn.ToY}
+		}
+		if n := len(conn.Waypoints); n > 0 {
+			ref = conn.Waypoints[n-1]
+			if isFrom {
+				ref = conn.Waypoints[0]
+			}
+		}
 
 		regenerate := false
-		if isFromThisBox {
-			refX, refY := conn.ToX, conn.ToY
-			if len(conn.Waypoints) > 0 {
-				refX, refY = conn.Waypoints[0].X, conn.Waypoints[0].Y
-			}
-			if c.anchorFacesTarget(*box, conn.FromX+deltaX, conn.FromY+deltaY, refX, refY) {
-				if !adjustEndpointKeepingPath(conn, true, deltaX, deltaY) {
-					regenerate = true
-				}
-			} else {
-				conn.FromX, conn.FromY = c.reanchor(*box, conn.FromX+deltaX, conn.FromY+deltaY, refX, refY)
-				regenerate = true
-			}
+		if c.anchorFacesTarget(*box, *ax+deltaX, *ay+deltaY, ref.X, ref.Y) {
+			regenerate = !adjustEndpointKeepingPath(conn, isFrom, deltaX, deltaY)
 		} else {
-			refX, refY := conn.FromX, conn.FromY
-			if len(conn.Waypoints) > 0 {
-				refX, refY = conn.Waypoints[len(conn.Waypoints)-1].X, conn.Waypoints[len(conn.Waypoints)-1].Y
-			}
-			if c.anchorFacesTarget(*box, conn.ToX+deltaX, conn.ToY+deltaY, refX, refY) {
-				if !adjustEndpointKeepingPath(conn, false, deltaX, deltaY) {
-					regenerate = true
-				}
-			} else {
-				conn.ToX, conn.ToY = c.reanchor(*box, conn.ToX+deltaX, conn.ToY+deltaY, refX, refY)
-				regenerate = true
-			}
+			*ax, *ay = c.reanchor(*box, *ax+deltaX, *ay+deltaY, ref.X, ref.Y)
+			regenerate = true
 		}
 
 		if regenerate {
-			if fromIsValidBox && toIsValidBox {
-				conn.Waypoints = c.createFlexibleWaypoints(conn, c.boxes[conn.FromID], c.boxes[conn.ToID])
-			} else if isFromThisBox {
+			fromBox, okFrom := c.box(conn.FromID)
+			toBox, okTo := c.box(conn.ToID)
+			switch {
+			case okFrom && okTo:
+				conn.Waypoints = c.createFlexibleWaypoints(conn, fromBox, toBox)
+			case isFrom:
 				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, box, nil)
-			} else {
+			default:
 				conn.Waypoints = c.createFlexibleWaypointsForLineConnection(conn, nil, box)
 			}
 		}
 		simplifyConnectionPath(conn)
 	}
 
-	c.updateBranchConnections(updatedConnections)
+	c.updateBranchConnections(updated)
 }
 
 func (c *Canvas) reanchor(box Box, ax, ay, targetX, targetY int) (int, int) {
@@ -402,7 +330,7 @@ func (c *Canvas) reanchor(box Box, ax, ay, targetX, targetY int) (int, int) {
 			return ax, box.Y + box.Height - 1
 		}
 	}
-	return c.findBestAnchorPoint(box, targetX, targetY)
+	return findBestAnchorPoint(box, targetX, targetY)
 }
 
 func (c *Canvas) anchorFacesTarget(box Box, anchorX, anchorY, targetX, targetY int) bool {
@@ -421,37 +349,22 @@ func (c *Canvas) anchorFacesTarget(box Box, anchorX, anchorY, targetX, targetY i
 }
 
 func adjustEndpointKeepingPath(conn *Connection, movingFrom bool, dx, dy int) bool {
+	x, y, wi := &conn.ToX, &conn.ToY, len(conn.Waypoints)-1
 	if movingFrom {
-		oldX, oldY := conn.FromX, conn.FromY
-		conn.FromX += dx
-		conn.FromY += dy
-		if len(conn.Waypoints) == 0 {
-			return false
-		}
-		w := &conn.Waypoints[0]
-		switch {
-		case w.Y == oldY:
-			w.Y = conn.FromY
-		case w.X == oldX:
-			w.X = conn.FromX
-		default:
-			return false
-		}
-		return true
+		x, y, wi = &conn.FromX, &conn.FromY, 0
 	}
-
-	oldX, oldY := conn.ToX, conn.ToY
-	conn.ToX += dx
-	conn.ToY += dy
+	oldX, oldY := *x, *y
+	*x += dx
+	*y += dy
 	if len(conn.Waypoints) == 0 {
 		return false
 	}
-	w := &conn.Waypoints[len(conn.Waypoints)-1]
+	w := &conn.Waypoints[wi]
 	switch {
 	case w.Y == oldY:
-		w.Y = conn.ToY
+		w.Y = *y
 	case w.X == oldX:
-		w.X = conn.ToX
+		w.X = *x
 	default:
 		return false
 	}
@@ -462,20 +375,11 @@ func simplifyConnectionPath(conn *Connection) {
 	if len(conn.Waypoints) == 0 {
 		return
 	}
-	pts := make([]Point, 0, len(conn.Waypoints)+2)
-	pts = append(pts, Point{X: conn.FromX, Y: conn.FromY})
-	pts = append(pts, conn.Waypoints...)
-	pts = append(pts, Point{X: conn.ToX, Y: conn.ToY})
-
+	pts := connPoints(*conn)
 	kept := pts[:1]
 	for i := 1; i < len(pts)-1; i++ {
-		prev := kept[len(kept)-1]
-		cur := pts[i]
-		next := pts[i+1]
-		if cur == prev {
-			continue
-		}
-		if (prev.X == cur.X && cur.X == next.X) || (prev.Y == cur.Y && cur.Y == next.Y) {
+		prev, cur, next := kept[len(kept)-1], pts[i], pts[i+1]
+		if cur == prev || (prev.X == cur.X && cur.X == next.X) || (prev.Y == cur.Y && cur.Y == next.Y) {
 			continue
 		}
 		kept = append(kept, cur)
@@ -487,60 +391,17 @@ func simplifyConnectionPath(conn *Connection) {
 	if len(kept) <= 2 {
 		conn.Waypoints = nil
 	} else {
-		conn.Waypoints = append([]Point(nil), kept[1:len(kept)-1]...)
+		conn.Waypoints = slices.Clone(kept[1 : len(kept)-1])
 	}
 }
 
-func (c *Canvas) findBestAnchorPoint(box Box, targetX, targetY int) (int, int) {
-	boxCenterX := box.X + box.Width/2
-	boxCenterY := box.Y + box.Height/2
-
-	dx := targetX - boxCenterX
-	dy := targetY - boxCenterY
-
+func findBestAnchorPoint(box Box, targetX, targetY int) (int, int) {
+	cx, cy := center(box)
+	dx, dy := targetX-cx, targetY-cy
 	if abs(dx) > abs(dy) {
-
-		if dx > 0 {
-
-			y := targetY
-			if y < box.Y {
-				y = box.Y
-			} else if y >= box.Y+box.Height {
-				y = box.Y + box.Height - 1
-			}
-			return box.X + box.Width - 1, y
-		} else {
-
-			y := targetY
-			if y < box.Y {
-				y = box.Y
-			} else if y >= box.Y+box.Height {
-				y = box.Y + box.Height - 1
-			}
-			return box.X, y
-		}
-	} else {
-
-		if dy > 0 {
-
-			x := targetX
-			if x < box.X {
-				x = box.X
-			} else if x >= box.X+box.Width {
-				x = box.X + box.Width - 1
-			}
-			return x, box.Y + box.Height - 1
-		} else {
-
-			x := targetX
-			if x < box.X {
-				x = box.X
-			} else if x >= box.X+box.Width {
-				x = box.X + box.Width - 1
-			}
-			return x, box.Y
-		}
+		return faceX(box, dx), clamp(targetY, box.Y, box.Y+box.Height-1)
 	}
+	return clamp(targetX, box.X, box.X+box.Width-1), faceY(box, dy)
 }
 
 func edgeAxis(edge string) (horiz bool, dir int) {
@@ -599,7 +460,7 @@ func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) [
 	case toEdge == "unknown":
 		return elbow
 
-	case toHoriz == horiz && toDir != dir: // facing each other
+	case toHoriz == horiz && toDir != dir:
 		if dir*(ta-fa) > 0 {
 			mid := (fa + ta) / 2
 			return []Point{pt(horiz, mid, fb), pt(horiz, mid, tb)}
@@ -607,12 +468,12 @@ func (c *Canvas) createFlexibleWaypoints(conn *Connection, fromBox, toBox Box) [
 		off := outward(dir, fa, ta, parallelClearance(horiz))
 		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
 
-	case toHoriz == horiz: // both facing the same way
+	case toHoriz == horiz:
 		fFar, tFar := boxFar(fromBox, horiz, dir), boxFar(toBox, horiz, dir)
 		off := outward(dir, fFar, tFar, parallelClearance(horiz))
 		return []Point{pt(horiz, off, fb), pt(horiz, off, tb)}
 
-	default: // perpendicular edges
+	default:
 		if dir*(ta-fa) > 0 && toDir*(tb-fb) < 0 {
 			return elbow
 		}
@@ -670,13 +531,14 @@ func (c *Canvas) createFlexibleWaypointsForLineConnection(conn *Connection, from
 }
 
 func (c *Canvas) GetConnectionEdge(box Box, x, y int) string {
-	if x == box.X+box.Width-1 {
+	switch {
+	case x == box.X+box.Width-1:
 		return "right"
-	} else if x == box.X {
+	case x == box.X:
 		return "left"
-	} else if y == box.Y+box.Height-1 {
+	case y == box.Y+box.Height-1:
 		return "bottom"
-	} else if y == box.Y {
+	case y == box.Y:
 		return "top"
 	}
 	return "unknown"
@@ -685,12 +547,7 @@ func (c *Canvas) GetConnectionEdge(box Box, x, y int) string {
 func (c *Canvas) SnapshotConnections() []Connection {
 	snap := make([]Connection, len(c.connections))
 	for i, conn := range c.connections {
-		snap[i] = conn
-		if len(conn.Waypoints) > 0 {
-			snap[i].Waypoints = append([]Point(nil), conn.Waypoints...)
-		} else {
-			snap[i].Waypoints = nil
-		}
+		snap[i] = cloneConn(conn)
 	}
 	return snap
 }
@@ -700,22 +557,15 @@ func (c *Canvas) RestoreConnectionsSnapshot(snap []Connection) {
 		return
 	}
 	for i, conn := range snap {
-		c.connections[i] = conn
-		if len(conn.Waypoints) > 0 {
-			c.connections[i].Waypoints = append([]Point(nil), conn.Waypoints...)
-		} else {
-			c.connections[i].Waypoints = nil
-		}
+		c.connections[i] = cloneConn(conn)
 	}
 }
 
 func (c *Canvas) RestoreConnections(connections []Connection) {
-	for _, origConn := range connections {
-
+	for _, orig := range connections {
 		for i := range c.connections {
-			if c.connections[i].FromID == origConn.FromID && c.connections[i].ToID == origConn.ToID {
-
-				c.connections[i] = origConn
+			if c.connections[i].FromID == orig.FromID && c.connections[i].ToID == orig.ToID {
+				c.connections[i] = orig
 				break
 			}
 		}
@@ -726,20 +576,7 @@ func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
 	var result []Connection
 	for _, conn := range c.connections {
 		if conn.FromID == boxID || conn.ToID == boxID {
-			connCopy := Connection{
-				FromID:    conn.FromID,
-				ToID:      conn.ToID,
-				FromX:     conn.FromX,
-				FromY:     conn.FromY,
-				ToX:       conn.ToX,
-				ToY:       conn.ToY,
-				ArrowFrom: conn.ArrowFrom,
-				ArrowTo:   conn.ArrowTo,
-				Waypoints: make([]Point, len(conn.Waypoints)),
-				Color:     conn.Color,
-			}
-			copy(connCopy.Waypoints, conn.Waypoints)
-			result = append(result, connCopy)
+			result = append(result, cloneConn(conn))
 		}
 	}
 	return result
@@ -747,63 +584,40 @@ func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
 
 func (c *Canvas) isPointInBoxScreen(x, y int, excludeFromID, excludeToID int, panX, panY int) bool {
 	for i, box := range c.boxes {
-		boxScreenX := box.X - panX
-		boxScreenY := box.Y - panY
-		if x > boxScreenX && x < boxScreenX+box.Width-1 && y > boxScreenY && y < boxScreenY+box.Height-1 {
-			if i != excludeFromID && i != excludeToID {
-				return true
-			}
+		if i == excludeFromID || i == excludeToID {
+			continue
+		}
+		bx, by := box.X-panX, box.Y-panY
+		if x > bx && x < bx+box.Width-1 && y > by && y < by+box.Height-1 {
+			return true
 		}
 	}
 	return false
+}
+
+func segmentCells(cells []Point, a, b Point) []Point {
+	if a.X != b.X && a.Y != b.Y {
+		corner := Point{b.X, a.Y}
+		return segmentCells(segmentCells(cells, a, corner), corner, b)
+	}
+	x0, x1 := minmax(a.X, b.X)
+	y0, y1 := minmax(a.Y, b.Y)
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			cells = append(cells, Point{x, y})
+		}
+	}
+	return cells
 }
 
 func (c *Canvas) GetConnectionCells(connIdx int) []Point {
 	if connIdx < 0 || connIdx >= len(c.connections) {
 		return nil
 	}
-	conn := c.connections[connIdx]
-	cells := make([]Point, 0)
-	points := []Point{{conn.FromX, conn.FromY}}
-	points = append(points, conn.Waypoints...)
-	points = append(points, Point{conn.ToX, conn.ToY})
+	points := connPoints(c.connections[connIdx])
+	var cells []Point
 	for i := 0; i < len(points)-1; i++ {
-		from := points[i]
-		to := points[i+1]
-		if from.X == to.X {
-			startY, endY := from.Y, to.Y
-			if startY > endY {
-				startY, endY = endY, startY
-			}
-			for y := startY; y <= endY; y++ {
-				cells = append(cells, Point{X: from.X, Y: y})
-			}
-		} else if from.Y == to.Y {
-			startX, endX := from.X, to.X
-			if startX > endX {
-				startX, endX = endX, startX
-			}
-			for x := startX; x <= endX; x++ {
-				cells = append(cells, Point{X: x, Y: from.Y})
-			}
-		} else {
-			cornerX := to.X
-			cornerY := from.Y
-			startX, endX := from.X, cornerX
-			if startX > endX {
-				startX, endX = endX, startX
-			}
-			for x := startX; x <= endX; x++ {
-				cells = append(cells, Point{X: x, Y: from.Y})
-			}
-			startY, endY := cornerY, to.Y
-			if startY > endY {
-				startY, endY = endY, startY
-			}
-			for y := startY; y <= endY; y++ {
-				cells = append(cells, Point{X: cornerX, Y: y})
-			}
-		}
+		cells = segmentCells(cells, points[i], points[i+1])
 	}
 	return cells
 }

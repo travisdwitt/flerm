@@ -10,98 +10,145 @@ func (m *model) applyHighlight(x, y, color int) {
 
 func (m *model) undo() {
 	buf := m.getCurrentBuffer()
-	if buf == nil || len(buf.undoStack) == 0 {
-		return
+	if n := len(buf.undoStack); n > 0 {
+		action := buf.undoStack[n-1]
+		buf.undoStack = buf.undoStack[:n-1]
+		m.applyAction(action, false)
+		buf.redoStack = append(buf.redoStack, action)
 	}
+}
 
-	lastIndex := len(buf.undoStack) - 1
-	action := buf.undoStack[lastIndex]
-	buf.undoStack = buf.undoStack[:lastIndex]
+func (m *model) redo() {
+	buf := m.getCurrentBuffer()
+	if n := len(buf.redoStack); n > 0 {
+		action := buf.redoStack[n-1]
+		buf.redoStack = buf.redoStack[:n-1]
+		m.applyAction(action, true)
+		buf.undoStack = append(buf.undoStack, action)
+	}
+}
 
-	switch action.Type {
-	case ActionAddBox:
-		data := action.Inverse.(DeleteBoxData)
-		m.getCanvas().DeleteBox(data.ID)
-	case ActionDeleteBox:
-		data := action.Inverse.(AddBoxData)
-		m.getCanvas().AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-		inverse := action.Data.(DeleteBoxData)
-		for _, connection := range inverse.Connections {
-			m.getCanvas().RestoreConnection(connection)
+func (m *model) applyAction(a Action, forward bool) {
+	canvas := m.getCanvas()
+	data, inv := a.Data, a.Inverse
+	if !forward {
+		data, inv = inv, data
+	}
+	switch a.Type {
+	case ActionAddBox, ActionDeleteBox:
+		if (a.Type == ActionAddBox) != forward {
+			canvas.DeleteBox(data.(DeleteBoxData).ID)
+			break
 		}
-		for _, highlight := range inverse.Highlights {
-			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
+		add, del := data.(AddData), inv.(DeleteBoxData)
+		canvas.AddBoxWithID(add.X, add.Y, add.Text, add.ID)
+		for _, conn := range del.Connections {
+			canvas.RestoreConnection(conn)
+		}
+		for _, h := range del.Highlights {
+			canvas.SetHighlight(h.X, h.Y, h.Color)
+		}
+	case ActionDeleteText:
+		if forward {
+			canvas.DeleteText(data.(DeleteTextData).ID)
+			break
+		}
+		add, del := data.(AddData), inv.(DeleteTextData)
+		canvas.AddTextWithID(add.X, add.Y, add.Text, add.ID)
+		for _, h := range del.Highlights {
+			canvas.SetHighlight(h.X, h.Y, h.Color)
 		}
 	case ActionEditBox:
-		data := action.Inverse.(EditBoxData)
-		m.getCanvas().SetBoxText(data.ID, data.NewText)
+		d := data.(EditData)
+		canvas.SetBoxText(d.ID, d.NewText)
 	case ActionEditText:
-		data := action.Inverse.(EditTextData)
-		m.getCanvas().SetTextText(data.ID, data.NewText)
-	case ActionDeleteText:
-		data := action.Inverse.(AddTextData)
-		m.getCanvas().AddTextWithID(data.X, data.Y, data.Text, data.ID)
-		inverse := action.Data.(DeleteTextData)
-		for _, highlight := range inverse.Highlights {
-			m.getCanvas().SetHighlight(highlight.X, highlight.Y, highlight.Color)
-		}
+		d := data.(EditData)
+		canvas.SetTextText(d.ID, d.NewText)
+	case ActionEditTitle:
+		d := data.(EditData)
+		canvas.SetBoxTitle(d.ID, d.NewText)
 	case ActionResizeBox:
-		data := action.Inverse.(OriginalBoxState)
-		m.getCanvas().SetBoxSize(data.ID, data.Width, data.Height)
-	case ActionMoveBox:
-		data := action.Inverse.(OriginalBoxState)
-		moveData := action.Data.(MoveBoxData)
-		m.getCanvas().SetBoxPositionOnly(data.ID, data.X, data.Y)
-		if len(data.Connections) > 0 {
-			m.getCanvas().RestoreConnections(data.Connections)
+		if forward {
+			d := data.(ResizeBoxData)
+			canvas.ResizeBox(d.ID, d.DeltaWidth, d.DeltaHeight)
+		} else {
+			d := data.(OriginalBoxState)
+			canvas.SetBoxSize(d.ID, d.Width, d.Height)
 		}
-		m.moveRecordedHighlights(data.Highlights, moveData.DeltaX, moveData.DeltaY, 0, 0)
-	case ActionMoveText:
-		data := action.Inverse.(OriginalTextState)
-		moveData := action.Data.(MoveTextData)
-		m.getCanvas().SetTextPosition(data.ID, data.X, data.Y)
-		m.moveRecordedHighlights(data.Highlights, moveData.DeltaX, moveData.DeltaY, 0, 0)
-	case ActionAddConnection:
-		data := action.Inverse.(AddConnectionData)
-		m.getCanvas().RemoveSpecificConnection(data.Connection)
-	case ActionDeleteConnection:
-		data := action.Inverse.(AddConnectionData)
-		m.getCanvas().RestoreConnection(data.Connection)
+	case ActionMoveBox, ActionMoveText:
+		isBox := a.Type == ActionMoveBox
+		if forward {
+			d := data.(MoveData)
+			if isBox {
+				canvas.MoveBox(d.ID, d.DeltaX, d.DeltaY)
+			} else {
+				canvas.MoveText(d.ID, d.DeltaX, d.DeltaY)
+			}
+			m.moveRecordedHighlights(inv.(OriginalBoxState).Highlights, 0, 0, d.DeltaX, d.DeltaY)
+			break
+		}
+		d, mv := data.(OriginalBoxState), inv.(MoveData)
+		if isBox {
+			canvas.SetBoxPositionOnly(d.ID, d.X, d.Y)
+			canvas.RestoreConnections(d.Connections)
+		} else {
+			canvas.SetTextPosition(d.ID, d.X, d.Y)
+		}
+		m.moveRecordedHighlights(d.Highlights, mv.DeltaX, mv.DeltaY, 0, 0)
+	case ActionAddConnection, ActionDeleteConnection:
+		conn := data.(Connection)
+		if (a.Type == ActionAddConnection) == forward {
+			canvas.RestoreConnection(conn)
+		} else {
+			canvas.RemoveSpecificConnection(conn)
+		}
 	case ActionCycleArrow:
-		cycleData := action.Inverse.(CycleArrowData)
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().Connections()) {
-			m.getCanvas().Connections()[cycleData.ConnIdx] = cycleData.OldConn
+		d := data.(CycleArrowData)
+		conn := d.NewConn
+		if !forward {
+			conn = d.OldConn
+		}
+		if d.ConnIdx >= 0 && d.ConnIdx < len(canvas.Connections()) {
+			canvas.Connections()[d.ConnIdx] = conn
 		}
 	case ActionHighlight:
-		data := action.Inverse.(HighlightData)
-		for _, cell := range data.Cells {
-			m.applyHighlight(cell.X, cell.Y, cell.Color)
+		for _, c := range data.(HighlightData).Cells {
+			m.applyHighlight(c.X, c.Y, c.Color)
 		}
 	case ActionChangeBorderStyle:
-		data := action.Inverse.(BorderStyleData)
-		m.getCanvas().SetBorderStyle(data.BoxID, data.OldStyle)
-	case ActionEditTitle:
-		data := action.Inverse.(EditTitleData)
-		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().Boxes()) {
-			m.getCanvas().Boxes()[data.BoxID].Title = data.NewTitle
-			m.getCanvas().Boxes()[data.BoxID].UpdateSize()
+		d := data.(BorderStyleData)
+		style := d.NewStyle
+		if !forward {
+			style = d.OldStyle
 		}
+		canvas.SetBorderStyle(d.BoxID, style)
 	case ActionSetColor:
-		data := action.Inverse.(ColorData)
-		m.applyObjectColor(data.Kind, data.ID, data.OldColor)
+		d := data.(ColorData)
+		color := d.NewColor
+		if !forward {
+			color = d.OldColor
+		}
+		m.applyObjectColor(d.Kind, d.ID, color)
 	case ActionGroupMove:
-		data := action.Inverse.(GroupMoveData)
-		m.applyGroupMoveState(data.After, data.Before)
-	case ActionDuplicate:
-		data := action.Inverse.(DuplicateData)
-		if data.IsText {
-			m.getCanvas().DeleteText(data.NewID)
+		d := data.(GroupMoveData)
+		if forward {
+			m.applyGroupMoveState(d.Before, d.After)
 		} else {
-			m.getCanvas().DeleteBox(data.NewID)
+			m.applyGroupMoveState(d.After, d.Before)
+		}
+	case ActionDuplicate:
+		d := data.(DuplicateData)
+		switch {
+		case forward && d.IsText:
+			canvas.DuplicateText(d.SrcID, d.DX, d.DY)
+		case forward:
+			canvas.DuplicateBox(d.SrcID, d.DX, d.DY)
+		case d.IsText:
+			canvas.DeleteText(d.NewID)
+		default:
+			canvas.DeleteBox(d.NewID)
 		}
 	}
-
-	buf.redoStack = append(buf.redoStack, action)
 }
 
 func (m *model) applyObjectColor(kind, id, color int) {
@@ -113,84 +160,4 @@ func (m *model) applyObjectColor(kind, id, color int) {
 	case ColorKindText:
 		m.getCanvas().SetTextColor(id, color)
 	}
-}
-
-func (m *model) redo() {
-	buf := m.getCurrentBuffer()
-	if buf == nil || len(buf.redoStack) == 0 {
-		return
-	}
-
-	lastIndex := len(buf.redoStack) - 1
-	action := buf.redoStack[lastIndex]
-	buf.redoStack = buf.redoStack[:lastIndex]
-
-	switch action.Type {
-	case ActionAddBox:
-		data := action.Data.(AddBoxData)
-		m.getCanvas().AddBoxWithID(data.X, data.Y, data.Text, data.ID)
-	case ActionDeleteBox:
-		data := action.Data.(DeleteBoxData)
-		m.getCanvas().DeleteBox(data.ID)
-	case ActionEditBox:
-		data := action.Data.(EditBoxData)
-		m.getCanvas().SetBoxText(data.ID, data.NewText)
-	case ActionEditText:
-		data := action.Data.(EditTextData)
-		m.getCanvas().SetTextText(data.ID, data.NewText)
-	case ActionDeleteText:
-		data := action.Data.(DeleteTextData)
-		m.getCanvas().DeleteText(data.ID)
-	case ActionResizeBox:
-		data := action.Data.(ResizeBoxData)
-		m.getCanvas().ResizeBox(data.ID, data.DeltaWidth, data.DeltaHeight)
-	case ActionMoveBox:
-		data := action.Data.(MoveBoxData)
-		m.getCanvas().MoveBox(data.ID, data.DeltaX, data.DeltaY)
-		m.moveRecordedHighlights(action.Inverse.(OriginalBoxState).Highlights, 0, 0, data.DeltaX, data.DeltaY)
-	case ActionMoveText:
-		data := action.Data.(MoveTextData)
-		m.getCanvas().MoveText(data.ID, data.DeltaX, data.DeltaY)
-		m.moveRecordedHighlights(action.Inverse.(OriginalTextState).Highlights, 0, 0, data.DeltaX, data.DeltaY)
-	case ActionAddConnection:
-		data := action.Data.(AddConnectionData)
-		m.getCanvas().RestoreConnection(data.Connection)
-	case ActionDeleteConnection:
-		data := action.Data.(AddConnectionData)
-		m.getCanvas().RemoveSpecificConnection(data.Connection)
-	case ActionCycleArrow:
-		cycleData := action.Data.(CycleArrowData)
-		if cycleData.ConnIdx >= 0 && cycleData.ConnIdx < len(m.getCanvas().Connections()) {
-			m.getCanvas().Connections()[cycleData.ConnIdx] = cycleData.NewConn
-		}
-	case ActionHighlight:
-		data := action.Data.(HighlightData)
-		for _, cell := range data.Cells {
-			m.applyHighlight(cell.X, cell.Y, cell.Color)
-		}
-	case ActionChangeBorderStyle:
-		data := action.Data.(BorderStyleData)
-		m.getCanvas().SetBorderStyle(data.BoxID, data.NewStyle)
-	case ActionEditTitle:
-		data := action.Data.(EditTitleData)
-		if data.BoxID >= 0 && data.BoxID < len(m.getCanvas().Boxes()) {
-			m.getCanvas().Boxes()[data.BoxID].Title = data.NewTitle
-			m.getCanvas().Boxes()[data.BoxID].UpdateSize()
-		}
-	case ActionSetColor:
-		data := action.Data.(ColorData)
-		m.applyObjectColor(data.Kind, data.ID, data.NewColor)
-	case ActionGroupMove:
-		data := action.Data.(GroupMoveData)
-		m.applyGroupMoveState(data.Before, data.After)
-	case ActionDuplicate:
-		data := action.Data.(DuplicateData)
-		if data.IsText {
-			m.getCanvas().DuplicateText(data.SrcID, data.DX, data.DY)
-		} else {
-			m.getCanvas().DuplicateBox(data.SrcID, data.DX, data.DY)
-		}
-	}
-
-	buf.undoStack = append(buf.undoStack, action)
 }

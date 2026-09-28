@@ -25,8 +25,6 @@ type model struct {
 	selectedText           int
 	editText               string
 	editCursorPos          int
-	editCursorRow          int
-	editCursorCol          int
 	editSelectionStart     int
 	editSelectionEnd       int
 	originalEditText       string
@@ -44,25 +42,16 @@ type model struct {
 	selectedFileIndex      int
 	fileOp                 FileOperation
 	openInNewBuffer        bool
-	createNewBuffer        bool
 	showingDeleteConfirm   bool
 	confirmAction          ConfirmAction
-	confirmBoxID           int
-	confirmTextID          int
-	confirmConnIdx         int
-	confirmHighlightX      int
-	confirmHighlightY      int
+	confirmID              int
 	confirmFileIndex       int
 	originalMoveX          int
 	originalMoveY          int
-	originalTextMoveX      int
-	originalTextMoveY      int
 	originalWidth          int
 	originalHeight         int
 	textInputX             int
 	textInputY             int
-	textInputText          string
-	textInputCursorPos     int
 	errorMessage           string
 	successMessage         string
 	fromStartup            bool
@@ -83,12 +72,6 @@ type model struct {
 	highlightMoveDelta     point
 	originalBoxConnections map[int][]Connection
 	boxJumpInput           string
-	titleEditBoxID         int
-	titleEditText          string
-	titleEditCursorPos     int
-	titleEditCursorRow     int
-	titleEditCursorCol     int
-	originalTitleText      string
 	showTooltip            bool
 	tooltipText            string
 	tooltipX               int
@@ -158,17 +141,11 @@ type menuLevel struct {
 
 type Action struct {
 	Type    ActionType
-	Data    interface{}
-	Inverse interface{}
+	Data    any
+	Inverse any
 }
 
-type AddBoxData struct {
-	X, Y int
-	Text string
-	ID   int
-}
-
-type AddTextData struct {
+type AddData struct {
 	X, Y int
 	Text string
 	ID   int
@@ -181,22 +158,16 @@ type DeleteBoxData struct {
 	Highlights  []HighlightCell
 }
 
-type EditBoxData struct {
-	ID      int
-	NewText string
-	OldText string
-}
-
-type EditTextData struct {
-	ID      int
-	NewText string
-	OldText string
-}
-
 type DeleteTextData struct {
 	Text       Text
 	ID         int
 	Highlights []HighlightCell
+}
+
+type EditData struct {
+	ID      int
+	NewText string
+	OldText string
 }
 
 type ResizeBoxData struct {
@@ -205,13 +176,7 @@ type ResizeBoxData struct {
 	DeltaHeight int
 }
 
-type MoveBoxData struct {
-	ID     int
-	DeltaX int
-	DeltaY int
-}
-
-type MoveTextData struct {
+type MoveData struct {
 	ID     int
 	DeltaX int
 	DeltaY int
@@ -239,19 +204,6 @@ type GroupMoveData struct {
 	After  GroupMoveState
 }
 
-type OriginalTextState struct {
-	ID         int
-	X          int
-	Y          int
-	Highlights []HighlightCell
-}
-
-type AddConnectionData struct {
-	FromID     int
-	ToID       int
-	Connection Connection
-}
-
 type CycleArrowData struct {
 	ConnIdx int
 	OldConn Connection
@@ -266,12 +218,6 @@ type BorderStyleData struct {
 	BoxID    int
 	OldStyle BorderStyle
 	NewStyle BorderStyle
-}
-
-type EditTitleData struct {
-	BoxID    int
-	NewTitle string
-	OldTitle string
 }
 
 const (

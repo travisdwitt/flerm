@@ -79,7 +79,7 @@ func (c *Canvas) GetBoxTitleBarCells(boxID int) []Point {
 	}
 	dividerY, ok := titleDividerY(box)
 	if !ok {
-		return []Point{}
+		return nil
 	}
 	cells := make([]Point, 0)
 	for x := box.X; x < box.X+box.Width; x++ {
@@ -88,10 +88,7 @@ func (c *Canvas) GetBoxTitleBarCells(boxID int) []Point {
 	for y := box.Y + 1; y <= dividerY; y++ {
 		cells = append(cells, Point{box.X, y}, Point{box.X + box.Width - 1, y})
 	}
-	for x := box.X + 1; x < box.X+box.Width-1; x++ {
-		cells = append(cells, Point{x, dividerY})
-	}
-	return cells
+	return append(cells, c.GetBoxTitleDividerCells(boxID)...)
 }
 
 func lineCells(lines []string, x, y, maxLen int) []Point {
@@ -114,7 +111,7 @@ func (c *Canvas) GetBoxTitleTextCells(boxID int) []Point {
 		return nil
 	}
 	if box.Title == "" {
-		return []Point{}
+		return nil
 	}
 	return lineCells(strings.Split(box.Title, "\n"), box.X+boxInsetX, box.Y+1, box.Width-2*boxInsetX)
 }
@@ -128,10 +125,10 @@ func (c *Canvas) GetBoxContentTextCells(boxID int) []Point {
 }
 
 func (c *Canvas) GetTextCells(textID int) []Point {
-	if textID < 0 || textID >= len(c.texts) {
+	t := c.textPtr(textID)
+	if t == nil {
 		return nil
 	}
-	t := c.texts[textID]
 	return lineCells(t.Lines, t.X, t.Y, -1)
 }
 

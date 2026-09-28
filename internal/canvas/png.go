@@ -11,48 +11,58 @@ import (
 	"golang.org/x/image/font/gofont/gomono"
 )
 
-func (c *Canvas) ExportToPNG(filename string, renderWidth, renderHeight int, panX, panY int) error {
-	if len(c.boxes) == 0 && len(c.connections) == 0 && len(c.texts) == 0 {
-		return fmt.Errorf("nothing to export")
-	}
+const (
+	pngCharW = 8.0
+	pngCharH = 16.0
+)
 
-	charWidth := 8.0
-	charHeight := 16.0
+func (c *Canvas) ExportToPNG(filename string) error {
 	minX, minY, maxX, maxY := c.GetFullBounds()
 	if minX > maxX || minY > maxY {
 		return fmt.Errorf("nothing to export")
 	}
 
-	padding := 2
+	const padding = 2
 	minX -= padding
 	minY -= padding
 	maxX += padding
 	maxY += padding
-	imageWidth := int(float64(maxX-minX) * charWidth)
-	imageHeight := int(float64(maxY-minY) * charHeight)
-	dc := gg.NewContext(imageWidth, imageHeight)
+	dc := gg.NewContext(int(float64(maxX-minX)*pngCharW), int(float64(maxY-minY)*pngCharH))
 	dc.SetColor(color.White)
 	dc.Clear()
 	dc.SetColor(color.Black)
-	fontData := gomono.TTF
-	ttfFont, err := truetype.Parse(fontData)
+	ttfFont, err := truetype.Parse(gomono.TTF)
 	if err != nil {
 		return fmt.Errorf("failed to parse font: %v", err)
 	}
-	face := truetype.NewFace(ttfFont, &truetype.Options{
+	dc.SetFontFace(truetype.NewFace(ttfFont, &truetype.Options{
 		Size:    12.0,
 		DPI:     72,
 		Hinting: font.HintingFull,
-	})
-	dc.SetFontFace(face)
+	}))
+	px := func(x, y int) (float64, float64) {
+		return float64(x-minX) * pngCharW, float64(y-minY) * pngCharH
+	}
+	dc.SetLineWidth(1.0)
 	for _, conn := range c.connections {
-		c.drawConnectionPNG(dc, conn, minX, minY, charWidth, charHeight)
+		drawConnectionPNG(dc, conn, px)
 	}
 	for _, text := range c.texts {
-		c.drawTextPNG(dc, text, minX, minY, charWidth, charHeight)
+		x, y := px(text.X, text.Y)
+		dc.SetColor(pngColor(text.Color))
+		for i, line := range text.Lines {
+			dc.DrawString(line, x, y+float64(i)*pngCharH)
+		}
 	}
 	for _, box := range c.boxes {
-		c.drawBoxPNG(dc, box, minX, minY, charWidth, charHeight)
+		x, y := px(box.X, box.Y)
+		dc.SetColor(pngColor(box.Color))
+		dc.DrawRectangle(x, y, float64(box.Width)*pngCharW, float64(box.Height)*pngCharH)
+		dc.Stroke()
+		dc.SetColor(color.Black)
+		for i, line := range box.Lines {
+			dc.DrawString(line, x+pngCharW, y+float64(i+1)*pngCharH)
+		}
 	}
 
 	return dc.SavePNG(filename)
@@ -71,78 +81,37 @@ func pngColor(index int) color.Color {
 	return palette[index]
 }
 
-func (c *Canvas) drawConnectionPNG(dc *gg.Context, conn Connection, minX, minY int, charWidth, charHeight float64) {
+func drawConnectionPNG(dc *gg.Context, conn Connection, px func(x, y int) (float64, float64)) {
 	points := connPoints(conn)
-	if len(points) < 2 {
-		return
-	}
-	dc.SetLineWidth(1.0)
 	dc.SetColor(pngColor(conn.Color))
 	for i := 0; i < len(points)-1; i++ {
-		x1 := float64(points[i].X-minX) * charWidth
-		y1 := float64(points[i].Y-minY) * charHeight
-		x2 := float64(points[i+1].X-minX) * charWidth
-		y2 := float64(points[i+1].Y-minY) * charHeight
+		x1, y1 := px(points[i].X, points[i].Y)
+		x2, y2 := px(points[i+1].X, points[i+1].Y)
 		dc.DrawLine(x1, y1, x2, y2)
 		dc.Stroke()
 	}
-	if conn.ArrowFrom && len(points) > 1 {
-		c.drawArrowPNG(dc, points[1].X, points[1].Y, points[0].X, points[0].Y, minX, minY, charWidth, charHeight)
+	if conn.ArrowFrom {
+		drawArrowPNG(dc, points[1], points[0], px)
 	}
-	if conn.ArrowTo && len(points) > 1 {
-		c.drawArrowPNG(dc, points[len(points)-2].X, points[len(points)-2].Y, points[len(points)-1].X, points[len(points)-1].Y, minX, minY, charWidth, charHeight)
+	if conn.ArrowTo {
+		drawArrowPNG(dc, points[len(points)-2], points[len(points)-1], px)
 	}
 }
 
-func (c *Canvas) drawArrowPNG(dc *gg.Context, fromX, fromY, toX, toY, minX, minY int, charWidth, charHeight float64) {
-	fx := float64(fromX-minX) * charWidth
-	fy := float64(fromY-minY) * charHeight
-	tx := float64(toX-minX) * charWidth
-	ty := float64(toY-minY) * charHeight
-	dx := tx - fx
-	dy := ty - fy
-	length := math.Sqrt(dx*dx + dy*dy)
+func drawArrowPNG(dc *gg.Context, from, to Point, px func(x, y int) (float64, float64)) {
+	fx, fy := px(from.X, from.Y)
+	tx, ty := px(to.X, to.Y)
+	dx, dy := tx-fx, ty-fy
+	length := math.Hypot(dx, dy)
 	if length < 0.1 {
 		return
 	}
 	dx /= length
 	dy /= length
-	arrowSize := 6.0
-	arrowAngle := 0.5
-	tipX, tipY := tx, ty
-	baseX1 := tx - arrowSize*dx + arrowSize*dy*arrowAngle
-	baseY1 := ty - arrowSize*dy - arrowSize*dx*arrowAngle
-	baseX2 := tx - arrowSize*dx - arrowSize*dy*arrowAngle
-	baseY2 := ty - arrowSize*dy + arrowSize*dx*arrowAngle
-	dc.MoveTo(tipX, tipY)
-	dc.LineTo(baseX1, baseY1)
-	dc.LineTo(baseX2, baseY2)
+	const size, angle = 6.0, 0.5
+	dc.MoveTo(tx, ty)
+	dc.LineTo(tx-size*dx+size*dy*angle, ty-size*dy-size*dx*angle)
+	dc.LineTo(tx-size*dx-size*dy*angle, ty-size*dy+size*dx*angle)
 	dc.ClosePath()
 	dc.Fill()
-}
-
-func (c *Canvas) drawBoxPNG(dc *gg.Context, box Box, minX, minY int, charWidth, charHeight float64) {
-	x := float64(box.X-minX) * charWidth
-	y := float64(box.Y-minY) * charHeight
-	width := float64(box.Width) * charWidth
-	height := float64(box.Height) * charHeight
-	dc.SetLineWidth(1.0)
-	dc.SetColor(pngColor(box.Color))
-	dc.DrawRectangle(x, y, width, height)
-	dc.Stroke()
-
-	dc.SetColor(color.Black)
-	textY := y + charHeight
-	for i, line := range box.Lines {
-		dc.DrawString(line, x+charWidth, textY+float64(i)*charHeight)
-	}
-}
-
-func (c *Canvas) drawTextPNG(dc *gg.Context, text Text, minX, minY int, charWidth, charHeight float64) {
-	x := float64(text.X-minX) * charWidth
-	y := float64(text.Y-minY) * charHeight
-	dc.SetColor(pngColor(text.Color))
-	for i, line := range text.Lines {
-		dc.DrawString(line, x, y+float64(i)*charHeight)
-	}
 }

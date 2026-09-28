@@ -231,7 +231,7 @@ func (c *Canvas) parseConnection(line string) error {
 	}
 
 	n := make([]int, 8)
-	n[7] = 2 // default: arrow on the "to" end only
+	n[7] = 2
 	for i := 0; i < len(parts) && i < 8; i++ {
 		n[i], _ = strconv.Atoi(parts[i])
 	}

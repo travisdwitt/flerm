@@ -2,130 +2,46 @@ package tui
 
 import tea "github.com/charmbracelet/bubbletea"
 
-func (m *model) handleNavigation(key string, speed int) (tea.Model, tea.Cmd) {
+var arrowDeltas = map[string][2]int{
+	"h": {-1, 0}, "left": {-1, 0}, "H": {-2, 0}, "shift+left": {-2, 0},
+	"l": {1, 0}, "right": {1, 0}, "L": {2, 0}, "shift+right": {2, 0},
+	"k": {0, -1}, "up": {0, -1}, "K": {0, -2}, "shift+up": {0, -2},
+	"j": {0, 1}, "down": {0, 1}, "J": {0, 2}, "shift+down": {0, 2},
+}
+
+func (m *model) handleNavigation(key string) (tea.Model, tea.Cmd) {
+	d := arrowDeltas[key]
 	if m.zPanMode {
-		return m.handlePan(key, speed), nil
-	}
-
-	oldShowTooltip := m.showTooltip
-	oldTooltipText := m.tooltipText
-
-	updatedModel := m.handleCursorMove(key, speed)
-
-	updatedModel.updateTooltip()
-
-	if oldShowTooltip != updatedModel.showTooltip ||
-		(updatedModel.showTooltip && oldTooltipText != updatedModel.tooltipText) {
-
-		return updatedModel, func() tea.Msg { return struct{}{} }
-	}
-
-	return updatedModel, nil
-}
-
-func (m *model) handlePan(key string, speed int) *model {
-	buf := m.getCurrentBuffer()
-	if buf == nil {
-		return m
-	}
-	switch key {
-	case "h", "left", "H", "shift+left":
-		buf.panX += speed
-	case "l", "right", "L", "shift+right":
-		buf.panX -= speed
-	case "k", "up", "K", "shift+up":
-		buf.panY += speed
-	case "j", "down", "J", "shift+down":
-		buf.panY -= speed
-	}
-	return m
-}
-
-func (m *model) handleCursorMove(key string, speed int) *model {
-	oldX := m.cursorX
-	oldY := m.cursorY
-
-	switch key {
-	case "h", "left", "H", "shift+left":
-		m.cursorX -= speed
-	case "l", "right", "L", "shift+right":
-		m.cursorX += speed
-	case "k", "up", "K", "shift+up":
-		m.cursorY -= speed
-	case "j", "down", "J", "shift+down":
-		m.cursorY += speed
-	}
-	m.ensureCursorInBounds()
-	if m.highlightMode {
 		buf := m.getCurrentBuffer()
-		panX, panY := 0, 0
-		if buf != nil {
-			panX, panY = buf.panX, buf.panY
-		}
-		worldX := m.cursorX + panX
-		worldY := m.cursorY + panY
-		oldWorldX := oldX + panX
-		oldWorldY := oldY + panY
-		highlightedCells := make([]HighlightCell, 0)
-		addHighlightCell := func(x, y int) {
-			oldColor := m.getCanvas().GetHighlight(x, y)
-			m.getCanvas().SetHighlight(x, y, m.selectedColor)
-			highlightedCells = append(highlightedCells, HighlightCell{
-				X:        x,
-				Y:        y,
-				Color:    m.selectedColor,
-				HadColor: oldColor != -1,
-				OldColor: oldColor,
-			})
-		}
-		addHighlightCell(worldX, worldY)
-		if speed > 1 {
-			dx := worldX - oldWorldX
-			dy := worldY - oldWorldY
-			if dx != 0 && dy == 0 {
-				step := 1
-				if dx < 0 {
-					step = -1
-				}
-				for x := oldWorldX + step; x != worldX; x += step {
-					addHighlightCell(x, worldY)
-				}
-			} else if dy != 0 && dx == 0 {
-				step := 1
-				if dy < 0 {
-					step = -1
-				}
-				for y := oldWorldY + step; y != worldY; y += step {
-					addHighlightCell(worldX, y)
-				}
-			}
-		}
-		if len(highlightedCells) > 0 {
-			inverseCells := make([]HighlightCell, len(highlightedCells))
-			for i, cell := range highlightedCells {
-				oldColorForInverse := cell.OldColor
-				if oldColorForInverse < 0 {
-					oldColorForInverse = -1
-				}
-				inverseCells[i] = HighlightCell{
-					X:        cell.X,
-					Y:        cell.Y,
-					Color:    oldColorForInverse,
-					HadColor: cell.HadColor,
-					OldColor: cell.Color,
-				}
-			}
-			m.recordAction(ActionHighlight, HighlightData{Cells: highlightedCells}, HighlightData{Cells: inverseCells})
-		}
+		buf.panX -= d[0]
+		buf.panY -= d[1]
+		return m, nil
 	}
-	return m
+
+	oldShow, oldText := m.showTooltip, m.tooltipText
+	m.moveCursor(d[0], d[1])
+	m.updateTooltip()
+	if oldShow != m.showTooltip || (m.showTooltip && oldText != m.tooltipText) {
+		return m, func() tea.Msg { return struct{}{} }
+	}
+	return m, nil
 }
 
-func (m *model) getMoveSpeed(key string) int {
-	switch key {
-	case "H", "L", "K", "J", "shift+left", "shift+right", "shift+up", "shift+down":
-		return 2
-	default:
-		return 1
+func (m *model) moveCursor(dx, dy int) {
+	oldX, oldY := m.worldCursor()
+	m.cursorX += dx
+	m.cursorY += dy
+	m.ensureCursorInBounds()
+	if !m.highlightMode {
+		return
 	}
+	x, y := m.worldCursor()
+	cells := []point{{X: x, Y: y}}
+	if mx, my := x-oldX, y-oldY; (abs(dx) > 1 || abs(dy) > 1) && (mx == 0) != (my == 0) {
+		sx, sy := sign(mx), sign(my)
+		for cx, cy := oldX+sx, oldY+sy; cx != x || cy != y; cx, cy = cx+sx, cy+sy {
+			cells = append(cells, point{X: cx, Y: cy})
+		}
+	}
+	m.recordHighlights(m.paintCells(cells, m.selectedColor))
 }

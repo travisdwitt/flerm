@@ -51,7 +51,6 @@ const (
 	ConfirmDeleteBox ConfirmAction = iota
 	ConfirmDeleteText
 	ConfirmDeleteConnection
-	ConfirmDeleteHighlight
 	ConfirmQuit
 	ConfirmNewChart
 	ConfirmCloseBuffer

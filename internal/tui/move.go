@@ -1,5 +1,59 @@
 package tui
 
+import "slices"
+
+func (m *model) clearGroupSelection() {
+	m.selectedBoxes, m.selectedTexts, m.selectedConnections = nil, nil, nil
+	m.originalBoxPositions = map[int]point{}
+	m.originalTextPositions = map[int]point{}
+	m.originalConnections = map[int]Connection{}
+	m.originalBoxConnections = map[int][]Connection{}
+	m.originalHighlights = map[point]int{}
+	m.highlightMoveDelta = point{}
+	m.groupConnSnapshot = nil
+}
+
+func (m *model) hasGroupSelection() bool {
+	return len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0
+}
+
+func (m *model) captureBoxMove(boxID int) {
+	canvas := m.getCanvas()
+	box := canvas.Boxes()[boxID]
+	m.originalMoveX, m.originalMoveY = box.X, box.Y
+	m.originalBoxConnections = map[int][]Connection{boxID: canvas.GetConnectionsForBox(boxID)}
+	m.captureHighlights(canvas.GetBoxCells(boxID))
+}
+
+func (m *model) captureTextMove(textID int) {
+	canvas := m.getCanvas()
+	text := canvas.Texts()[textID]
+	m.originalMoveX, m.originalMoveY = text.X, text.Y
+	m.captureHighlights(canvas.GetTextCells(textID))
+}
+
+func (m *model) beginMove(worldX, worldY int) {
+	canvas := m.getCanvas()
+	m.clearGroupSelection()
+	m.selectedBox, m.selectedText = -1, -1
+	switch boxID, textID := canvas.GetBoxAt(worldX, worldY), canvas.GetTextAt(worldX, worldY); {
+	case boxID != -1:
+		m.selectedBox = boxID
+		m.captureBoxMove(boxID)
+	case textID != -1:
+		m.selectedText = textID
+		m.captureTextMove(textID)
+	default:
+		color := canvas.GetHighlight(worldX, worldY)
+		if color == -1 {
+			return
+		}
+		m.originalHighlights[point{X: worldX, Y: worldY}] = color
+		m.groupConnSnapshot = canvas.SnapshotConnections()
+	}
+	m.mode = ModeMove
+}
+
 func (m *model) captureHighlights(cells []point) {
 	m.originalHighlights = make(map[point]int)
 	for _, cell := range cells {
@@ -7,7 +61,7 @@ func (m *model) captureHighlights(cells []point) {
 			m.originalHighlights[cell] = color
 		}
 	}
-	m.highlightMoveDelta = point{X: 0, Y: 0}
+	m.highlightMoveDelta = point{}
 }
 
 func (m *model) capturedHighlightCells() []HighlightCell {
@@ -27,197 +81,142 @@ func (m *model) moveRecordedHighlights(cells []HighlightCell, fromDX, fromDY, to
 	}
 }
 
-func (m *model) moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY int) point {
+func (m *model) moveCapturedHighlights(dx, dy int) {
 	if len(m.originalHighlights) == 0 {
-		return m.highlightMoveDelta
+		return
 	}
-	for origPos := range m.originalHighlights {
-		m.getCanvas().ClearHighlight(origPos.X+m.highlightMoveDelta.X, origPos.Y+m.highlightMoveDelta.Y)
+	canvas := m.getCanvas()
+	for pos := range m.originalHighlights {
+		canvas.ClearHighlight(pos.X+m.highlightMoveDelta.X, pos.Y+m.highlightMoveDelta.Y)
 	}
-	for origPos, color := range m.originalHighlights {
-		m.getCanvas().SetHighlight(origPos.X+cumulativeDeltaX, origPos.Y+cumulativeDeltaY, color)
+	for pos, color := range m.originalHighlights {
+		canvas.SetHighlight(pos.X+dx, pos.Y+dy, color)
 	}
-	return point{X: cumulativeDeltaX, Y: cumulativeDeltaY}
+	m.highlightMoveDelta = point{X: dx, Y: dy}
 }
 
 func (m *model) moveContainedConnections(deltaX, deltaY int) {
-
-	selectedBoxSet := make(map[int]bool)
-	for _, boxID := range m.selectedBoxes {
-		selectedBoxSet[boxID] = true
-	}
-
-	selectedConnSet := make(map[int]bool)
-	for _, connIdx := range m.selectedConnections {
-		selectedConnSet[connIdx] = true
-	}
+	inBoxes := func(id int) bool { return slices.Contains(m.selectedBoxes, id) }
+	shift := func(x, y *int) { *x += deltaX; *y += deltaY }
 
 	for i := range m.getCanvas().Connections() {
 		conn := &m.getCanvas().Connections()[i]
-
-		if conn.FromID >= 0 && conn.ToID >= 0 {
-			if selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
-
-				conn.FromX += deltaX
-				conn.FromY += deltaY
-				conn.ToX += deltaX
-				conn.ToY += deltaY
-				for j := range conn.Waypoints {
-					conn.Waypoints[j].X += deltaX
-					conn.Waypoints[j].Y += deltaY
-				}
+		moveFrom, moveTo := false, false
+		switch {
+		case conn.FromID >= 0 && conn.ToID >= 0:
+			if !inBoxes(conn.FromID) || !inBoxes(conn.ToID) {
+				continue
 			}
-
+			moveFrom, moveTo = true, true
+		case slices.Contains(m.selectedConnections, i):
+			moveFrom = conn.FromID == -1 || inBoxes(conn.FromID)
+			moveTo = conn.ToID == -1 || inBoxes(conn.ToID)
+		default:
 			continue
 		}
-
-		if selectedConnSet[i] {
-			if conn.FromID == -1 || selectedBoxSet[conn.FromID] {
-				conn.FromX += deltaX
-				conn.FromY += deltaY
-			}
-			if conn.ToID == -1 || selectedBoxSet[conn.ToID] {
-				conn.ToX += deltaX
-				conn.ToY += deltaY
-			}
-			for j := range conn.Waypoints {
-				conn.Waypoints[j].X += deltaX
-				conn.Waypoints[j].Y += deltaY
-			}
+		if moveFrom {
+			shift(&conn.FromX, &conn.FromY)
+		}
+		if moveTo {
+			shift(&conn.ToX, &conn.ToY)
+		}
+		for j := range conn.Waypoints {
+			shift(&conn.Waypoints[j].X, &conn.Waypoints[j].Y)
 		}
 	}
 }
 
 func (m *model) handleSingleElementMove(deltaX, deltaY int) {
+	canvas := m.getCanvas()
 	if m.selectedBox != -1 {
-		m.getCanvas().MoveBox(m.selectedBox, deltaX, deltaY)
-		if len(m.originalHighlights) > 0 {
-			cumulativeDeltaX := m.getCanvas().Boxes()[m.selectedBox].X - m.originalMoveX
-			cumulativeDeltaY := m.getCanvas().Boxes()[m.selectedBox].Y - m.originalMoveY
-			m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-		}
-		m.ensureCursorInBounds()
+		canvas.MoveBox(m.selectedBox, deltaX, deltaY)
+		box := canvas.Boxes()[m.selectedBox]
+		m.moveCapturedHighlights(box.X-m.originalMoveX, box.Y-m.originalMoveY)
 	} else if m.selectedText != -1 {
-		m.getCanvas().MoveText(m.selectedText, deltaX, deltaY)
-		if len(m.originalHighlights) > 0 {
-			cumulativeDeltaX := m.getCanvas().Texts()[m.selectedText].X - m.originalTextMoveX
-			cumulativeDeltaY := m.getCanvas().Texts()[m.selectedText].Y - m.originalTextMoveY
-			m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
-		}
-		m.ensureCursorInBounds()
+		canvas.MoveText(m.selectedText, deltaX, deltaY)
+		text := canvas.Texts()[m.selectedText]
+		m.moveCapturedHighlights(text.X-m.originalMoveX, text.Y-m.originalMoveY)
 	}
+	m.ensureCursorInBounds()
 }
 
 func (m *model) finalizeMultiSelect(endX, endY int) {
 	if m.selectionStartX == CoordUnset || m.selectionStartY == CoordUnset {
 		return
 	}
-	minX, maxX := m.selectionStartX, m.selectionStartX
-	if endX < m.selectionStartX {
-		minX = endX
-	} else if endX > m.selectionStartX {
-		maxX = endX
-	}
-	minY, maxY := m.selectionStartY, m.selectionStartY
-	if endY < m.selectionStartY {
-		minY = endY
-	} else if endY > m.selectionStartY {
-		maxY = endY
-	}
+	canvas := m.getCanvas()
+	minX, maxX := min(m.selectionStartX, endX), max(m.selectionStartX, endX)
+	minY, maxY := min(m.selectionStartY, endY), max(m.selectionStartY, endY)
+	inSel := func(x, y int) bool { return x >= minX && x <= maxX && y >= minY && y <= maxY }
+	overlaps := func(x0, y0, x1, y1 int) bool { return !(x1 < minX || x0 > maxX || y1 < minY || y0 > maxY) }
 
-	m.selectedBoxes = []int{}
-	m.selectedTexts = []int{}
-	m.selectedConnections = []int{}
-	m.originalBoxPositions = make(map[int]point)
-	m.originalTextPositions = make(map[int]point)
-	m.originalConnections = make(map[int]Connection)
-	m.originalBoxConnections = make(map[int][]Connection)
-	for i, box := range m.getCanvas().Boxes() {
-		boxRight, boxBottom := box.X+box.Width-1, box.Y+box.Height-1
-		if !(boxRight < minX || box.X > maxX || boxBottom < minY || box.Y > maxY) {
+	m.clearGroupSelection()
+	for i, box := range canvas.Boxes() {
+		if overlaps(box.X, box.Y, box.X+box.Width-1, box.Y+box.Height-1) {
 			m.selectedBoxes = append(m.selectedBoxes, i)
 			m.originalBoxPositions[i] = point{X: box.X, Y: box.Y}
-			m.originalBoxConnections[i] = m.getCanvas().GetConnectionsForBox(i)
+			m.originalBoxConnections[i] = canvas.GetConnectionsForBox(i)
 		}
 	}
-	for i, text := range m.getCanvas().Texts() {
-		textRight, textBottom := text.X, text.Y
+	for i, text := range canvas.Texts() {
+		right, bottom := text.X, text.Y
 		for _, line := range text.Lines {
-			if text.X+len(line) > textRight {
-				textRight = text.X + len(line)
-			}
+			right = max(right, text.X+len(line))
 		}
 		if len(text.Lines) > 0 {
-			textBottom = text.Y + len(text.Lines) - 1
+			bottom = text.Y + len(text.Lines) - 1
 		}
-		if !(textRight < minX || text.X > maxX || textBottom < minY || text.Y > maxY) {
+		if overlaps(text.X, text.Y, right, bottom) {
 			m.selectedTexts = append(m.selectedTexts, i)
 			m.originalTextPositions[i] = point{X: text.X, Y: text.Y}
 		}
 	}
-	selectedBoxSet := make(map[int]bool)
-	for _, boxID := range m.selectedBoxes {
-		selectedBoxSet[boxID] = true
-	}
-	pointInSelection := func(x, y int) bool {
-		return x >= minX && x <= maxX && y >= minY && y <= maxY
-	}
-	shouldSelectConnection := func(conn Connection) bool {
-		if conn.FromID >= 0 && conn.ToID >= 0 && selectedBoxSet[conn.FromID] && selectedBoxSet[conn.ToID] {
+	inBoxes := func(id int) bool { return id >= 0 && slices.Contains(m.selectedBoxes, id) }
+	selectConn := func(conn Connection) bool {
+		fromIn, toIn := inSel(conn.FromX, conn.FromY), inSel(conn.ToX, conn.ToY)
+		switch {
+		case inBoxes(conn.FromID) && inBoxes(conn.ToID),
+			inBoxes(conn.FromID) && conn.ToID == -1 && toIn,
+			inBoxes(conn.ToID) && conn.FromID == -1 && fromIn,
+			conn.FromID == -1 && conn.ToID == -1 && fromIn && toIn:
 			return true
 		}
-		if conn.FromID >= 0 && selectedBoxSet[conn.FromID] && conn.ToID == -1 && pointInSelection(conn.ToX, conn.ToY) {
-			return true
-		}
-		if conn.ToID >= 0 && selectedBoxSet[conn.ToID] && conn.FromID == -1 && pointInSelection(conn.FromX, conn.FromY) {
-			return true
-		}
-		if conn.FromID == -1 && conn.ToID == -1 && pointInSelection(conn.FromX, conn.FromY) && pointInSelection(conn.ToX, conn.ToY) {
-			return true
-		}
-		pointsInSelection, totalPoints := 0, 2+len(conn.Waypoints)
-		if pointInSelection(conn.FromX, conn.FromY) {
-			pointsInSelection++
-		}
-		if pointInSelection(conn.ToX, conn.ToY) {
-			pointsInSelection++
-		}
-		for _, wp := range conn.Waypoints {
-			if pointInSelection(wp.X, wp.Y) {
-				pointsInSelection++
+		count := 0
+		for _, p := range connPoints(conn) {
+			if inSel(p.X, p.Y) {
+				count++
 			}
 		}
-		return totalPoints > 0 && pointsInSelection*2 >= totalPoints
+		return count*2 >= 2+len(conn.Waypoints)
 	}
-	for i, conn := range m.getCanvas().Connections() {
-		if shouldSelectConnection(conn) {
+	for i, conn := range canvas.Connections() {
+		if selectConn(conn) {
 			m.selectedConnections = append(m.selectedConnections, i)
-			connCopy := conn
-			connCopy.Waypoints = make([]point, len(conn.Waypoints))
-			copy(connCopy.Waypoints, conn.Waypoints)
-			m.originalConnections[i] = connCopy
+			conn.Waypoints = slices.Clone(conn.Waypoints)
+			m.originalConnections[i] = conn
 		}
 	}
-	m.groupConnSnapshot = m.getCanvas().SnapshotConnections()
-	m.originalHighlights = make(map[point]int)
-	m.highlightMoveDelta = point{X: 0, Y: 0}
+	m.groupConnSnapshot = canvas.SnapshotConnections()
 	for y := minY; y <= maxY; y++ {
 		for x := minX; x <= maxX; x++ {
-			if color := m.getCanvas().GetHighlight(x, y); color != -1 {
+			if color := canvas.GetHighlight(x, y); color != -1 {
 				m.originalHighlights[point{X: x, Y: y}] = color
 			}
 		}
 	}
 
-	if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
+	if m.hasGroupSelection() {
 		m.mode = ModeMove
-		m.selectedBox = -1
-		m.selectedText = -1
+		m.selectedBox, m.selectedText = -1, -1
 	} else {
 		m.mode = ModeNormal
-		m.selectionStartX = CoordUnset
-		m.selectionStartY = CoordUnset
+		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
 	}
+}
+
+func connPoints(conn Connection) []point {
+	pts := append([]point{{X: conn.FromX, Y: conn.FromY}}, conn.Waypoints...)
+	return append(pts, point{X: conn.ToX, Y: conn.ToY})
 }
 
 func (m *model) applyGroupMoveState(from, to GroupMoveState) {
@@ -239,17 +238,9 @@ func (m *model) applyGroupMoveState(from, to GroupMoveState) {
 
 func (m *model) commitGroupMove() {
 	canvas := m.getCanvas()
-	before := GroupMoveState{
-		BoxPositions:  make(map[int]point),
-		TextPositions: make(map[int]point),
-		Connections:   m.groupConnSnapshot,
-	}
-	after := GroupMoveState{
-		BoxPositions:  make(map[int]point),
-		TextPositions: make(map[int]point),
-		Connections:   canvas.SnapshotConnections(),
-	}
-	moved := false
+	before := GroupMoveState{BoxPositions: map[int]point{}, TextPositions: map[int]point{}, Connections: m.groupConnSnapshot}
+	after := GroupMoveState{BoxPositions: map[int]point{}, TextPositions: map[int]point{}, Connections: canvas.SnapshotConnections()}
+	moved := m.highlightMoveDelta != point{}
 
 	for _, boxID := range m.selectedBoxes {
 		orig, ok := m.originalBoxPositions[boxID]
@@ -277,18 +268,11 @@ func (m *model) commitGroupMove() {
 			continue
 		}
 		cur := canvas.Connections()[connIdx]
-		if cur.FromX != orig.FromX || cur.FromY != orig.FromY || cur.ToX != orig.ToX || cur.ToY != orig.ToY {
-			moved = true
-		}
+		moved = moved || cur.FromX != orig.FromX || cur.FromY != orig.FromY || cur.ToX != orig.ToX || cur.ToY != orig.ToY
 	}
 	for pos, color := range m.originalHighlights {
 		before.Highlights = append(before.Highlights, HighlightCell{X: pos.X, Y: pos.Y, Color: color})
-		after.Highlights = append(after.Highlights, HighlightCell{
-			X: pos.X + m.highlightMoveDelta.X, Y: pos.Y + m.highlightMoveDelta.Y, Color: color,
-		})
-	}
-	if m.highlightMoveDelta.X != 0 || m.highlightMoveDelta.Y != 0 {
-		moved = true
+		after.Highlights = append(after.Highlights, HighlightCell{X: pos.X + m.highlightMoveDelta.X, Y: pos.Y + m.highlightMoveDelta.Y, Color: color})
 	}
 
 	if moved {
@@ -297,82 +281,84 @@ func (m *model) commitGroupMove() {
 	}
 }
 
-func (m *model) commitMove() {
-	if len(m.selectedBoxes) > 0 || len(m.selectedTexts) > 0 || len(m.selectedConnections) > 0 || len(m.originalHighlights) > 0 {
-		m.commitGroupMove()
+func (m *model) recordBoxMove(id int) {
+	canvas := m.getCanvas()
+	if id < 0 || id >= len(canvas.Boxes()) {
+		return
 	}
+	cur := canvas.Boxes()[id]
+	dx, dy := cur.X-m.originalMoveX, cur.Y-m.originalMoveY
+	if dx == 0 && dy == 0 {
+		return
+	}
+	m.recordAction(ActionMoveBox, MoveData{ID: id, DeltaX: dx, DeltaY: dy}, OriginalBoxState{
+		ID: id, X: m.originalMoveX, Y: m.originalMoveY, Width: cur.Width, Height: cur.Height,
+		Connections: m.originalBoxConnections[id], Highlights: m.capturedHighlightCells(),
+	})
+}
 
-	if m.selectedBox != -1 && m.selectedBox < len(m.getCanvas().Boxes()) {
-		cur := m.getCanvas().Boxes()[m.selectedBox]
-		if cur.X != m.originalMoveX || cur.Y != m.originalMoveY {
-			moveData := MoveBoxData{ID: m.selectedBox, DeltaX: cur.X - m.originalMoveX, DeltaY: cur.Y - m.originalMoveY}
-			originalState := OriginalBoxState{
-				ID: m.selectedBox, X: m.originalMoveX, Y: m.originalMoveY, Width: cur.Width, Height: cur.Height,
-				Connections: m.originalBoxConnections[m.selectedBox], Highlights: m.capturedHighlightCells(),
-			}
-			m.recordAction(ActionMoveBox, moveData, originalState)
-		}
-	} else if m.selectedText != -1 && m.selectedText < len(m.getCanvas().Texts()) {
-		cur := m.getCanvas().Texts()[m.selectedText]
-		if cur.X != m.originalTextMoveX || cur.Y != m.originalTextMoveY {
-			moveData := MoveTextData{ID: m.selectedText, DeltaX: cur.X - m.originalTextMoveX, DeltaY: cur.Y - m.originalTextMoveY}
-			originalState := OriginalTextState{
-				ID: m.selectedText, X: m.originalTextMoveX, Y: m.originalTextMoveY,
-				Highlights: m.capturedHighlightCells(),
-			}
-			m.recordAction(ActionMoveText, moveData, originalState)
-		}
+func (m *model) recordTextMove(id int) {
+	canvas := m.getCanvas()
+	if id < 0 || id >= len(canvas.Texts()) {
+		return
+	}
+	cur := canvas.Texts()[id]
+	dx, dy := cur.X-m.originalMoveX, cur.Y-m.originalMoveY
+	if dx == 0 && dy == 0 {
+		return
+	}
+	m.recordAction(ActionMoveText, MoveData{ID: id, DeltaX: dx, DeltaY: dy}, OriginalBoxState{
+		ID: id, X: m.originalMoveX, Y: m.originalMoveY, Highlights: m.capturedHighlightCells(),
+	})
+}
+
+func (m *model) commitMove() {
+	switch {
+	case m.hasGroupSelection():
+		m.commitGroupMove()
+	case m.selectedBox != -1:
+		m.recordBoxMove(m.selectedBox)
+	case m.selectedText != -1:
+		m.recordTextMove(m.selectedText)
 	}
 	m.mode = ModeNormal
-	m.selectedBox = -1
-	m.selectedText = -1
-	m.selectedBoxes = []int{}
-	m.selectedTexts = []int{}
-	m.selectedConnections = []int{}
-	m.originalBoxPositions = make(map[int]point)
-	m.originalTextPositions = make(map[int]point)
-	m.originalConnections = make(map[int]Connection)
-	m.originalHighlights = make(map[point]int)
-	m.highlightMoveDelta = point{X: 0, Y: 0}
-	m.groupConnSnapshot = nil
+	m.selectedBox, m.selectedText = -1, -1
+	m.clearGroupSelection()
 }
 
 func (m *model) handleMultiSelectMove(deltaX, deltaY int) {
+	canvas := m.getCanvas()
 	for _, boxID := range m.selectedBoxes {
-		m.getCanvas().MoveBoxOnly(boxID, deltaX, deltaY)
+		canvas.MoveBoxOnly(boxID, deltaX, deltaY)
 	}
 	for _, textID := range m.selectedTexts {
-		m.getCanvas().MoveText(textID, deltaX, deltaY)
+		canvas.MoveText(textID, deltaX, deltaY)
 	}
 	m.moveContainedConnections(deltaX, deltaY)
-	var cumulativeDeltaX, cumulativeDeltaY int
-	if len(m.selectedBoxes) > 0 {
-		boxID := m.selectedBoxes[0]
-		if boxID >= 0 && boxID < len(m.getCanvas().Boxes()) {
-			if originalPos, hasOriginal := m.originalBoxPositions[boxID]; hasOriginal {
-				currentBox := m.getCanvas().Boxes()[boxID]
-				cumulativeDeltaX, cumulativeDeltaY = currentBox.X-originalPos.X, currentBox.Y-originalPos.Y
-			}
+
+	var dx, dy int
+	switch {
+	case len(m.selectedBoxes) > 0:
+		id := m.selectedBoxes[0]
+		if orig, ok := m.originalBoxPositions[id]; ok && id >= 0 && id < len(canvas.Boxes()) {
+			cur := canvas.Boxes()[id]
+			dx, dy = cur.X-orig.X, cur.Y-orig.Y
 		}
-	} else if len(m.selectedTexts) > 0 {
-		textID := m.selectedTexts[0]
-		if textID >= 0 && textID < len(m.getCanvas().Texts()) {
-			if originalPos, hasOriginal := m.originalTextPositions[textID]; hasOriginal {
-				currentText := m.getCanvas().Texts()[textID]
-				cumulativeDeltaX, cumulativeDeltaY = currentText.X-originalPos.X, currentText.Y-originalPos.Y
-			}
+	case len(m.selectedTexts) > 0:
+		id := m.selectedTexts[0]
+		if orig, ok := m.originalTextPositions[id]; ok && id >= 0 && id < len(canvas.Texts()) {
+			cur := canvas.Texts()[id]
+			dx, dy = cur.X-orig.X, cur.Y-orig.Y
 		}
-	} else if len(m.selectedConnections) > 0 {
-		connIdx := m.selectedConnections[0]
-		if connIdx >= 0 && connIdx < len(m.getCanvas().Connections()) {
-			conn := m.getCanvas().Connections()[connIdx]
-			if originalConn, hasOriginal := m.originalConnections[connIdx]; hasOriginal {
-				cumulativeDeltaX, cumulativeDeltaY = conn.FromX-originalConn.FromX, conn.FromY-originalConn.FromY
-			}
+	case len(m.selectedConnections) > 0:
+		idx := m.selectedConnections[0]
+		if orig, ok := m.originalConnections[idx]; ok && idx >= 0 && idx < len(canvas.Connections()) {
+			cur := canvas.Connections()[idx]
+			dx, dy = cur.FromX-orig.FromX, cur.FromY-orig.FromY
 		}
-	} else if len(m.originalHighlights) > 0 {
-		cumulativeDeltaX, cumulativeDeltaY = m.highlightMoveDelta.X+deltaX, m.highlightMoveDelta.Y+deltaY
+	case len(m.originalHighlights) > 0:
+		dx, dy = m.highlightMoveDelta.X+deltaX, m.highlightMoveDelta.Y+deltaY
 	}
-	m.highlightMoveDelta = m.moveHighlightsOnSelectedObjects(cumulativeDeltaX, cumulativeDeltaY)
+	m.moveCapturedHighlights(dx, dy)
 	m.ensureCursorInBounds()
 }

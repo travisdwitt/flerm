@@ -24,13 +24,7 @@ func Run(noResume bool, dateOverride string) error {
 	} else {
 		m.effect = effectForDate(time.Now())
 	}
-	p := tea.NewProgram(
-		m,
-		tea.WithAltScreen(),
-
-		tea.WithMouseAllMotion(),
-	)
-	_, err := p.Run()
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion()).Run()
 	return err
 }
 
@@ -41,100 +35,140 @@ func abs(x int) int {
 	return x
 }
 
+func sign(n int) int {
+	switch {
+	case n > 0:
+		return 1
+	case n < 0:
+		return -1
+	}
+	return 0
+}
+
 func initialModel() model {
 	cfg := config.Load()
-	initialMode := ModeStartup
-	if !cfg.StartMenu {
-		initialMode = ModeNormal
+	m := model{
+		buffers:            []Buffer{{canvas: cv.NewCanvas()}},
+		lastFile:           cfg.LastFile(),
+		mode:               ModeNormal,
+		selectedBox:        -1,
+		selectedText:       -1,
+		connectionFrom:     -1,
+		connectionFromLine: -1,
+		config:             cfg,
+		selectionStartX:    CoordUnset,
+		selectionStartY:    CoordUnset,
+		selBox:             -1,
+		selText:            -1,
+		selConn:            -1,
+		menuTargetBox:      -1,
+		menuTargetText:     -1,
+		menuTargetConn:     -1,
 	}
-	buffer := Buffer{
-		canvas:    cv.NewCanvas(),
-		undoStack: []Action{},
-		redoStack: []Action{},
-		filename:  "",
-		panX:      0,
-		panY:      0,
+	if cfg.StartMenu {
+		m.mode = ModeStartup
 	}
-
-	return model{
-		buffers:                []Buffer{buffer},
-		lastFile:               cfg.LastFile(),
-		currentBufferIndex:     0,
-		mode:                   initialMode,
-		selectedBox:            -1,
-		selectedText:           -1,
-		connectionFrom:         -1,
-		connectionFromLine:     -1,
-		config:                 cfg,
-		highlightMode:          false,
-		selectedColor:          0,
-		selectionStartX:        CoordUnset,
-		selectionStartY:        CoordUnset,
-		selectedBoxes:          []int{},
-		selectedTexts:          []int{},
-		selectedConnections:    []int{},
-		originalBoxPositions:   make(map[int]point),
-		originalTextPositions:  make(map[int]point),
-		originalConnections:    make(map[int]Connection),
-		originalHighlights:     make(map[point]int),
-		originalBoxConnections: make(map[int][]Connection),
-		selBox:                 -1,
-		selText:                -1,
-		selConn:                -1,
-		menuTargetBox:          -1,
-		menuTargetText:         -1,
-		menuTargetConn:         -1,
-	}
+	m.clearGroupSelection()
+	return m
 }
 
 func (m *model) ensureCursorInBounds() {
-	if m.cursorX < 0 {
-		m.cursorX = 0
-	}
-	if m.cursorY < 0 {
-		m.cursorY = 0
-	}
-	if m.width > 0 && m.cursorX >= m.width {
-		m.cursorX = m.width - 1
-	}
-	maxY := m.height - 2
-	if maxY < 0 {
-		maxY = 0
-	}
-	if m.cursorY > maxY {
-		m.cursorY = maxY
-	}
+	m.cursorX = max(0, min(m.cursorX, max(m.width-1, 0)))
+	m.cursorY = max(0, min(m.cursorY, max(m.height-2, 0)))
 }
 
-func (m *model) replaceBuffer0(canvas *Canvas, filename string, panX, panY int) {
-	m.buffers[0] = Buffer{
-		canvas:    canvas,
-		undoStack: []Action{},
-		redoStack: []Action{},
-		filename:  filename,
-		panX:      panX,
-		panY:      panY,
+func (m *model) resetView() {
+	m.cursorX, m.cursorY = 0, 0
+	m.errorMessage, m.successMessage = "", ""
+}
+
+func (m *model) newChart() {
+	*m.getCurrentBuffer() = Buffer{canvas: cv.NewCanvas()}
+	m.resetView()
+}
+
+func (m *model) closeBuffer() {
+	if len(m.buffers) > 1 {
+		m.buffers = slices.Delete(m.buffers, m.currentBufferIndex, m.currentBufferIndex+1)
+		m.currentBufferIndex = max(m.currentBufferIndex-1, 0)
+	} else {
+		m.buffers = []Buffer{{canvas: cv.NewCanvas()}}
+		m.currentBufferIndex = 0
+		m.mode = ModeStartup
 	}
-	m.currentBufferIndex = 0
+	m.resetView()
 }
 
 func (m *model) rememberChart(path string) {
-	if m.config == nil {
-		return
-	}
 	m.config.RememberLastFile(path)
 	m.lastFile = path
 }
 
+func (m *model) openChart(path string) error {
+	canvas := cv.NewCanvas()
+	panX, panY, err := canvas.LoadFromFileWithPan(path)
+	if err != nil {
+		return err
+	}
+	m.rememberChart(path)
+	buf := Buffer{canvas: canvas, filename: path, panX: panX, panY: panY}
+	switch {
+	case m.fromStartup:
+		m.buffers[0] = buf
+		m.currentBufferIndex = 0
+		m.fromStartup = false
+	case m.openInNewBuffer:
+		m.addNewBuffer(buf)
+		m.openInNewBuffer = false
+	default:
+		*m.getCurrentBuffer() = buf
+	}
+	m.errorMessage = ""
+	return nil
+}
+
+func (m *model) saveChart(path string) bool {
+	buf := m.getCurrentBuffer()
+	if err := buf.canvas.SaveToFileWithPan(path, buf.panX, buf.panY); err != nil {
+		m.errorMessage = "Error saving file: " + err.Error()
+		return false
+	}
+	buf.filename = path
+	buf.savedAt = len(buf.undoStack)
+	m.rememberChart(path)
+	m.reportWritten("Saved", path)
+	return true
+}
+
+func (m *model) export(name, ext, label string, write func(string) error) bool {
+	base := filepath.Base(name)
+	if !strings.HasSuffix(strings.ToLower(base), ext) {
+		base += ext
+	}
+	path := m.config.GetSavePath(base)
+	if err := write(path); err != nil {
+		m.errorMessage = "Error exporting " + label + ": " + err.Error()
+		return false
+	}
+	m.reportWritten("Exported", path)
+	return true
+}
+
+func (m *model) reportWritten(verb, path string) {
+	absPath, _ := filepath.Abs(path)
+	m.successMessage = verb + " to " + absPath
+	m.errorMessage = ""
+}
+
+func (m *model) currentChartName() string {
+	if buf := m.getCurrentBuffer(); buf.filename != "" {
+		return chartDisplayName(filepath.Base(buf.filename))
+	}
+	return ""
+}
+
 func (m model) fileListRows() int {
-	rows := m.height - 8
-	if rows > len(m.allFiles) {
-		rows = len(m.allFiles)
-	}
-	if rows < 1 {
-		rows = 1
-	}
-	return rows
+	return max(min(m.height-8, len(m.allFiles)), 1)
 }
 
 func (m model) fileScrollMax() int {
@@ -194,11 +228,7 @@ func (m *model) resolveChartPath(name string) string {
 		}
 	}
 	for _, n := range names {
-		candidates := []string{n}
-		if m.config != nil && m.config.SaveDirectory != "" {
-			candidates = []string{m.config.GetSavePath(n), n}
-		}
-		for _, path := range candidates {
+		for _, path := range []string{m.config.GetSavePath(n), n} {
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
 				return path
 			}
@@ -229,9 +259,7 @@ func (m *model) applyFileFilter() {
 			}
 		}
 	}
-	if m.selectedFileIndex >= len(m.fileList) {
-		m.selectedFileIndex = len(m.fileList) - 1
-	}
+	m.selectedFileIndex = min(m.selectedFileIndex, len(m.fileList)-1)
 	if m.selectedFileIndex < 0 && len(m.fileList) > 0 {
 		m.selectedFileIndex = 0
 	}
@@ -267,18 +295,18 @@ func (m *model) selectFileIndex(idx int) {
 }
 
 func (m *model) moveFileSelection(delta int) {
-	if len(m.fileList) == 0 {
+	n := len(m.fileList)
+	if n == 0 {
 		return
 	}
 	idx := m.selectedFileIndex
-	if idx < 0 {
-		if delta < 0 {
-			idx = len(m.fileList) - 1
-		} else {
-			idx = 0
-		}
-	} else {
-		idx = (idx + delta%len(m.fileList) + len(m.fileList)) % len(m.fileList)
+	switch {
+	case idx >= 0:
+		idx = (idx + delta%n + n) % n
+	case delta < 0:
+		idx = n - 1
+	default:
+		idx = 0
 	}
 	m.selectFileIndex(idx)
 }
@@ -295,21 +323,37 @@ func (m *model) clampFileScroll() {
 	m.scrollFileList(0)
 }
 
+func (m *model) deleteSelectedFile() {
+	if m.confirmFileIndex < 0 || m.confirmFileIndex >= len(m.fileList) {
+		return
+	}
+	filename := m.fileList[m.confirmFileIndex]
+	if err := os.Remove(m.config.GetSavePath(filename)); err != nil {
+		m.errorMessage = "Error deleting file: " + err.Error()
+		return
+	}
+	if i := slices.Index(m.allFiles, filename); i >= 0 {
+		m.allFiles = slices.Delete(slices.Clone(m.allFiles), i, i+1)
+	}
+	m.applyFileFilter()
+	if m.selectedFileIndex < 0 {
+		m.filename = ""
+	}
+	m.successMessage = "Deleted " + chartDisplayName(filename)
+}
+
 func (m *model) scanTxtFiles() {
-	m.allFiles = []string{}
-	m.fileList = []string{}
+	m.allFiles = nil
+	m.fileList = nil
 	m.fileFilter = ""
 	m.fileSearch = false
 	m.fileScroll = 0
 	m.draggingFileScroll = false
 	m.selectedFileIndex = -1
-	dir := ""
-	if m.config != nil && m.config.SaveDirectory != "" {
-		dir = m.config.SaveDirectory
-	} else {
+	dir := m.config.SaveDirectory
+	if dir == "" {
 		var err error
-		dir, err = os.Getwd()
-		if err != nil {
+		if dir, err = os.Getwd(); err != nil {
 			return
 		}
 	}

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -9,503 +8,105 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m model) handleEditingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	// Esc keeps what was typed, same as Ctrl+S; undo reverts the edit.
-	case msg.Type == tea.KeyCtrlS, msg.Type == tea.KeyEscape:
-		if m.selectedBox != -1 {
+func (m model) handleTextEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	selectable := m.mode == ModeEditing
+	n := runeLen(m.editText)
 
-			editData := EditBoxData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText}
-			inverseData := EditBoxData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText}
-			m.recordAction(ActionEditBox, editData, inverseData)
-		} else if m.selectedText != -1 {
-
-			editData := EditTextData{ID: m.selectedText, NewText: m.editText, OldText: m.originalEditText}
-			inverseData := EditTextData{ID: m.selectedText, NewText: m.originalEditText, OldText: m.editText}
-			m.recordAction(ActionEditText, editData, inverseData)
-		}
-		m.mode = ModeNormal
-		m.editText = ""
-		m.originalEditText = ""
-		m.editCursorPos = 0
-		m.editCursorRow = 0
-		m.editCursorCol = 0
-		m.clearEditSelection()
-		m.selectedBox = -1
-		m.selectedText = -1
-		return m, nil
-	case msg.Type == tea.KeyCtrlV:
-
-		if m.hasEditSelection() {
+	insert := func(s string) {
+		if selectable {
 			m.deleteEditSelection()
 		}
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-
-			m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
-			m.editCursorPos += len([]rune(clipText))
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		}
-		return m, nil
-	case msg.String() == "ctrl+v":
-
-		if m.hasEditSelection() {
-			m.deleteEditSelection()
-		}
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-
-			m.editText = m.editText[:m.editCursorPos] + clipText + m.editText[m.editCursorPos:]
-			m.editCursorPos += len([]rune(clipText))
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		}
-		return m, nil
-	case msg.Type == tea.KeyHome:
-
-		m.editCursorPos = m.getLineStartPos()
-		m.clearEditSelection()
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyEnd:
-
-		m.editCursorPos = m.getLineEndPos()
-		m.clearEditSelection()
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyShiftHome:
-
-		m.startEditSelection()
-		m.editCursorPos = m.getLineStartPos()
-		m.editSelectionEnd = m.editCursorPos
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyShiftEnd:
-
-		m.startEditSelection()
-		m.editCursorPos = m.getLineEndPos()
-		m.editSelectionEnd = m.editCursorPos
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyShiftLeft:
-
-		m.startEditSelection()
-		if m.editCursorPos > 0 {
-			m.editCursorPos--
-			m.editSelectionEnd = m.editCursorPos
-		}
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyShiftRight:
-
-		m.startEditSelection()
-		if m.editCursorPos < len(m.editText) {
-			m.editCursorPos++
-			m.editSelectionEnd = m.editCursorPos
-		}
-		m.syncCursorPositions()
-		return m, nil
-	case msg.Type == tea.KeyShiftUp:
-
-		m.startEditSelection()
-		m.syncCursorPositions()
-		if m.editCursorRow > 0 {
-			m.editCursorRow--
-			m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
-			m.editSelectionEnd = m.editCursorPos
-		}
-		return m, nil
-	case msg.Type == tea.KeyShiftDown:
-
-		m.startEditSelection()
-		m.syncCursorPositions()
-		lines := strings.Split(m.editText, "\n")
-		if m.editCursorRow < len(lines)-1 {
-			m.editCursorRow++
-			m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
-			m.editSelectionEnd = m.editCursorPos
-		}
-		return m, nil
-	case msg.String() == "left":
-		m.clearEditSelection()
-		if m.editCursorPos > 0 {
-			m.editCursorPos--
-		}
-		m.syncCursorPositions()
-		return m, nil
-	case msg.String() == "right":
-		m.clearEditSelection()
-		if m.editCursorPos < len(m.editText) {
-			m.editCursorPos++
-		}
-		m.syncCursorPositions()
-		return m, nil
-	case msg.String() == "up":
-
-		m.clearEditSelection()
-		m.syncCursorPositions()
-		if m.editCursorRow > 0 {
-			m.editCursorRow--
-			m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
-		}
-		return m, nil
-	case msg.String() == "down":
-
-		m.clearEditSelection()
-		m.syncCursorPositions()
-		lines := strings.Split(m.editText, "\n")
-		if m.editCursorRow < len(lines)-1 {
-			m.editCursorRow++
-			m.editCursorPos = m.cursorPosToLinear(m.editCursorRow, m.editCursorCol, m.editText)
-		}
-		return m, nil
-	case msg.Type == tea.KeyEnter:
-
-		if m.hasEditSelection() {
-			m.deleteEditSelection()
-		}
-		m.editText = m.editText[:m.editCursorPos] + "\n" + m.editText[m.editCursorPos:]
-		m.editCursorPos++
-
-		if m.selectedBox != -1 {
-			m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-		} else if m.selectedText != -1 {
-			m.getCanvas().SetTextText(m.selectedText, m.editText)
-		}
-		return m, nil
-	case msg.Type == tea.KeyBackspace:
-
-		if m.hasEditSelection() {
-			m.deleteEditSelection()
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		} else if m.editCursorPos > 0 {
-			m.editText = m.editText[:m.editCursorPos-1] + m.editText[m.editCursorPos:]
-			m.editCursorPos--
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		}
-		return m, nil
-	case msg.Type == tea.KeyDelete:
-
-		if m.hasEditSelection() {
-			m.deleteEditSelection()
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		} else if m.editCursorPos < len(m.editText) {
-			m.editText = m.editText[:m.editCursorPos] + m.editText[m.editCursorPos+1:]
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		}
-		return m, nil
-	case msg.String() == "y" && m.hasEditSelection():
-
-		start, end := m.getEditSelectionBounds()
-		if err := clipboard.WriteAll(m.editText[start:end]); err != nil {
-			m.errorMessage = fmt.Sprintf("Could not copy to clipboard: %s", err.Error())
-		}
-		return m, nil
-	case msg.Type == tea.KeySpace:
-
-		if m.hasEditSelection() {
-			m.deleteEditSelection()
-		}
-
-		m.editText = m.editText[:m.editCursorPos] + " " + m.editText[m.editCursorPos:]
-		m.editCursorPos++
-
-		if m.selectedBox != -1 {
-			m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-		} else if m.selectedText != -1 {
-			m.getCanvas().SetTextText(m.selectedText, m.editText)
-		}
-		return m, nil
-	default:
-
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-
-			if m.hasEditSelection() {
-				m.deleteEditSelection()
-			}
-			runeStr := string(msg.Runes)
-			m.editText = m.editText[:m.editCursorPos] + runeStr + m.editText[m.editCursorPos:]
-			m.editCursorPos += len(msg.Runes)
-
-			if m.selectedBox != -1 {
-				m.getCanvas().SetBoxText(m.selectedBox, m.editText)
-			} else if m.selectedText != -1 {
-				m.getCanvas().SetTextText(m.selectedText, m.editText)
-			}
-		}
-		return m, nil
+		m.editText = splice(m.editText, m.editCursorPos, m.editCursorPos, s)
+		m.editCursorPos += runeLen(s)
+		m.syncEditTarget()
 	}
-}
-
-func (m model) handleTextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case msg.Type == tea.KeyCtrlS, msg.Type == tea.KeyEscape:
-		if m.textInputText != "" {
-			m.getCanvas().AddText(m.textInputX, m.textInputY, m.textInputText)
+	moveTo := func(pos int, extend bool) {
+		if selectable && extend {
+			m.startEditSelection()
+			m.editSelectionEnd = pos
+		} else {
+			m.clearEditSelection()
 		}
-		m.mode = ModeNormal
-		m.textInputText = ""
-		m.textInputCursorPos = 0
-		return m, nil
-	case msg.Type == tea.KeyCtrlV:
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-
-			m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
-			m.textInputCursorPos += len([]rune(clipText))
-		}
-		return m, nil
-	case msg.String() == "ctrl+v":
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-
-			m.textInputText = m.textInputText[:m.textInputCursorPos] + clipText + m.textInputText[m.textInputCursorPos:]
-			m.textInputCursorPos += len([]rune(clipText))
-		}
-		return m, nil
-	case msg.String() == "left":
-		if m.textInputCursorPos > 0 {
-			m.textInputCursorPos--
-		}
-		return m, nil
-	case msg.String() == "right":
-		if m.textInputCursorPos < len(m.textInputText) {
-			m.textInputCursorPos++
-		}
-		return m, nil
-	case msg.Type == tea.KeyEnter:
-		m.textInputText = m.textInputText[:m.textInputCursorPos] + "\n" + m.textInputText[m.textInputCursorPos:]
-		m.textInputCursorPos++
-		return m, nil
-	case msg.Type == tea.KeyBackspace:
-		if m.textInputCursorPos > 0 {
-			m.textInputText = m.textInputText[:m.textInputCursorPos-1] + m.textInputText[m.textInputCursorPos:]
-			m.textInputCursorPos--
-		}
-		return m, nil
-	case msg.Type == tea.KeyDelete:
-		if m.textInputCursorPos < len(m.textInputText) {
-			m.textInputText = m.textInputText[:m.textInputCursorPos] + m.textInputText[m.textInputCursorPos+1:]
-		}
-		return m, nil
-	case msg.Type == tea.KeySpace:
-
-		m.textInputText = m.textInputText[:m.textInputCursorPos] + " " + m.textInputText[m.textInputCursorPos:]
-		m.textInputCursorPos++
-		return m, nil
-	default:
-
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-			runeStr := string(msg.Runes)
-			m.textInputText = m.textInputText[:m.textInputCursorPos] + runeStr + m.textInputText[m.textInputCursorPos:]
-			m.textInputCursorPos += len(msg.Runes)
-		}
-		return m, nil
+		m.editCursorPos = pos
 	}
+	rowDelta := func(d int) int {
+		row, col := linearToRowCol(m.editCursorPos, m.editText)
+		if row+d < 0 || row+d >= strings.Count(m.editText, "\n")+1 {
+			return m.editCursorPos
+		}
+		return rowColToLinear(row+d, col, m.editText)
+	}
+	shift := false
+	switch msg.Type {
+	case tea.KeyShiftLeft, tea.KeyShiftRight, tea.KeyShiftUp, tea.KeyShiftDown, tea.KeyShiftHome, tea.KeyShiftEnd:
+		shift = true
+	}
+
+	switch msg.Type {
+	case tea.KeyCtrlS, tea.KeyEscape:
+		m.finishEdit()
+	case tea.KeyCtrlV:
+		if clip, err := readClipboardText(); err == nil && clip != "" {
+			insert(clip)
+		}
+	case tea.KeyHome, tea.KeyShiftHome:
+		moveTo(lineStartPos(m.editText, m.editCursorPos), shift)
+	case tea.KeyEnd, tea.KeyShiftEnd:
+		moveTo(lineEndPos(m.editText, m.editCursorPos), shift)
+	case tea.KeyLeft, tea.KeyShiftLeft:
+		moveTo(max(m.editCursorPos-1, 0), shift)
+	case tea.KeyRight, tea.KeyShiftRight:
+		moveTo(min(m.editCursorPos+1, n), shift)
+	case tea.KeyUp, tea.KeyShiftUp:
+		moveTo(rowDelta(-1), shift)
+	case tea.KeyDown, tea.KeyShiftDown:
+		moveTo(rowDelta(1), shift)
+	case tea.KeyEnter:
+		insert("\n")
+	case tea.KeyBackspace:
+		if !(selectable && m.deleteEditSelection()) && m.editCursorPos > 0 {
+			m.editText = splice(m.editText, m.editCursorPos-1, m.editCursorPos, "")
+			m.editCursorPos--
+		}
+		m.syncEditTarget()
+	case tea.KeyDelete:
+		if !(selectable && m.deleteEditSelection()) && m.editCursorPos < n {
+			m.editText = splice(m.editText, m.editCursorPos, m.editCursorPos+1, "")
+		}
+		m.syncEditTarget()
+	case tea.KeySpace, tea.KeyRunes:
+		if selectable && string(msg.Runes) == "y" && m.hasEditSelection() {
+			start, end := m.editSelectionBounds()
+			if err := clipboard.WriteAll(string([]rune(m.editText)[start:end])); err != nil {
+				m.errorMessage = "Could not copy to clipboard: " + err.Error()
+			}
+			break
+		}
+		insert(string(msg.Runes))
+	}
+	return m, nil
 }
 
 func (m model) handleBoxJumpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case msg.Type == tea.KeyEscape:
-		m.mode = ModeNormal
-		m.boxJumpInput = ""
-		return m, nil
-	case msg.Type == tea.KeyEnter:
-
-		if m.boxJumpInput != "" {
-			boxNum, err := strconv.Atoi(m.boxJumpInput)
-			if err == nil && boxNum >= 0 && boxNum < len(m.getCanvas().Boxes()) {
-				box := m.getCanvas().Boxes()[boxNum]
-				panX, panY := m.getPanOffset()
-
-				m.cursorX = box.X + box.Width/2 - panX
-				m.cursorY = box.Y + box.Height/2 - panY
-				m.ensureCursorInBounds()
-			}
+	switch msg.Type {
+	case tea.KeyEscape, tea.KeyEnter:
+		if boxNum, err := strconv.Atoi(m.boxJumpInput); msg.Type == tea.KeyEnter && err == nil && boxNum >= 0 && boxNum < len(m.getCanvas().Boxes()) {
+			box := m.getCanvas().Boxes()[boxNum]
+			panX, panY := m.getPanOffset()
+			m.cursorX = box.X + box.Width/2 - panX
+			m.cursorY = box.Y + box.Height/2 - panY
+			m.ensureCursorInBounds()
 		}
 		m.mode = ModeNormal
 		m.boxJumpInput = ""
-		return m, nil
-	case msg.Type == tea.KeyBackspace:
+	case tea.KeyBackspace:
 		if len(m.boxJumpInput) > 0 {
 			m.boxJumpInput = m.boxJumpInput[:len(m.boxJumpInput)-1]
 		}
-		return m, nil
-	default:
-
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-			runeStr := string(msg.Runes)
-
-			if len(runeStr) == 1 && runeStr[0] >= '0' && runeStr[0] <= '9' {
-				m.boxJumpInput += runeStr
-			}
+	case tea.KeyRunes:
+		if s := string(msg.Runes); len(s) == 1 && s[0] >= '0' && s[0] <= '9' {
+			m.boxJumpInput += s
 		}
-		return m, nil
 	}
-}
-
-func (m model) handleTitleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case msg.Type == tea.KeyCtrlS, msg.Type == tea.KeyEscape:
-
-		if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-			oldTitle := m.originalTitleText
-			newTitle := m.titleEditText
-
-			m.getCanvas().Boxes()[m.titleEditBoxID].Title = newTitle
-			m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-
-			editData := EditTitleData{BoxID: m.titleEditBoxID, NewTitle: newTitle, OldTitle: oldTitle}
-			inverseData := EditTitleData{BoxID: m.titleEditBoxID, NewTitle: oldTitle, OldTitle: newTitle}
-			m.recordAction(ActionEditTitle, editData, inverseData)
-		}
-		m.mode = ModeNormal
-		m.titleEditText = ""
-		m.titleEditCursorPos = 0
-		m.titleEditCursorRow = 0
-		m.titleEditCursorCol = 0
-		m.titleEditBoxID = -1
-		return m, nil
-	case msg.Type == tea.KeyCtrlV:
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-			m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + clipText + m.titleEditText[m.titleEditCursorPos:]
-			m.titleEditCursorPos += len([]rune(clipText))
-
-			if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-				m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-			}
-		}
-		return m, nil
-	case msg.String() == "ctrl+v":
-
-		clipText, err := readClipboardText()
-		if err == nil && clipText != "" {
-			m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + clipText + m.titleEditText[m.titleEditCursorPos:]
-			m.titleEditCursorPos += len([]rune(clipText))
-
-			if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-				m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-			}
-		}
-		return m, nil
-	case msg.String() == "left":
-		if m.titleEditCursorPos > 0 {
-			m.titleEditCursorPos--
-		}
-		m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
-		return m, nil
-	case msg.String() == "right":
-		if m.titleEditCursorPos < len(m.titleEditText) {
-			m.titleEditCursorPos++
-		}
-		m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
-		return m, nil
-	case msg.String() == "up":
-
-		m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
-		if m.titleEditCursorRow > 0 {
-			m.titleEditCursorRow--
-			m.titleEditCursorPos = m.cursorPosToLinear(m.titleEditCursorRow, m.titleEditCursorCol, m.titleEditText)
-		}
-		return m, nil
-	case msg.String() == "down":
-
-		m.titleEditCursorRow, m.titleEditCursorCol = m.linearToCursorPos(m.titleEditCursorPos, m.titleEditText)
-		lines := strings.Split(m.titleEditText, "\n")
-		if m.titleEditCursorRow < len(lines)-1 {
-			m.titleEditCursorRow++
-			m.titleEditCursorPos = m.cursorPosToLinear(m.titleEditCursorRow, m.titleEditCursorCol, m.titleEditText)
-		}
-		return m, nil
-	case msg.Type == tea.KeyEnter:
-		m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + "\n" + m.titleEditText[m.titleEditCursorPos:]
-		m.titleEditCursorPos++
-
-		if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-			m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-			m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-		}
-		return m, nil
-	case msg.Type == tea.KeyBackspace:
-		if m.titleEditCursorPos > 0 {
-			m.titleEditText = m.titleEditText[:m.titleEditCursorPos-1] + m.titleEditText[m.titleEditCursorPos:]
-			m.titleEditCursorPos--
-
-			if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-				m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-			}
-		}
-		return m, nil
-	case msg.Type == tea.KeyDelete:
-		if m.titleEditCursorPos < len(m.titleEditText) {
-			m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + m.titleEditText[m.titleEditCursorPos+1:]
-
-			if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-				m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-			}
-		}
-		return m, nil
-	case msg.Type == tea.KeySpace:
-
-		m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + " " + m.titleEditText[m.titleEditCursorPos:]
-		m.titleEditCursorPos++
-
-		if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-			m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-			m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-		}
-		return m, nil
-	default:
-
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-			runeStr := string(msg.Runes)
-			m.titleEditText = m.titleEditText[:m.titleEditCursorPos] + runeStr + m.titleEditText[m.titleEditCursorPos:]
-			m.titleEditCursorPos += len([]rune(runeStr))
-
-			if m.titleEditBoxID != -1 && m.titleEditBoxID < len(m.getCanvas().Boxes()) {
-				m.getCanvas().Boxes()[m.titleEditBoxID].Title = m.titleEditText
-				m.getCanvas().Boxes()[m.titleEditBoxID].UpdateSize()
-			}
-		}
-		return m, nil
-	}
+	return m, nil
 }

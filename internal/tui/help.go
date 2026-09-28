@@ -1,6 +1,5 @@
 package tui
 
-// One row goes to the status line.
 func (m model) helpPageHeight() int { return max(m.height-1, 1) }
 
 func (m model) helpMaxScroll() int { return max(len(helpText)-m.helpPageHeight(), 0) }

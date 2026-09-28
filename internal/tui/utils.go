@@ -8,24 +8,21 @@ import (
 )
 
 func (m *model) getCurrentBuffer() *Buffer {
-	if len(m.buffers) == 0 {
-		return nil
-	}
 	return &m.buffers[m.currentBufferIndex]
 }
 
 func (m *model) getCanvas() *Canvas {
-	if buf := m.getCurrentBuffer(); buf != nil {
-		return buf.canvas
-	}
-	return nil
+	return m.getCurrentBuffer().canvas
 }
 
 func (m *model) getPanOffset() (int, int) {
-	if buf := m.getCurrentBuffer(); buf != nil {
-		return buf.panX, buf.panY
-	}
-	return 0, 0
+	buf := m.getCurrentBuffer()
+	return buf.panX, buf.panY
+}
+
+func (m *model) worldCursor() (int, int) {
+	panX, panY := m.getPanOffset()
+	return m.cursorX + panX, m.cursorY + panY
 }
 
 func (m *model) unsavedChanges() bool {
@@ -37,35 +34,29 @@ func (m *model) unsavedChanges() bool {
 	return false
 }
 
-func (m *model) addNewBuffer(canvas *Canvas, filename string) {
-	m.addNewBufferWithPan(canvas, filename, 0, 0)
-}
-
-func (m *model) addNewBufferWithPan(canvas *Canvas, filename string, panX, panY int) {
-	buffer := Buffer{
-		canvas:    canvas,
-		undoStack: []Action{},
-		redoStack: []Action{},
-		filename:  filename,
-		panX:      panX,
-		panY:      panY,
-	}
-	m.buffers = append(m.buffers, buffer)
+func (m *model) addNewBuffer(buf Buffer) {
+	m.buffers = append(m.buffers, buf)
 	m.currentBufferIndex = len(m.buffers) - 1
 }
 
-func (m *model) recordAction(actionType ActionType, data, inverse interface{}) {
+func (m *model) recordAction(actionType ActionType, data, inverse any) {
 	buf := m.getCurrentBuffer()
-	if buf == nil {
-		return
-	}
-	action := Action{
-		Type:    actionType,
-		Data:    data,
-		Inverse: inverse,
-	}
-	buf.undoStack = append(buf.undoStack, action)
+	buf.undoStack = append(buf.undoStack, Action{Type: actionType, Data: data, Inverse: inverse})
 	buf.redoStack = buf.redoStack[:0]
+}
+
+func (m *model) confirm(action ConfirmAction, id int) {
+	m.mode = ModeConfirm
+	m.confirmAction = action
+	m.confirmID = id
+}
+
+func (m *model) beginFileOp(op FileOperation, name string) {
+	m.mode = ModeFileInput
+	m.fileOp = op
+	m.filename = name
+	m.errorMessage, m.successMessage = "", ""
+	m.fromStartup = false
 }
 
 func readClipboardText() (string, error) {

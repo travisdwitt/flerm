@@ -1,5 +1,7 @@
 package canvas
 
+import "slices"
+
 type Canvas struct {
 	boxes       []Box
 	connections []Connection
@@ -16,6 +18,20 @@ func (c *Canvas) box(id int) (Box, bool) {
 		return Box{}, false
 	}
 	return c.boxes[id], true
+}
+
+func (c *Canvas) boxPtr(id int) *Box {
+	if id < 0 || id >= len(c.boxes) {
+		return nil
+	}
+	return &c.boxes[id]
+}
+
+func (c *Canvas) textPtr(id int) *Text {
+	if id < 0 || id >= len(c.texts) {
+		return nil
+	}
+	return &c.texts[id]
 }
 
 func connPoints(conn Connection) []Point {
@@ -86,9 +102,7 @@ func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
 		c.boxes[id] = box
 		return
 	}
-	c.boxes = append(c.boxes, Box{})
-	copy(c.boxes[id+1:], c.boxes[id:])
-	c.boxes[id] = box
+	c.boxes = slices.Insert(c.boxes, id, box)
 	for i := id + 1; i < len(c.boxes); i++ {
 		c.boxes[i].ID = i
 	}
@@ -115,22 +129,22 @@ func (c *Canvas) GetTextAt(x, y int) int {
 }
 
 func (c *Canvas) DeleteText(id int) {
-	if id < 0 || id >= len(c.texts) {
+	if c.textPtr(id) == nil {
 		return
 	}
 	c.deleteHighlights(c.GetTextCells(id))
-	c.texts = append(c.texts[:id], c.texts[id+1:]...)
+	c.texts = slices.Delete(c.texts, id, id+1)
 	for i := id; i < len(c.texts); i++ {
 		c.texts[i].ID = i
 	}
 }
 
 func (c *Canvas) DeleteBox(id int) {
-	if id < 0 || id >= len(c.boxes) {
+	if c.boxPtr(id) == nil {
 		return
 	}
 	c.deleteHighlights(c.GetBoxCells(id))
-	c.boxes = append(c.boxes[:id], c.boxes[id+1:]...)
+	c.boxes = slices.Delete(c.boxes, id, id+1)
 	for i := id; i < len(c.boxes); i++ {
 		c.boxes[i].ID = i
 	}
@@ -151,37 +165,43 @@ func (c *Canvas) DeleteBox(id int) {
 }
 
 func (c *Canvas) GetBoxText(id int) string {
-	box, ok := c.box(id)
-	if !ok {
-		return ""
+	if b := c.boxPtr(id); b != nil {
+		return b.GetText()
 	}
-	return box.GetText()
+	return ""
 }
 
 func (c *Canvas) SetBoxText(id int, text string) {
-	if id >= 0 && id < len(c.boxes) {
-		c.boxes[id].SetText(text)
+	if b := c.boxPtr(id); b != nil {
+		b.SetText(text)
+	}
+}
+
+func (c *Canvas) SetBoxTitle(id int, title string) {
+	if b := c.boxPtr(id); b != nil {
+		b.Title = title
+		b.UpdateSize()
 	}
 }
 
 func (c *Canvas) GetTextText(id int) string {
-	if id < 0 || id >= len(c.texts) {
-		return ""
+	if t := c.textPtr(id); t != nil {
+		return t.GetText()
 	}
-	return c.texts[id].GetText()
+	return ""
 }
 
 func (c *Canvas) SetTextText(id int, text string) {
-	if id >= 0 && id < len(c.texts) {
-		c.texts[id].SetText(text)
+	if t := c.textPtr(id); t != nil {
+		t.SetText(text)
 	}
 }
 
 func (c *Canvas) ResizeBox(id, deltaWidth, deltaHeight int) {
-	if id < 0 || id >= len(c.boxes) {
+	box := c.boxPtr(id)
+	if box == nil {
 		return
 	}
-	box := &c.boxes[id]
 	w := max(box.Width+deltaWidth, minBoxWidth)
 	h := max(box.Height+deltaHeight, minBoxHeight)
 	oldX, oldWidth := box.X, box.Width
@@ -193,10 +213,10 @@ func (c *Canvas) ResizeBox(id, deltaWidth, deltaHeight int) {
 }
 
 func (c *Canvas) SetBoxSize(id, width, height int) {
-	if id < 0 || id >= len(c.boxes) {
+	box := c.boxPtr(id)
+	if box == nil {
 		return
 	}
-	box := &c.boxes[id]
 	oldX, oldWidth := box.X, box.Width
 	width, height = max(width, minBoxWidth), max(height, minBoxHeight)
 	if width == box.Width && height == box.Height {
@@ -231,7 +251,7 @@ func (c *Canvas) reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth int) {
 		if fromID == id {
 			other = toID
 		}
-		if other < 0 || other >= len(c.boxes) {
+		if c.boxPtr(other) == nil {
 			continue
 		}
 
@@ -255,74 +275,71 @@ func (c *Canvas) reanchorConnectionsForResize(id, oldBoxX, oldBoxWidth int) {
 }
 
 func (c *Canvas) MoveBoxOnly(id, deltaX, deltaY int) {
-	if id >= 0 && id < len(c.boxes) {
-		box := &c.boxes[id]
-		box.X, box.Y = box.X+deltaX, box.Y+deltaY
+	if b := c.boxPtr(id); b != nil {
+		b.X, b.Y = b.X+deltaX, b.Y+deltaY
 	}
 }
 
 func (c *Canvas) MoveBox(id, deltaX, deltaY int) {
-	if id < 0 || id >= len(c.boxes) {
+	if c.boxPtr(id) == nil {
 		return
 	}
-	oldX, oldY := c.boxes[id].X, c.boxes[id].Y
 	c.MoveBoxOnly(id, deltaX, deltaY)
-	c.rerouteConnectionsForMovedBox(id, c.boxes[id].X-oldX, c.boxes[id].Y-oldY)
+	c.rerouteConnectionsForMovedBox(id, deltaX, deltaY)
 }
 
 func (c *Canvas) SetBoxPositionOnly(id, x, y int) {
-	if id >= 0 && id < len(c.boxes) {
-		c.boxes[id].X, c.boxes[id].Y = x, y
+	if b := c.boxPtr(id); b != nil {
+		b.X, b.Y = x, y
 	}
 }
 
 func (c *Canvas) MoveText(id, deltaX, deltaY int) {
-	if id >= 0 && id < len(c.texts) {
-		t := &c.texts[id]
+	if t := c.textPtr(id); t != nil {
 		t.X, t.Y = t.X+deltaX, t.Y+deltaY
 	}
 }
 
 func (c *Canvas) SetTextPosition(id, x, y int) {
-	if id >= 0 && id < len(c.texts) {
-		c.texts[id].X, c.texts[id].Y = x, y
+	if t := c.textPtr(id); t != nil {
+		t.X, t.Y = x, y
 	}
 }
 
 func (c *Canvas) CycleBoxZLevel(id int) {
-	if id >= 0 && id < len(c.boxes) {
-		c.boxes[id].ZLevel = (c.boxes[id].ZLevel + 1) % numZLevels
+	if b := c.boxPtr(id); b != nil {
+		b.ZLevel = (b.ZLevel + 1) % numZLevels
 	}
 }
 
-func (c *Canvas) CycleBorderStyle(boxID int) BorderStyle {
-	if boxID < 0 || boxID >= len(c.boxes) {
+func (c *Canvas) CycleBorderStyle(id int) BorderStyle {
+	b := c.boxPtr(id)
+	if b == nil {
 		return BorderStyleASCII
 	}
-	old := c.boxes[boxID].BorderStyle
-	next := old + 1
-	if next < BorderStyleASCII || next > BorderStyleRounded {
-		next = BorderStyleASCII
+	old := b.BorderStyle
+	b.BorderStyle = BorderStyleASCII
+	if old >= BorderStyleASCII && old < BorderStyleRounded {
+		b.BorderStyle = old + 1
 	}
-	c.boxes[boxID].BorderStyle = next
 	return old
 }
 
-func (c *Canvas) SetBorderStyle(boxID int, style BorderStyle) {
-	if boxID >= 0 && boxID < len(c.boxes) {
-		c.boxes[boxID].BorderStyle = style
+func (c *Canvas) SetBorderStyle(id int, style BorderStyle) {
+	if b := c.boxPtr(id); b != nil {
+		b.BorderStyle = style
 	}
 }
 
-func (c *Canvas) SetBoxColor(boxID, color int) {
-	if boxID >= 0 && boxID < len(c.boxes) {
-		c.boxes[boxID].Color = color
+func (c *Canvas) SetBoxColor(id, color int) {
+	if b := c.boxPtr(id); b != nil {
+		b.Color = color
 	}
 }
 
-func (c *Canvas) SetTextColor(textID, color int) {
-	if textID >= 0 && textID < len(c.texts) {
-		c.texts[textID].Color = color
+func (c *Canvas) SetTextColor(id, color int) {
+	if t := c.textPtr(id); t != nil {
+		t.Color = color
 	}
 }
 
@@ -355,21 +372,22 @@ func (c *Canvas) DuplicateBox(id, dx, dy int) int {
 	cells := c.GetBoxCells(id)
 	box.ID = len(c.boxes)
 	box.X, box.Y = box.X+dx, box.Y+dy
-	box.Lines = append([]string(nil), box.Lines...)
+	box.Lines = slices.Clone(box.Lines)
 	c.boxes = append(c.boxes, box)
 	c.duplicateHighlights(cells, dx, dy)
 	return box.ID
 }
 
 func (c *Canvas) DuplicateText(id, dx, dy int) int {
-	if id < 0 || id >= len(c.texts) {
+	tp := c.textPtr(id)
+	if tp == nil {
 		return -1
 	}
 	cells := c.GetTextCells(id)
-	t := c.texts[id]
+	t := *tp
 	t.ID = len(c.texts)
 	t.X, t.Y = t.X+dx, t.Y+dy
-	t.Lines = append([]string(nil), t.Lines...)
+	t.Lines = slices.Clone(t.Lines)
 	c.texts = append(c.texts, t)
 	c.duplicateHighlights(cells, dx, dy)
 	return t.ID

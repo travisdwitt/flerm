@@ -11,7 +11,6 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case struct{}:
-
 		return m, nil
 
 	case effectTickMsg:
@@ -54,14 +53,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleNormalKey(msg)
 		case ModeContextMenu:
 			return m.handleContextMenuKey(msg)
-		case ModeEditing:
-			return m.handleEditingKey(msg)
-		case ModeTextInput:
-			return m.handleTextInputKey(msg)
+		case ModeEditing, ModeTextInput, ModeTitleEdit:
+			return m.handleTextEditKey(msg)
 		case ModeBoxJump:
 			return m.handleBoxJumpKey(msg)
-		case ModeTitleEdit:
-			return m.handleTitleEditKey(msg)
 		case ModeResize:
 			return m.handleResizeKey(msg)
 		case ModeMultiSelect:
