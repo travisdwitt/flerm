@@ -10,7 +10,8 @@
 
 **A quick and easy flowchart editor for the terminal.**
 <br>
-<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/62cbfad3-f27e-471e-b219-2c3ed56d381d" />
+<img width="932" height="685" alt="flerm start screen" src="https://github.com/user-attachments/assets/0b006b78-886a-4e6f-8e3b-d8e4b09efcbd" />
+
 
 ## Installation
 
@@ -55,6 +56,9 @@ confirmations=true
 # Offer "r: Resume <chart>" on the start menu for the last chart you opened
 resume=true
 ```
+<br>
+<img width="932" height="685" alt="RABDARGAB plan" src="https://github.com/user-attachments/assets/5346afbf-7dbe-4fb6-9b4e-c806c3bba826" />
+
 
 ## NEW Mouse Support!
 
@@ -70,6 +74,10 @@ resume=true
 - **Drawing lines with the mouse:** pick "New Line" from a box's _or_ a line's menu, then left-click to drop nodes. Click a box or line to finish.
 - **Highlight mode:** click and drag to paint/draw in the selected color anywhere on the canvas.
 - **Multi-select:** press `M`, then click and drag a rectangle around some boxes. Everything inside gets highlighted and you can drag the whole group around at once.
+
+<br>
+<img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/a11e03e0-d4c1-4045-adcb-de5f13133dd6" />
+
 
 ## Keymaps
 
@@ -123,7 +131,8 @@ resume=true
 - `Enter` - Highlight entire element at cursor position
 - `Esc` - Exit highlight mode
   <br>
-  <img width="932" height="686" alt="image" src="https://github.com/user-attachments/assets/0e58f946-3017-4b73-80d5-531adabb4e19" />
+  <img width="932" height="686" alt="an incredible flerm painting of flowers and the word gorgeous in text" src="https://github.com/user-attachments/assets/87eb7972-f60d-4122-a4f1-d81b4b92fce6" />
+
 
 ### Resize Mode
 
