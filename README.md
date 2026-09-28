@@ -1,13 +1,3 @@
-```
-+--------------------------------+
-|   ___ __                       |
-| .'  _|  |.-----.----.--------. |
-| |   _|  ||  -__|   _|        | |
-| |__| |__||_____|__| |__|__|__| |
-|                                |
-+--------------------------------+
-```
-
 **A quick and easy flowchart editor for the terminal.**
 <br>
 <img width="932" height="685" alt="flerm start screen" src="https://github.com/user-attachments/assets/0b006b78-886a-4e6f-8e3b-d8e4b09efcbd" />
