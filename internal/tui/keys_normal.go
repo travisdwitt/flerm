@@ -144,7 +144,12 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "tab":
 		if m.highlightMode {
-			m.selectedColor = (m.selectedColor + 1) % numColors
+			m.menuTargetBox, m.menuTargetText, m.menuTargetConn = -1, -1, -1
+			m.menuItems = colorSubmenu()[1:]
+			m.menuIndex = m.selectedColor
+			m.menuStack = nil
+			m.menuX, m.menuY = 0, m.height
+			m.mode = ModeContextMenu
 		} else if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
 			old := canvas.CycleBorderStyle(boxID)
 			data := BorderStyleData{BoxID: boxID, OldStyle: old, NewStyle: canvas.Boxes()[boxID].BorderStyle}

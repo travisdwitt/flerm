@@ -5,8 +5,8 @@ func (m model) helpPageHeight() int { return max(m.height-1, 1) }
 func (m model) helpMaxScroll() int { return max(len(helpText)-m.helpPageHeight(), 0) }
 
 var helpText = []string{
-	"Fl(ow)(T)erm Help",
-	"=================",
+	"Fl(ow)(T)erm Cheat Sheet",
+	"========================",
 	"",
 	"",
 	"Navigation:",
@@ -98,7 +98,7 @@ var helpText = []string{
 	"  Space            Enter highlight mode",
 	"                   - When in highlight mode on a box: cycle highlighting",
 	"                     (divider → border → both → clear)",
-	"  Tab              Cycle through 8 highlight colors",
+	"  Tab              Open color picker (16 colors)",
 	"  h/j/k/l          Move cursor and leave colored trail",
 	"  d    						Delete the highlight directly under the cursor",
 	"  D    						Delete all highlights from an element",

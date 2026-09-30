@@ -439,12 +439,11 @@ func colorCode(colorIndex int, blank bool) string {
 	if colorIndex < 0 || colorIndex >= NumColors {
 		return ""
 	}
-	base := 30
+	fg := []int{90, 31, 32, 33, 34, 35, 36, 37, 30, 91, 92, 93, 94, 95, 96, 97}[colorIndex]
 	if blank {
-		base = 40
+		fg += 10
 	}
-	offsets := []int{7, 1, 2, 3, 4, 5, 6, 7}
-	return fmt.Sprintf("\x1b[%dm", base+offsets[colorIndex])
+	return fmt.Sprintf("\x1b[%dm", fg)
 }
 
 const colorReset = "\x1b[0m"

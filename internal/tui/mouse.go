@@ -438,12 +438,13 @@ func (m *model) openContextMenu(canvasX, canvasY int) {
 	m.mode = ModeContextMenu
 }
 
-var colorNames = []string{"Gray", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"}
+var colorNames = []string{"Gray", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
+	"Black", "Bright Red", "Bright Green", "Bright Yellow", "Bright Blue", "Bright Magenta", "Bright Cyan", "Bright White"}
 
 func colorSubmenu() []MenuItem {
 	items := []MenuItem{{Label: "None", Action: MenuSetColor, Arg: -1}}
 	for i, n := range colorNames {
-		items = append(items, MenuItem{Label: n, Action: MenuSetColor, Arg: i})
+		items = append(items, MenuItem{Label: "■ " + n, Action: MenuSetColor, Arg: i})
 	}
 	return items
 }
@@ -668,7 +669,7 @@ func menuInnerWidth(items []MenuItem) int {
 		if item.Separator {
 			continue
 		}
-		maxLabel = max(maxLabel, len(item.Label))
+		maxLabel = max(maxLabel, runeLen(item.Label))
 		hasSubmenu = hasSubmenu || len(item.Submenu) > 0
 	}
 	inner := maxLabel + 2
@@ -756,6 +757,9 @@ func (m *model) applyMenuColor(color int) {
 		kind, id = ColorKindText, m.menuTargetText
 		old = canvas.Texts()[id].Color
 	default:
+		if color >= 0 {
+			m.selectedColor = color
+		}
 		return
 	}
 	m.applyObjectColor(kind, id, color)
@@ -841,6 +845,9 @@ func (m model) drawMenuLevel(r *RenderResult, level menuLevel) {
 		}
 		if len(item.Submenu) > 0 {
 			setCell(x+w-2, py, '▸', rowColor)
+		}
+		if item.Action == MenuSetColor && item.Arg >= 0 {
+			setCell(x+2, py, '■', item.Arg)
 		}
 		setCell(x+w-1, py, '│', colorMenuBorder)
 	}

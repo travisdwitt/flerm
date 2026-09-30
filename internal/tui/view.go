@@ -247,7 +247,7 @@ func (m model) statusLine() string {
 	}
 	status := fmt.Sprintf("Mode: %s | Cursor: (%d,%d)", modeStr, m.cursorX, m.cursorY)
 	if m.highlightMode {
-		status += fmt.Sprintf(" | Color: %s (%d/8)", colorNames[m.selectedColor], m.selectedColor+1)
+		status += fmt.Sprintf(" | Color: %s (%d/%d)", colorNames[m.selectedColor], m.selectedColor+1, numColors)
 	}
 	if m.connectionFrom != -1 {
 		status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
@@ -518,6 +518,10 @@ const (
 	fileEmptyList   = "  (No charts found in current directory)"
 	fileNoMatch     = "  (No charts match)"
 	fileSearchLabel = "  Search: "
+
+	fileConfirmPrefix  = "  Are you sure you want to delete "
+	fileConfirmSuffix  = "? (Y/N)"
+	fileMenuMinContent = 62
 )
 
 func (m model) fileMenuTitle() string {
@@ -531,11 +535,16 @@ func (m model) fileMenuTitle() string {
 	return fmt.Sprintf("Select a saved chart (%d):", n)
 }
 
-func (m model) fileConfirmLine() string {
+func (m model) fileConfirmLine(width int) string {
 	if !m.showingDeleteConfirm || m.confirmFileIndex < 0 || m.confirmFileIndex >= len(m.fileList) {
 		return ""
 	}
-	return fmt.Sprintf("  Are you sure you want to delete %s? (Y/N)", chartDisplayName(m.fileList[m.confirmFileIndex]))
+	name := []rune(chartDisplayName(m.fileList[m.confirmFileIndex]))
+	fits := max(width-len(fileConfirmPrefix)-len(fileConfirmSuffix), 1)
+	if len(name) > fits {
+		name = append(name[:fits-1], '\u2026')
+	}
+	return fileConfirmPrefix + string(name) + fileConfirmSuffix
 }
 
 func (m model) fileMenuBounds() (x, y, w, rows int) {
@@ -548,9 +557,10 @@ func (m model) fileMenuBounds() (x, y, w, rows int) {
 	for _, f := range m.allFiles {
 		contentWidth = max(contentWidth, runeLen(chartDisplayName(f))+2)
 	}
-	for _, s := range []string{fileOpenHint, fileSearchHint, fileEmptyList, m.fileConfirmLine()} {
+	for _, s := range []string{fileOpenHint, fileSearchHint, fileEmptyList} {
 		contentWidth = max(contentWidth, runeLen(s))
 	}
+	contentWidth = max(contentWidth, fileMenuMinContent)
 
 	w = contentWidth + 4
 	return m.width/2 - w/2, m.height/2 - (rows+6)/2, w, rows
@@ -593,8 +603,8 @@ func (m model) renderFileMenu() string {
 	}
 
 	switch {
-	case m.fileConfirmLine() != "":
-		menuItems = append(menuItems, m.fileConfirmLine())
+	case m.fileConfirmLine(contentWidth) != "":
+		menuItems = append(menuItems, m.fileConfirmLine(contentWidth))
 	case m.fileSearch:
 		menuItems = append(menuItems, fileSearchHint)
 	case len(m.allFiles) == 0:

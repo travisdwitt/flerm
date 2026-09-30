@@ -2,10 +2,9 @@
 
 **A quick and easy flowchart editor for the terminal.**
 
-
 ## Installation
 
-Build the binary into the project directory:
+Build the binary and run it:
 
 ```bash
 make build
@@ -22,7 +21,8 @@ flerm
 ## Usage
 
 ```bash
-./flerm
+flerm                   -- start flerm
+flerm --no-resume       -- starts flerm without the 'r'esume option in the menu
 ```
 
 ## Configuration
@@ -46,28 +46,27 @@ confirmations=true
 # Offer "r: Resume <chart>" on the start menu for the last chart you opened
 resume=true
 ```
+
 <br>
 <img width="932" height="685" alt="RABDARGAB plan" src="https://github.com/user-attachments/assets/5346afbf-7dbe-4fb6-9b4e-c806c3bba826" />
 
-
-## NEW Mouse Support!
+## Mouse Support
 
 - **Left-click** a box, text, or line to select it.
 - **Click and drag a box or text** to move it. Connected lines re-route themselves as you drag — this used to be a total disaster and is now actually pretty good.
-- **Click and drag empty space** to pan the canvas around (scroll wheel pans too).
+- **Click and drag empty space** to pan the canvas around (scroll wheel pans vertically too!).
 - **Right-click** anything for a context menu:
   - Box: Edit Box, Edit Title, Border ▸ (Style / Color), New Line, Delete Box
   - Text: Edit Text, Color, Delete Text
   - Line: New Line, Color, Delete Line
   - Empty space: New Box, New Text
-  - Submenus pop out to the side — hover/click them, or use the arrow keys (→ to open, ← to back out).
+  - Submenus pop out to the side and you can hover/click them, or use the arrow keys (→ to open, ← to back out).
 - **Drawing lines with the mouse:** pick "New Line" from a box's _or_ a line's menu, then left-click to drop nodes. Click a box or line to finish.
 - **Highlight mode:** click and drag to paint/draw in the selected color anywhere on the canvas.
-- **Multi-select:** press `M`, then click and drag a rectangle around some boxes. Everything inside gets highlighted and you can drag the whole group around at once.
+- **Multi-select:** click and drag a rectangle around some boxes. Everything inside gets highlighted and you can drag the whole group around at once.
 
 <br>
 <img width="932" height="685" alt="image" src="https://github.com/user-attachments/assets/a11e03e0-d4c1-4045-adcb-de5f13133dd6" />
-
 
 ## Keymaps
 
@@ -113,7 +112,7 @@ resume=true
 
 - `Space` - Enter highlight mode
   - When in highlight mode on a box: cycle highlighting (divider → border → both → clear)
-- `Tab` - Cycle through 8 highlight colors (Gray, Red, Green, Yellow, Blue, Magenta, Cyan, White)
+- `Tab` - Open the color picker (16 colors: Gray, Red, Green, Yellow, Blue, Magenta, Cyan, White, Black and the bright variants)
 - `h/←/j/↓/k/↑/l/→` - Highlight under the curcor
 - `Shift+h/j/k/l` - Move cursor faster
 - `d` - remove hightlight from under the cursor
@@ -122,7 +121,6 @@ resume=true
 - `Esc` - Exit highlight mode
   <br>
   <img width="932" height="686" alt="an incredible flerm painting of flowers and the word gorgeous in text" src="https://github.com/user-attachments/assets/87eb7972-f60d-4122-a4f1-d81b4b92fce6" />
-
 
 ### Resize Mode
 
@@ -149,7 +147,7 @@ resume=true
 
 **Note:**
 
-- .png exports are pretty wonky and terrible. Stick to txt exports for the best results right now.
+- .png exports are _way_ better than they were in the last build, but still might me a little odd at times
 - All file operations respect the `savedirectory` setting in `~/.flermrc` if configured.
 
 ### Buffer Operations
@@ -171,7 +169,7 @@ resume=true
 
 ## File Format
 
-Flowcharts are saved in a text (.flerm) format. Older .sav files still open:
+Flowcharts are saved in a text (.flerm) format. Older .sav files still work but the formatting may be a little off:
 
 ```
 FLOWCHART
@@ -191,9 +189,9 @@ TEXTS:0
   - Waypoints format: `X:Y,X:Y,...`
   - FromID/ToID can be -1 for line-to-line connections
 - **TEXTS**: Format is `X,Y,Text`
-- **BOXCOLORS / LINECOLORS / TEXTCOLORS**: Optional trailing sections listing `index,color` for any object that has a color set (color is a 0-7 palette index). Objects without a color are simply left out.
+- **BOXCOLORS / LINECOLORS / TEXTCOLORS**: Optional trailing sections listing `index,color` for any object that has a color set (color is a 0-15 palette index). Objects without a color are simply left out.
 
-**Note:** The format is backward-compatible in both directions. Older files without ZLevel, BorderStyle, Title, or color sections load fine with defaults, and older versions of Flerm just ignore the color sections.
+**Note:** The format is backward-compatible in both directions. Older files without ZLevel, BorderStyle, Title, or color sections load fine with defaults, and older versions of Flerm just ignore the color sections. Some files made with an earlier build might need to be tweaked to look nicer.
 
 ## Dependencies
 
