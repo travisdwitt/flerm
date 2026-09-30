@@ -13,6 +13,8 @@ var helpText = []string{
 	"-----------",
 	"  h/←/j/↓/k/↑/l/→  Move cursor around the screen",
 	"  Shift+h/j/k/l    Move cursor 2x faster (hold Shift with direction keys)",
+	"  Tab              Toggle the minimap (press on empty space) - shows the whole",
+	"                   chart scaled down, with your viewport highlighted",
 	"",
 	"Mouse:",
 	"------",

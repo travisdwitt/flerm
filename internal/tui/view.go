@@ -131,6 +131,9 @@ func (m model) View() string {
 	if m.mode == ModeContextMenu {
 		m.overlayContextMenu(r)
 	}
+	if m.minimap {
+		m.overlayMinimap(r, panX, panY)
+	}
 
 	var result strings.Builder
 	if showBufferBar {
@@ -141,6 +144,137 @@ func (m model) View() string {
 	result.WriteString("\n")
 	result.WriteString(chromeLine(m.statusLine(), renderWidth))
 	return result.String()
+}
+
+const minimapW, minimapH = 32, 12
+
+// '+'/'-'/'|' outline, blank inside; a box only 1-2 cells wide or tall is all edge
+func minimapFrame(relX, relY, w, h int) rune {
+	edgeX, edgeY := relX == 0 || relX == w-1, relY == 0 || relY == h-1
+	switch {
+	case edgeX && edgeY:
+		return '+'
+	case edgeY:
+		return '-'
+	case edgeX:
+		return '|'
+	}
+	return ' '
+}
+
+func minimapArrow(dx, dy int) rune {
+	switch {
+	case abs(dx) > 2*abs(dy):
+		if dx < 0 {
+			return '←'
+		}
+		return '→'
+	case abs(dy) > 2*abs(dx):
+		if dy < 0 {
+			return '↑'
+		}
+		return '↓'
+	case dx < 0 && dy < 0:
+		return '↖'
+	case dx < 0:
+		return '↙'
+	case dy < 0:
+		return '↗'
+	}
+	return '↘'
+}
+
+func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
+	w, h := min(minimapW, r.Width), min(minimapH, r.Height)
+	if w < 5 || h < 5 {
+		return
+	}
+	innerW, innerH := w-2, h-2
+	originX, originY := r.Width-w, 0
+
+	cell := func(px, py int, ch rune, color int) {
+		if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
+			return
+		}
+		r.Canvas[py][px] = ch
+		r.ColorMap[py][px] = color
+	}
+	hline := func(py int, left, right rune) {
+		cell(originX, py, left, colorMenuBorder)
+		for i := 0; i < innerW; i++ {
+			cell(originX+1+i, py, '─', colorMenuBorder)
+		}
+		cell(originX+w-1, py, right, colorMenuBorder)
+	}
+
+	hline(originY, '┌', '┐')
+	hline(originY+h-1, '└', '┘')
+	for i := 0; i < innerH; i++ {
+		py := originY + 1 + i
+		cell(originX, py, '│', colorMenuBorder)
+		for j := 0; j < innerW; j++ {
+			cell(originX+1+j, py, ' ', -1)
+		}
+		cell(originX+w-1, py, '│', colorMenuBorder)
+	}
+
+	canvas := m.getCanvas()
+	minX, minY, maxX, maxY := canvas.GetFullBounds()
+	if maxX < minX || maxY < minY {
+		return
+	}
+	vx0, vy0 := panX, panY
+	vx1, vy1 := panX+r.Width-1, panY+r.Height-1
+
+	if maxX < vx0 || minX > vx1 || maxY < vy0 || minY > vy1 {
+		ch := minimapArrow((minX+maxX)/2-(vx0+vx1)/2, (minY+maxY)/2-(vy0+vy1)/2)
+		py := originY + 1 + innerH/2
+		for i := -1; i <= 1; i++ {
+			cell(originX+1+innerW/2+i, py, ch, colorMouseSelect)
+		}
+		return
+	}
+
+	bx0, by0 := min(minX, vx0), min(minY, vy0)
+	bx1, by1 := max(maxX, vx1), max(maxY, vy1)
+	spanX, spanY := bx1-bx0+1, by1-by0+1
+
+	scale := max((spanX+innerW-1)/innerW, (spanY+innerH-1)/innerH, 1)
+	useW, useH := (spanX+scale-1)/scale, (spanY+scale-1)/scale
+	offX, offY := (innerW-useW)/2, (innerH-useH)/2
+	mapX := func(wx int) int { return offX + min(max((wx-bx0)/scale, 0), useW-1) }
+	mapY := func(wy int) int { return offY + min(max((wy-by0)/scale, 0), useH-1) }
+
+	plot := func(cells []point, ch rune) {
+		for _, c := range cells {
+			cell(originX+1+mapX(c.X), originY+1+mapY(c.Y), ch, -1)
+		}
+	}
+	for i := range canvas.Connections() {
+		plot(canvas.GetConnectionCells(i), '.')
+	}
+	for i := range canvas.Texts() {
+		plot(canvas.GetTextCells(i), '.')
+	}
+	for _, box := range canvas.Boxes() {
+		x0, y0 := mapX(box.X), mapY(box.Y)
+		x1, y1 := mapX(box.X+box.Width-1), mapY(box.Y+box.Height-1)
+		for y := y0; y <= y1; y++ {
+			for x := x0; x <= x1; x++ {
+				cell(originX+1+x, originY+1+y, minimapFrame(x-x0, y-y0, x1-x0+1, y1-y0+1), -1)
+			}
+		}
+	}
+
+	x0, y0 := mapX(vx0), mapY(vy0)
+	x1, y1 := mapX(vx1), mapY(vy1)
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			if ch := minimapFrame(x-x0, y-y0, x1-x0+1, y1-y0+1); ch != ' ' {
+				cell(originX+1+x, originY+1+y, ch, colorMouseSelect)
+			}
+		}
+	}
 }
 
 func editStatus(text string, pos, selStart, selEnd int) string {

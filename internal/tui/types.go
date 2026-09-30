@@ -21,6 +21,7 @@ type model struct {
 	mode                   Mode
 	help                   bool
 	helpScroll             int
+	minimap                bool
 	selectedBox            int
 	selectedText           int
 	editText               string

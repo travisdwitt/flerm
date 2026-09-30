@@ -154,6 +154,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			old := canvas.CycleBorderStyle(boxID)
 			data := BorderStyleData{BoxID: boxID, OldStyle: old, NewStyle: canvas.Boxes()[boxID].BorderStyle}
 			m.recordAction(ActionChangeBorderStyle, data, data)
+		} else {
+			m.minimap = !m.minimap
 		}
 	case "Z":
 		m.zPanMode = false
