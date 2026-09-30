@@ -53,7 +53,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleNormalKey(msg)
 		case ModeContextMenu:
 			return m.handleContextMenuKey(msg)
-		case ModeEditing, ModeTextInput, ModeTitleEdit:
+		case ModeEditing, ModeTextInput, ModeTitleEdit, ModeTooltipEdit:
 			return m.handleTextEditKey(msg)
 		case ModeBoxJump:
 			return m.handleBoxJumpKey(msg)

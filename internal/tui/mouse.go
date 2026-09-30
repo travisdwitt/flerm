@@ -26,7 +26,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.handleMultiSelectMouse(msg)
 	case ModeMove:
 		m.handleMoveMouse(msg)
-	case ModeEditing, ModeTextInput, ModeTitleEdit:
+	case ModeEditing, ModeTextInput, ModeTitleEdit, ModeTooltipEdit:
 		return m.handleTextMouse(msg)
 	case ModeFileInput:
 		return m.handleFileMouse(msg)
@@ -253,6 +253,7 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 	}
 
+	m.hoverBoxTooltip(worldX, worldY, canvasX, canvasY)
 	if msg.Action != tea.MouseActionPress {
 		return nil
 	}
@@ -465,6 +466,7 @@ func buildMenuItems(box, text, conn int) []MenuItem {
 		items = append(items,
 			MenuItem{Label: "Edit Box", Action: MenuEditBox},
 			MenuItem{Label: "Edit Title", Action: MenuEditTitle},
+			MenuItem{Label: "Tooltip", Action: MenuEditTooltip},
 			MenuItem{Label: "Border", Action: MenuSubmenu, Submenu: []MenuItem{
 				{Label: "Style", Action: MenuSubmenu, Submenu: borderStyleSubmenu()},
 				{Label: "Color", Action: MenuSubmenu, Submenu: colorSubmenu()},
@@ -731,6 +733,10 @@ func (m *model) activateMenuItem(action MenuAction, arg int) {
 	case MenuEditTitle:
 		if box >= 0 && box < len(canvas.Boxes()) {
 			m.beginEdit(ModeTitleEdit, box, -1, canvas.Boxes()[box].Title)
+		}
+	case MenuEditTooltip:
+		if box >= 0 && box < len(canvas.Boxes()) {
+			m.beginTooltipEdit(box, m.menuX, m.menuY)
 		}
 	case MenuSetBorderStyle:
 		if box >= 0 && box < len(canvas.Boxes()) {

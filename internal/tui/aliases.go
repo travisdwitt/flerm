@@ -24,6 +24,9 @@ const (
 	colorMenuSelect  = cv.ColorMenuSelect
 	colorMenuBorder  = cv.ColorMenuBorder
 
+	colorTooltipText   = cv.ColorTooltipText
+	colorTooltipBorder = cv.ColorTooltipBorder
+
 	BorderStyleASCII   = cv.BorderStyleASCII
 	BorderStyleSingle  = cv.BorderStyleSingle
 	BorderStyleDouble  = cv.BorderStyleDouble

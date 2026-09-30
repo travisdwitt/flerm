@@ -56,6 +56,17 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 		fmt.Fprintf(file, "%d,%d,%s\n", text.X, text.Y, escapeNewlines(text.GetText()))
 	}
 
+	var tooltips []string
+	for _, box := range c.boxes {
+		if box.Tooltip != "" {
+			tooltips = append(tooltips, fmt.Sprintf("%d,%s", box.ID, escapeNewlines(box.Tooltip)))
+		}
+	}
+	fmt.Fprintf(file, "TOOLTIPS:%d\n", len(tooltips))
+	for _, t := range tooltips {
+		fmt.Fprintln(file, t)
+	}
+
 	fmt.Fprintf(file, "HIGHLIGHTS:%d\n", len(c.highlights))
 	for cell, colorIndex := range c.highlights {
 		fmt.Fprintf(file, "%d,%d,%d\n", cell.X, cell.Y, colorIndex)
@@ -263,6 +274,15 @@ func (c *Canvas) parseConnection(line string) error {
 
 func (c *Canvas) loadSectionLine(header, line string) {
 	switch header {
+	case "TOOLTIPS":
+		id, text, ok := strings.Cut(line, ",")
+		if !ok {
+			return
+		}
+		if n, err := strconv.Atoi(id); err == nil {
+			c.SetBoxTooltip(n, unescapeNewlines(text))
+		}
+		return
 	case "TEXTS":
 		x, rest, ok := strings.Cut(line, ",")
 		if !ok {

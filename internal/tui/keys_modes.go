@@ -289,12 +289,24 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mode = ModeFileInput
 				return m, nil
 			}
-		case ConfirmChooseExportType:
+		case ConfirmChooseExportType, ConfirmDeleteBoxOrTooltip:
 			return m, nil
 		}
 		m.mode = ModeNormal
 		m.filename = ""
+	case "b", "B":
+		if m.confirmAction == ConfirmDeleteBoxOrTooltip {
+			m.deleteBoxByID(m.confirmID)
+			m.mode = ModeNormal
+		}
 	case "p", "P", "t", "T":
+		if m.confirmAction == ConfirmDeleteBoxOrTooltip {
+			if key == "t" || key == "T" {
+				m.deleteBoxTooltip(m.confirmID)
+				m.mode = ModeNormal
+			}
+			break
+		}
 		if m.confirmAction == ConfirmChooseExportType {
 			op := FileOpSavePNG
 			if key == "t" || key == "T" {

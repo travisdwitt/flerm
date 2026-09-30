@@ -31,6 +31,7 @@ type Box struct {
 	BorderStyle  BorderStyle
 	OriginalText string
 	Title        string
+	Tooltip      string
 	Color        int
 }
 

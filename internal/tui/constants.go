@@ -15,6 +15,7 @@ const (
 	ModeBoxJump
 	ModeTitleEdit
 	ModeContextMenu
+	ModeTooltipEdit
 )
 
 type MenuAction int
@@ -29,6 +30,7 @@ const (
 	MenuDeleteText
 	MenuDeleteLine
 	MenuEditTitle
+	MenuEditTooltip
 	MenuSetBorderStyle
 	MenuSetColor
 	MenuDuplicate
@@ -56,6 +58,7 @@ const (
 	ConfirmCloseBuffer
 	ConfirmOverwriteFile
 	ConfirmChooseExportType
+	ConfirmDeleteBoxOrTooltip
 )
 
 type ActionType int
@@ -75,6 +78,7 @@ const (
 	ActionHighlight
 	ActionChangeBorderStyle
 	ActionEditTitle
+	ActionEditTooltip
 	ActionSetColor
 	ActionDuplicate
 	ActionGroupMove

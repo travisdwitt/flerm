@@ -184,6 +184,20 @@ func (c *Canvas) SetBoxTitle(id int, title string) {
 	}
 }
 
+func (c *Canvas) TooltipMarkPos(id int) (int, int, bool) {
+	b := c.boxPtr(id)
+	if b == nil || b.Tooltip == "" {
+		return 0, 0, false
+	}
+	return b.X + b.Width - 2, b.Y + contentStartLine(*b), true
+}
+
+func (c *Canvas) SetBoxTooltip(id int, tooltip string) {
+	if b := c.boxPtr(id); b != nil {
+		b.Tooltip = tooltip
+	}
+}
+
 func (c *Canvas) GetTextText(id int) string {
 	if t := c.textPtr(id); t != nil {
 		return t.GetText()

@@ -67,6 +67,9 @@ func (m *model) applyAction(a Action, forward bool) {
 	case ActionEditTitle:
 		d := data.(EditData)
 		canvas.SetBoxTitle(d.ID, d.NewText)
+	case ActionEditTooltip:
+		d := data.(EditData)
+		canvas.SetBoxTooltip(d.ID, d.NewText)
 	case ActionResizeBox:
 		if forward {
 			d := data.(ResizeBoxData)

@@ -182,6 +182,14 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 	for cell, colorIndex := range c.highlights {
 		putColor(cell.X-panX, cell.Y-panY, colorIndex)
 	}
+	for _, i := range boxOrder {
+		x, y, ok := c.TooltipMarkPos(i)
+		if !ok || (showCursor && x-panX == cursorX && y-panY == cursorY) {
+			continue
+		}
+		putRune(x-panX, y-panY, '*')
+		putColor(x-panX, y-panY, ColorTooltipMark)
+	}
 
 	return &RenderResult{Canvas: canvas, ColorMap: colorMap, Width: width, Height: height}
 }
@@ -435,6 +443,10 @@ func colorCode(colorIndex int, blank bool) string {
 		return "\x1b[7m"
 	case ColorMenuBorder:
 		return "\x1b[32m"
+	case ColorTooltipText:
+		return "\x1b[48;5;236;97m"
+	case ColorTooltipBorder:
+		return "\x1b[48;5;236;1;93m"
 	}
 	if colorIndex < 0 || colorIndex >= NumColors {
 		return ""

@@ -126,6 +126,13 @@ func (m *model) finishEdit() {
 				EditData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText},
 				EditData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText})
 		}
+	case ModeTooltipEdit:
+		canvas.SetBoxTooltip(m.selectedBox, m.editText)
+		if changed && m.selectedBox >= 0 && m.selectedBox < len(canvas.Boxes()) {
+			m.recordAction(ActionEditTooltip,
+				EditData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText},
+				EditData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText})
+		}
 	}
 	m.mode = ModeNormal
 	m.editText, m.originalEditText = "", ""

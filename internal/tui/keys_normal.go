@@ -61,6 +61,10 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.beginEdit(ModeTitleEdit, boxID, -1, canvas.Boxes()[boxID].Title)
 		}
 	case "t":
+		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			m.beginTooltipEdit(boxID, m.cursorX, m.cursorY)
+			break
+		}
 		m.textInputX, m.textInputY = worldX, worldY
 		m.beginEdit(ModeTextInput, -1, -1, "")
 	case "r":
@@ -219,7 +223,9 @@ func (m *model) deleteAt(x, y int) {
 			m.deleteConnByIdx(idx)
 		}
 	} else if boxID := canvas.GetBoxAt(x, y); boxID != -1 {
-		if ask {
+		if canvas.Boxes()[boxID].Tooltip != "" {
+			m.confirm(ConfirmDeleteBoxOrTooltip, boxID)
+		} else if ask {
 			m.confirm(ConfirmDeleteBox, boxID)
 		} else {
 			m.deleteBoxByID(boxID)
@@ -352,6 +358,23 @@ func (m *model) deleteBoxByID(boxID int) {
 		AddData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID})
 	canvas.DeleteBox(boxID)
 	m.ensureCursorInBounds()
+}
+
+func (m *model) beginTooltipEdit(boxID, anchorX, anchorY int) {
+	m.tooltipX, m.tooltipY = anchorX, anchorY
+	m.beginEdit(ModeTooltipEdit, boxID, -1, m.getCanvas().Boxes()[boxID].Tooltip)
+}
+
+func (m *model) deleteBoxTooltip(boxID int) {
+	canvas := m.getCanvas()
+	if boxID < 0 || boxID >= len(canvas.Boxes()) {
+		return
+	}
+	old := canvas.Boxes()[boxID].Tooltip
+	canvas.SetBoxTooltip(boxID, "")
+	m.recordAction(ActionEditTooltip,
+		EditData{ID: boxID, NewText: "", OldText: old},
+		EditData{ID: boxID, NewText: old, OldText: ""})
 }
 
 func (m *model) deleteTextByID(textID int) {

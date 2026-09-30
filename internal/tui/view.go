@@ -56,18 +56,39 @@ func (m *model) renderBufferBar(width int) string {
 	return bar.String()
 }
 
+func (m *model) hoverBoxTooltip(worldX, worldY, screenX, screenY int) {
+	canvas := m.getCanvas()
+	if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 && canvas.Boxes()[boxID].Tooltip != "" {
+		m.showTooltip, m.tooltipStyled = true, true
+		m.tooltipText, m.tooltipBoxID = canvas.Boxes()[boxID].Tooltip, -1
+		m.tooltipX, m.tooltipY = screenX, screenY
+		return
+	}
+	if m.tooltipStyled {
+		m.showTooltip, m.tooltipStyled = false, false
+	}
+}
+
 func (m *model) updateTooltip() {
 	m.showTooltip = false
+	m.tooltipStyled = false
 	m.tooltipBoxID = -1
 	if m.mode != ModeNormal {
 		return
 	}
 	worldX, worldY := m.worldCursor()
-	boxID := m.getCanvas().GetBoxAt(worldX, worldY)
+	canvas := m.getCanvas()
+	boxID := canvas.GetBoxAt(worldX, worldY)
 	if boxID == -1 {
 		return
 	}
-	if box := &m.getCanvas().Boxes()[boxID]; box.IsTextTruncated() {
+	if x, y, ok := canvas.TooltipMarkPos(boxID); ok && x == worldX && y == worldY {
+		m.showTooltip, m.tooltipStyled = true, true
+		m.tooltipText, m.tooltipBoxID = canvas.Boxes()[boxID].Tooltip, -1
+		m.tooltipX, m.tooltipY = m.cursorX, m.cursorY
+		return
+	}
+	if box := &canvas.Boxes()[boxID]; box.IsTextTruncated() {
 		m.showTooltip = true
 		m.tooltipText = box.GetText()
 		m.tooltipX, m.tooltipY = m.cursorX, m.cursorY
@@ -106,7 +127,7 @@ func (m model) View() string {
 
 	cursorX := max(0, min(m.cursorX, renderWidth-1))
 	cursorY := max(0, min(m.cursorY, renderHeight-1))
-	showCursor := m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit
+	showCursor := m.mode != ModeFileInput && m.mode != ModeEditing && m.mode != ModeTextInput && m.mode != ModeTitleEdit && m.mode != ModeTooltipEdit
 
 	editBoxID, editTextID, editTextX, editTextY := m.editTarget()
 
@@ -125,6 +146,10 @@ func (m model) View() string {
 	r := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, m.editCursorPos, m.editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, m.mode == ModeBoxJump, editSelStart, editSelEnd)
 
 	m.overlaySelection(r, panX, panY)
+	if m.mode == ModeTooltipEdit {
+		m.showTooltip, m.tooltipStyled, m.tooltipBoxID = true, true, -1
+		m.tooltipText = editCaret(m.editText, m.editCursorPos, m.editSelectionStart, m.editSelectionEnd)
+	}
 	if m.showTooltip && m.tooltipText != "" {
 		m.overlayTooltipOnRenderResult(r)
 	}
@@ -147,6 +172,8 @@ func (m model) View() string {
 }
 
 const minimapW, minimapH = 32, 12
+
+const minimapLabel = "minimap"
 
 // '+'/'-'/'|' outline, blank inside; a box only 1-2 cells wide or tall is all edge
 func minimapFrame(relX, relY, w, h int) rune {
@@ -218,6 +245,10 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 		cell(originX+w-1, py, '│', colorMenuBorder)
 	}
 
+	for i, ch := range minimapLabel {
+		cell(originX+w-len(minimapLabel)+i, originY+h, ch, 7)
+	}
+
 	canvas := m.getCanvas()
 	minX, minY, maxX, maxY := canvas.GetFullBounds()
 	if maxX < minX || maxY < minY {
@@ -278,7 +309,11 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 }
 
 func editStatus(text string, pos, selStart, selEnd int) string {
-	r := []rune(strings.ReplaceAll(text, "\n", " "))
+	return editCaret(strings.ReplaceAll(text, "\n", " "), pos, selStart, selEnd)
+}
+
+func editCaret(text string, pos, selStart, selEnd int) string {
+	r := []rune(text)
 	if selStart >= 0 && selEnd >= 0 && selStart != selEnd {
 		s, e := min(min(selStart, selEnd), len(r)), min(max(selStart, selEnd), len(r))
 		return string(r[:s]) + "[" + string(r[s:e]) + "]" + string(r[e:])
@@ -364,10 +399,14 @@ func (m model) statusLine() string {
 			message = fmt.Sprintf("File %s already exists. Overwrite? (y/n)", m.filename)
 		case ConfirmChooseExportType:
 			message = "Export as PNG (p) or Visual TXT (t)? Press Esc to cancel"
+		case ConfirmDeleteBoxOrTooltip:
+			message = "Delete the box (b) or just its tooltip (t)? Press Esc to cancel"
 		}
 		return "Mode: CONFIRM | " + message
 	case ModeContextMenu:
 		return "Mode: MENU | ↑/↓ or hover=navigate, →/Enter=open submenu, ←=back, click=select, Esc/right-click=cancel"
+	case ModeTooltipEdit:
+		return fmt.Sprintf("Mode: TOOLTIP | Box %d | Ctrl+S/Esc=save, Enter=newline", m.selectedBox)
 	case ModeBoxJump:
 		return fmt.Sprintf("Mode: BOX JUMP | Enter box number: %s | Enter=jump, Esc=cancel", m.boxJumpInput)
 	}
@@ -402,6 +441,12 @@ func (m model) statusLine() string {
 	return status
 }
 
+// wrap only what a box would not fit either; below that the window grows with the text
+const (
+	tooltipWrapLimit  = 41
+	tooltipMinContent = 11
+)
+
 type tooltipChar struct {
 	char        rune
 	origCharIdx int
@@ -416,15 +461,19 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 	type word struct {
 		text     string
 		startIdx int
+		line     int
 	}
 	var words []word
 	text := m.tooltipText
-	start := -1
+	start, line := -1, 0
 	for i, ch := range text + " " {
 		if strings.ContainsRune(" \t\n\r", ch) {
 			if start >= 0 {
-				words = append(words, word{text[start:i], start})
+				words = append(words, word{text[start:i], start, line})
 				start = -1
+			}
+			if ch == '\n' {
+				line++
 			}
 		} else if start < 0 {
 			start = i
@@ -434,13 +483,6 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 		return
 	}
 
-	longest := 0
-	for _, w := range words {
-		longest = max(longest, len(w.text))
-	}
-	tooltipWidth := max(min(longest+4, 45), 15)
-	contentWidth := tooltipWidth - 4
-
 	plain := func(s string) []tooltipChar {
 		out := make([]tooltipChar, 0, len(s))
 		for _, ch := range s {
@@ -448,15 +490,16 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 		}
 		return out
 	}
-	border := func(left, right string) []tooltipChar {
-		return plain(left + strings.Repeat("─", tooltipWidth-2) + right)
-	}
-
 	var contentLines [][]tooltipChar
 	var cur []tooltipChar
+	curLine := 0
 	for _, w := range words {
+		for curLine < w.line {
+			contentLines = append(contentLines, cur)
+			cur, curLine = nil, curLine+1
+		}
 		wordLen := runeLen(w.text)
-		if len(cur) > 0 && len(cur)+wordLen+1 > contentWidth {
+		if len(cur) > 0 && len(cur)+wordLen+1 > tooltipWrapLimit {
 			contentLines = append(contentLines, cur)
 			cur = nil
 		}
@@ -467,8 +510,16 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 			cur = append(cur, tooltipChar{ch, w.startIdx + i})
 		}
 	}
-	if len(cur) > 0 {
-		contentLines = append(contentLines, cur)
+	contentLines = append(contentLines, cur)
+
+	contentWidth := tooltipMinContent
+	for _, lc := range contentLines {
+		contentWidth = max(contentWidth, len(lc))
+	}
+	tooltipWidth := contentWidth + 4
+
+	border := func(left, right string) []tooltipChar {
+		return plain(left + strings.Repeat("─", tooltipWidth-2) + right)
 	}
 
 	lines := [][]tooltipChar{border("┌", "┐")}
@@ -500,7 +551,13 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 			}
 			r.Canvas[y][x] = c.char
 			r.ColorMap[y][x] = -1
-			if color, ok := charHighlights[c.origCharIdx]; ok && c.origCharIdx >= 0 {
+			color, highlighted := charHighlights[c.origCharIdx]
+			switch {
+			case m.tooltipStyled && (i == 0 || i == len(lines)-1 || j == 0 || j == len(line)-1):
+				r.ColorMap[y][x] = colorTooltipBorder
+			case m.tooltipStyled:
+				r.ColorMap[y][x] = colorTooltipText
+			case highlighted && c.origCharIdx >= 0:
 				r.ColorMap[y][x] = color
 			}
 		}

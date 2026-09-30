@@ -12,15 +12,18 @@ const (
 )
 
 const (
-	boxInsetX        = 2
-	minBoxWidth      = 8
-	minBoxHeight     = 3
-	numZLevels       = 4
-	NumColors        = 16
-	colorEditSelect  = 100
-	ColorMouseSelect = 101
-	ColorMenuSelect  = 102
-	ColorMenuBorder  = 103
+	boxInsetX          = 2
+	minBoxWidth        = 8
+	minBoxHeight       = 3
+	numZLevels         = 4
+	NumColors          = 16
+	colorEditSelect    = 100
+	ColorMouseSelect   = 101
+	ColorMenuSelect    = 102
+	ColorMenuBorder    = 103
+	ColorTooltipText   = 104
+	ColorTooltipBorder = 105
+	ColorTooltipMark   = 11
 )
 
 const CoordUnset = math.MinInt32
