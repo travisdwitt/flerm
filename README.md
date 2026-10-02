@@ -22,12 +22,19 @@ flerm
 
 ```bash
 flerm                   -- start flerm
-flerm --no-resume       -- starts flerm without the 'r'esume option in the menu
+flerm --help            -- show a reminder of the next 3 things
+flerm --no-resume       -- don't offer the r:esume function in the main flerm menu.
+flerm --describe <name> -- print a chart's details in plain text so screen readers can describe it (experimental/might be wonky).
+flerm --setup           -- create ~/.flermrc config with all the defaults pre-set.
 ```
 
 ## Configuration
 
 You can create a `.flermrc` configuration file in your home directory to customize Flerm's behavior.
+
+Run `flerm --setup` and it writes one for you, listing every setting at its default value, so
+there's nothing to guess at — edit the values you care about. It won't touch an existing
+`~/.flermrc`; move or delete that first if you want a clean one.
 
 ### Example Configuration File
 
@@ -44,8 +51,18 @@ startmenu=false
 confirmations=true
 
 # Offer "r: Resume <chart>" on the start menu for the last chart you opened
+# (set it to false, or pass --no-resume, to hide it)
 resume=true
+
+# Stop the animated particles on the holiday start screens (the logo stays)
+particles=false
+
+# Don't capture the mouse, so the terminal keeps its own click-drag text selection
+mouse=false
 ```
+
+`disableparticles=true` and `disablemouse=true` work too, if you prefer naming the thing
+you're switching off.
 
 <br>
 <img width="932" height="685" alt="RABDARGAB plan" src="https://github.com/user-attachments/assets/5346afbf-7dbe-4fb6-9b4e-c806c3bba826" />
@@ -160,12 +177,49 @@ resume=true
 
 ### General
 
+- `C` - Set the color of the box, text, or line under the cursor
+- `v` - Toggle the tooltip sidebar
 - `u` - Undo last action
 - `U` - Redo last undone action
 - `z` - Toggle pan mode. You can also just click-drag empty space to pan
 - `Esc` - Clear selection/cancel current operation
 - `?` - Toggle help screen
 - `q` - Quit Flerm
+
+## Accessibility
+
+**`flerm --describe <chart>`** prints a description of the chart as plaintext so screen
+readers can (hopefully) have a nicer time reading it out. This is still super experimental
+and might not be incredibly useful right now.
+
+```
+$ flerm --describe demo
+Chart: demo.flerm
+3 boxes, 2 connections, 1 text label, 2 highlighted cells
+
+Box 0 "Start" at 10,5 size 12x3, ascii border
+  text: Start
+  connects to Box 1 "Stage", arrow at the far end
+
+Box 1 "Stage" at 25,10 size 19x5, single border, color Red
+  title: Stage
+  text: Process nightly
+  tooltip: takes about 4 minutes
+  connected from Box 0 "Start", arrow at this box
+```
+
+In the editor:
+
+- The **status line** names what's under the cursor and the color it's set to — `Box 1 ■ Red`,
+  or `Connection Box 0 to Box 1 ■ Blue` — so no state is signalled by hue alone.
+- **`C`** lets you set the color of whatever is under the cursor
+- **`v`** opens a sidebar listing every tooltip labelled by box
+- **`NO_COLOR=1`** (or `TERM=dumb`) turns off all color. A terminal without 256-color support
+  gets 16-color codes rather than unsupported ones.
+- **`particles=false`** stops the holiday animations, which flash and can't otherwise be
+  turned off except by changing the date.
+- **`mouse=false`** leaves mouse reporting off, so the terminal's own click-drag text
+  selection keeps working — which is how you copy a chart out to read it elsewhere.
 
 ## File Format
 

@@ -17,6 +17,8 @@ type (
 	Config        = config.Config
 )
 
+var colorNames = cv.ColorNames
+
 const (
 	CoordUnset       = cv.CoordUnset
 	numColors        = cv.NumColors
@@ -24,8 +26,9 @@ const (
 	colorMenuSelect  = cv.ColorMenuSelect
 	colorMenuBorder  = cv.ColorMenuBorder
 
-	colorTooltipText   = cv.ColorTooltipText
-	colorTooltipBorder = cv.ColorTooltipBorder
+	colorTooltipText    = cv.ColorTooltipText
+	colorTooltipBorder  = cv.ColorTooltipBorder
+	colorTooltipBracket = cv.ColorTooltipBracket
 
 	BorderStyleASCII   = cv.BorderStyleASCII
 	BorderStyleSingle  = cv.BorderStyleSingle

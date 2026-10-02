@@ -161,6 +161,19 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.minimap = !m.minimap
 		}
+	case "C":
+		m.openColorMenu(worldX, worldY)
+	case "v":
+		m.allTooltips = !m.allTooltips
+		m.tooltipScroll = 0
+	case "pgup", "pgdown":
+		if m.allTooltips {
+			delta := m.sidebarInnerH()
+			if key == "pgup" {
+				delta = -delta
+			}
+			m.scrollTooltipSidebar(delta)
+		}
 	case "Z":
 		m.zPanMode = false
 		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
@@ -197,6 +210,29 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *model) openColorMenu(worldX, worldY int) {
+	canvas := m.getCanvas()
+	m.menuTargetBox, m.menuTargetText, m.menuTargetConn = -1, -1, -1
+	switch boxID, textID := canvas.GetBoxAt(worldX, worldY), canvas.GetTextAt(worldX, worldY); {
+	case boxID != -1:
+		m.menuTargetBox = boxID
+	case textID != -1:
+		m.menuTargetText = textID
+	default:
+		idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY)
+		if idx == -1 {
+			return
+		}
+		m.menuTargetConn = idx
+	}
+	m.menuWorldX, m.menuWorldY = worldX, worldY
+	m.menuItems = colorSubmenu()
+	m.menuIndex = firstSelectableMenuIndex(m.menuItems)
+	m.menuStack = nil
+	m.menuX, m.menuY = m.cursorX, m.cursorY
+	m.mode = ModeContextMenu
 }
 
 func (m *model) addBoxRecorded(x, y int, text string) int {

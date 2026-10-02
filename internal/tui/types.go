@@ -79,6 +79,8 @@ type model struct {
 	tooltipY               int
 	tooltipBoxID           int
 	tooltipStyled          bool
+	allTooltips            bool
+	tooltipScroll          int
 
 	selBox  int
 	selText int

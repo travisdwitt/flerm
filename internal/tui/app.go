@@ -17,6 +17,7 @@ import (
 func Run(noResume bool, dateOverride string) error {
 	m := initialModel()
 	if noResume {
+		m.config.Resume = false
 		m.lastFile = ""
 	}
 	if dateOverride != "" {
@@ -24,7 +25,11 @@ func Run(noResume bool, dateOverride string) error {
 	} else {
 		m.effect = effectForDate(time.Now())
 	}
-	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion()).Run()
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if m.config.Mouse {
+		opts = append(opts, tea.WithMouseAllMotion())
+	}
+	_, err := tea.NewProgram(m, opts...).Run()
 	return err
 }
 
@@ -101,7 +106,9 @@ func (m *model) closeBuffer() {
 
 func (m *model) rememberChart(path string) {
 	m.config.RememberLastFile(path)
-	m.lastFile = path
+	if m.config.Resume {
+		m.lastFile = path
+	}
 }
 
 func (m *model) openChart(path string) error {
@@ -207,9 +214,9 @@ func (m *model) scrollFileList(delta int) {
 	m.fileScroll = min(max(m.fileScroll+delta, 0), m.fileScrollMax())
 }
 
-const saveExt = ".flerm"
+var chartExts = cv.ChartExts
 
-var chartExts = []string{saveExt, ".sav"}
+const saveExt = ".flerm"
 
 func hasChartExt(file string) bool {
 	return slices.Contains(chartExts, strings.ToLower(filepath.Ext(file)))

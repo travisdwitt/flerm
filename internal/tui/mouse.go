@@ -162,11 +162,21 @@ func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) {
 
 func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 	if tea.MouseEvent(msg).IsWheel() {
+		_, wheelY := m.mouseCanvasPos(msg)
+		inSidebar := m.allTooltips && msg.X >= max(m.width, 1)-min(sidebarW, max(m.width, 1)) && !(m.minimap && wheelY < minimapH)
 		buf := m.getCurrentBuffer()
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
+			if inSidebar {
+				m.scrollTooltipSidebar(-3)
+				return nil
+			}
 			buf.panY -= 2
 		case tea.MouseButtonWheelDown:
+			if inSidebar {
+				m.scrollTooltipSidebar(3)
+				return nil
+			}
 			buf.panY += 2
 		case tea.MouseButtonWheelLeft:
 			buf.panX -= 2
@@ -438,9 +448,6 @@ func (m *model) openContextMenu(canvasX, canvasY int) {
 	m.menuX, m.menuY = canvasX, canvasY
 	m.mode = ModeContextMenu
 }
-
-var colorNames = []string{"Gray", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
-	"Black", "Bright Red", "Bright Green", "Bright Yellow", "Bright Blue", "Bright Magenta", "Bright Cyan", "Bright White"}
 
 func colorSubmenu() []MenuItem {
 	items := []MenuItem{{Label: "None", Action: MenuSetColor, Arg: -1}}
@@ -777,17 +784,17 @@ func (m *model) applyMenuColor(color int) {
 
 func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	canvas := m.getCanvas()
-	var cells []point
+	var cells, boxCells []point
 	switch {
 	case m.selBox >= 0 && m.selBox < len(canvas.Boxes()):
-		cells = canvas.GetBoxBorderCells(m.selBox)
+		boxCells = canvas.GetBoxBorderCells(m.selBox)
 	case m.selText >= 0 && m.selText < len(canvas.Texts()):
 		cells = canvas.GetTextCells(m.selText)
 	case m.selConn >= 0 && m.selConn < len(canvas.Connections()):
 		cells = canvas.GetConnectionCells(m.selConn)
 	}
 	for _, id := range m.selectedBoxes {
-		cells = append(cells, canvas.GetBoxBorderCells(id)...)
+		boxCells = append(boxCells, canvas.GetBoxBorderCells(id)...)
 	}
 	for _, id := range m.selectedTexts {
 		cells = append(cells, canvas.GetTextCells(id)...)
@@ -795,12 +802,23 @@ func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	for _, id := range m.selectedConnections {
 		cells = append(cells, canvas.GetConnectionCells(id)...)
 	}
-	for _, cell := range cells {
-		sx, sy := cell.X-panX, cell.Y-panY
-		if sy >= 0 && sy < len(r.ColorMap) && sx >= 0 && sx < len(r.ColorMap[sy]) {
-			r.ColorMap[sy][sx] = colorMouseSelect
-		}
+	for _, cell := range boxCells {
+		markSelected(r, cell, panX, panY, '#')
 	}
+	for _, cell := range cells {
+		markSelected(r, cell, panX, panY, 0)
+	}
+}
+
+func markSelected(r *RenderResult, cell point, panX, panY int, ch rune) {
+	sx, sy := cell.X-panX, cell.Y-panY
+	if sy < 0 || sy >= len(r.ColorMap) || sx < 0 || sx >= len(r.ColorMap[sy]) {
+		return
+	}
+	if ch != 0 {
+		r.Canvas[sy][sx] = ch
+	}
+	r.ColorMap[sy][sx] = colorMouseSelect
 }
 
 func (m model) overlayContextMenu(r *RenderResult) {

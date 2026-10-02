@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,21 +12,47 @@ type Config struct {
 	SaveDirectory string
 	StartMenu     bool
 	Confirmations bool
+	Particles     bool
+	Mouse         bool
+	Resume        bool
 }
 
-func Load() *Config {
-	config := &Config{
+const configName = ".flermrc"
+
+func Defaults() *Config {
+	return &Config{
 		SaveDirectory: "",
 		StartMenu:     true,
 		Confirmations: true,
+		Particles:     true,
+		Mouse:         true,
+		Resume:        true,
 	}
+}
+
+func Path() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeDir, configName), nil
+}
+
+func (c *Config) Save(path string) error {
+	settings := fmt.Sprintf("savedirectory=%s\nstartmenu=%v\nconfirmations=%v\nresume=%v\nparticles=%v\nmouse=%v\n",
+		c.SaveDirectory, c.StartMenu, c.Confirmations, c.Resume, c.Particles, c.Mouse)
+	return os.WriteFile(path, []byte(settings), 0644)
+}
+
+func Load() *Config {
+	config := Defaults()
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return config
 	}
 
-	configPath := filepath.Join(homeDir, ".flermrc")
+	configPath := filepath.Join(homeDir, configName)
 	file, err := os.Open(configPath)
 	if err != nil {
 		return config
@@ -49,6 +76,10 @@ func Load() *Config {
 
 		switch strings.ToLower(key) {
 		case "savedirectory", "save_directory", "savedir":
+			if value == "" {
+				config.SaveDirectory = ""
+				continue
+			}
 			if strings.HasPrefix(value, "~") {
 				value = filepath.Join(homeDir, strings.TrimPrefix(value, "~"))
 			}
@@ -59,14 +90,26 @@ func Load() *Config {
 			}
 			config.SaveDirectory = value
 		case "startmenu", "start_menu":
-			config.StartMenu = strings.ToLower(value) == "true"
+			config.StartMenu = isTrue(value)
 		case "confirmations", "confirm":
-			config.Confirmations = strings.ToLower(value) == "true"
+			config.Confirmations = isTrue(value)
+		case "particles", "animations":
+			config.Particles = isTrue(value)
+		case "disableparticles", "disable_particles", "disableanimations":
+			config.Particles = !isTrue(value)
+		case "resume":
+			config.Resume = isTrue(value)
+		case "mouse":
+			config.Mouse = isTrue(value)
+		case "disablemouse", "disable_mouse":
+			config.Mouse = !isTrue(value)
 		}
 	}
 
 	return config
 }
+
+func isTrue(value string) bool { return strings.ToLower(value) == "true" }
 
 func (c *Config) GetSavePath(filename string) string {
 	if c.SaveDirectory == "" {
@@ -96,6 +139,9 @@ func (c *Config) RememberLastFile(path string) {
 }
 
 func (c *Config) LastFile() string {
+	if !c.Resume {
+		return ""
+	}
 	record := c.lastFileRecord()
 	if record == "" {
 		return ""

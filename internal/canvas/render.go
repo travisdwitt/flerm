@@ -20,6 +20,10 @@ func (r *RenderResult) ApplyColors() []string {
 		for j := len(row); j < r.Width; j++ {
 			line[j] = ' '
 		}
+		if colorMode == ColorModeNone {
+			result[i] = string(line)
+			continue
+		}
 		var coloredLine strings.Builder
 		currentColor := -1
 		for j, char := range line {
@@ -102,17 +106,6 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 			c.drawBoxShadow(canvas, box, box.ZLevel, panX, panY)
 		}
 		c.drawBoxAt(canvas, box, i == selectedBox, box.X-panX, box.Y-panY)
-		if showBoxNumbers {
-			boxScreenX, boxScreenY := box.X-panX, box.Y-panY
-			if !c.isValidPos(canvas, boxScreenX, boxScreenY) {
-				continue
-			}
-			for idx, char := range fmt.Sprintf("%d", i) {
-				if posX := boxScreenX + 1 + idx; posX < boxScreenX+box.Width-1 {
-					putRune(posX, boxScreenY, char)
-				}
-			}
-		}
 	}
 
 	editCursorAt := func(pos int) (int, int, bool) {
@@ -181,6 +174,22 @@ func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, pre
 	}
 	for cell, colorIndex := range c.highlights {
 		putColor(cell.X-panX, cell.Y-panY, colorIndex)
+	}
+	if showBoxNumbers {
+		for _, i := range boxOrder {
+			box := c.boxes[i]
+			bx, by := box.X-panX, box.Y-panY
+			for idx, ch := range fmt.Sprintf("[%d]", i) {
+				if posX := bx + 1 + idx; posX < bx+box.Width-1 {
+					putRune(posX, by, ch)
+					color := -1
+					if ch == '[' || ch == ']' {
+						color = ColorBoxNumberBracket
+					}
+					putColor(posX, by, color)
+				}
+			}
+		}
 	}
 	for _, i := range boxOrder {
 		x, y, ok := c.TooltipMarkPos(i)
@@ -431,6 +440,9 @@ func (c *Canvas) isValidPos(canvas [][]rune, x, y int) bool {
 }
 
 func colorCode(colorIndex int, blank bool) string {
+	if colorMode == ColorModeNone {
+		return ""
+	}
 	switch colorIndex {
 	case colorEditSelect:
 		return "\x1b[7;36m"
@@ -444,9 +456,11 @@ func colorCode(colorIndex int, blank bool) string {
 	case ColorMenuBorder:
 		return "\x1b[32m"
 	case ColorTooltipText:
-		return "\x1b[48;5;236;97m"
+		return AnsiTier("\x1b[48;5;236;97m", "\x1b[100;97m")
 	case ColorTooltipBorder:
-		return "\x1b[48;5;236;1;93m"
+		return AnsiTier("\x1b[48;5;236;1;93m", "\x1b[100;1;93m")
+	case ColorTooltipBracket:
+		return AnsiTier("\x1b[48;5;236;92m", "\x1b[100;92m")
 	}
 	if colorIndex < 0 || colorIndex >= NumColors {
 		return ""

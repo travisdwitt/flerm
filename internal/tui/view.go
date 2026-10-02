@@ -4,33 +4,70 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	cv "flerm/internal/canvas"
 )
 
-const (
-	chromeBG    = "\033[48;5;236m"
-	chromeReset = "\033[0m"
-	chromeFG    = "\033[32m"
-	chromeFGOff = "\033[39m"
-)
+func chromeBG() string    { return cv.AnsiTier("\033[48;5;236m", "\033[100m") }
+func chromeReset() string { return cv.Ansi("\033[0m") }
+func chromeFG() string    { return cv.Ansi("\033[32m") }
+func chromeFGOff() string { return cv.Ansi("\033[39m") }
 
-func chromeLine(s string, width int) string {
-	if pad := width - runeLen(s); pad > 0 {
-		s += strings.Repeat(" ", pad)
+func displayLen(s string) int {
+	n, inEscape := 0, false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			inEscape = r != 'm'
+		case r == '\033':
+			inEscape = true
+		default:
+			n++
+		}
 	}
-	return chromeBG + s + chromeReset
+	return n
 }
 
-func (m *model) renderBufferBar(width int) string {
-	var bar strings.Builder
-	visibleLen := 0
-	write := func(s string) {
-		bar.WriteString(s)
-		visibleLen += runeLen(s)
+func clipDisplay(s string, width int) string {
+	var out strings.Builder
+	n, inEscape := 0, false
+	for _, r := range s {
+		if inEscape {
+			inEscape = r != 'm'
+			out.WriteRune(r)
+			continue
+		}
+		if r == '\033' {
+			inEscape = true
+			out.WriteRune(r)
+			continue
+		}
+		if n == width {
+			break
+		}
+		out.WriteRune(r)
+		n++
 	}
+	return out.String()
+}
+
+func chromeLine(s string, width int) string {
+	switch pad := width - displayLen(s); {
+	case pad > 0:
+		s += strings.Repeat(" ", pad)
+	case pad < 0:
+		s = clipDisplay(s, width)
+	}
+	return chromeBG() + s + chromeReset()
+}
+
+func (m *model) renderBufferBar() string {
+	var bar strings.Builder
+	write := func(s string) { bar.WriteString(s) }
 	bracket := func(s string) {
-		bar.WriteString(chromeFG)
+		bar.WriteString(chromeFG())
 		write(s)
-		bar.WriteString(chromeFGOff)
+		bar.WriteString(chromeFGOff())
 	}
 	write("Open Charts: ")
 	for i, buf := range m.buffers {
@@ -49,10 +86,6 @@ func (m *model) renderBufferBar(width int) string {
 			write(" " + bufName + " ")
 		}
 	}
-	if visibleLen >= width {
-		return bar.String()[:width]
-	}
-	write(strings.Repeat(" ", width-visibleLen))
 	return bar.String()
 }
 
@@ -143,7 +176,7 @@ func (m model) View() string {
 		editSelStart, editSelEnd = m.editSelectionStart, m.editSelectionEnd
 	}
 
-	r := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, m.editCursorPos, m.editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, m.mode == ModeBoxJump, editSelStart, editSelEnd)
+	r := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, m.editCursorPos, m.editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, m.mode == ModeBoxJump || m.allTooltips, editSelStart, editSelEnd)
 
 	m.overlaySelection(r, panX, panY)
 	if m.mode == ModeTooltipEdit {
@@ -159,10 +192,13 @@ func (m model) View() string {
 	if m.minimap {
 		m.overlayMinimap(r, panX, panY)
 	}
+	if m.allTooltips {
+		m.overlayTooltipSidebar(r)
+	}
 
 	var result strings.Builder
 	if showBufferBar {
-		result.WriteString(chromeLine(m.renderBufferBar(renderWidth), renderWidth))
+		result.WriteString(chromeLine(m.renderBufferBar(), renderWidth))
 		result.WriteString("\n")
 	}
 	result.WriteString(strings.Join(r.ApplyColors(), "\n"))
@@ -325,6 +361,43 @@ func editCaret(text string, pos, selStart, selEnd int) string {
 	return string(r)
 }
 
+func colorLabel(color int) string {
+	if color < 0 || color >= numColors {
+		return ""
+	}
+	name := " " + colorNames[color]
+	swatch := cv.ColorFG(color)
+	if swatch == "" {
+		return name
+	}
+	return " " + swatch + "■" + chromeFGOff() + name
+}
+
+func (m model) cursorObject() string {
+	canvas := m.getCanvas()
+	worldX, worldY := m.worldCursor()
+	switch boxID, textID := canvas.GetBoxAt(worldX, worldY), canvas.GetTextAt(worldX, worldY); {
+	case boxID != -1:
+		return fmt.Sprintf("Box %d%s", boxID, colorLabel(canvas.Boxes()[boxID].Color))
+	case textID != -1:
+		return fmt.Sprintf("Text %d%s", textID, colorLabel(canvas.Texts()[textID].Color))
+	default:
+		idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY)
+		if idx == -1 {
+			return ""
+		}
+		conn := canvas.Connections()[idx]
+		return fmt.Sprintf("Connection %s to %s%s", connEndpoint(conn.FromID), connEndpoint(conn.ToID), colorLabel(conn.Color))
+	}
+}
+
+func connEndpoint(id int) string {
+	if id < 0 {
+		return "line"
+	}
+	return fmt.Sprintf("Box %d", id)
+}
+
 func (m model) statusLine() string {
 	switch m.mode {
 	case ModeEditing:
@@ -419,8 +492,11 @@ func (m model) statusLine() string {
 		modeStr = "HIGHLIGHT"
 	}
 	status := fmt.Sprintf("Mode: %s | Cursor: (%d,%d)", modeStr, m.cursorX, m.cursorY)
+	if obj := m.cursorObject(); obj != "" {
+		status += " | " + obj
+	}
 	if m.highlightMode {
-		status += fmt.Sprintf(" | Color: %s (%d/%d)", colorNames[m.selectedColor], m.selectedColor+1, numColors)
+		status += fmt.Sprintf(" | Color:%s (%d/%d)", colorLabel(m.selectedColor), m.selectedColor+1, numColors)
 	}
 	if m.connectionFrom != -1 {
 		status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
@@ -450,6 +526,131 @@ const (
 type tooltipChar struct {
 	char        rune
 	origCharIdx int
+}
+
+const (
+	sidebarW     = minimapW
+	sidebarLabel = "tooltips"
+)
+
+func wrapWords(text string, width int) []string {
+	var lines []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		cur := ""
+		for _, word := range strings.Fields(paragraph) {
+			switch {
+			case cur == "":
+				cur = word
+			case runeLen(cur)+1+runeLen(word) <= width:
+				cur += " " + word
+			default:
+				lines = append(lines, cur)
+				cur = word
+			}
+		}
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+func (m model) tooltipSidebarRows(boxW int) []string {
+	var rows []string
+	for id, box := range m.getCanvas().Boxes() {
+		if box.Tooltip == "" {
+			continue
+		}
+		rows = append(rows, "┌"+strings.Repeat("─", boxW-2)+"┐")
+		for _, line := range append([]string{fmt.Sprintf("Box [%d]:", id)}, wrapWords(box.Tooltip, boxW-4)...) {
+			if runeLen(line) > boxW-4 {
+				line = string([]rune(line)[:boxW-4])
+			}
+			rows = append(rows, "│ "+line+strings.Repeat(" ", boxW-4-runeLen(line))+" │")
+		}
+		rows = append(rows, "└"+strings.Repeat("─", boxW-2)+"┘")
+	}
+	if rows == nil {
+		return []string{"(no tooltips yet)", "", "t on a box adds one"}
+	}
+	return rows
+}
+
+func (m model) sidebarInnerH() int {
+	h := max(m.height-1-m.bufferBarOffset(), 1)
+	if m.minimap {
+		h -= min(minimapH, h)
+	}
+	return max(h-2, 1)
+}
+
+func (m *model) scrollTooltipSidebar(delta int) {
+	rows := len(m.tooltipSidebarRows(min(sidebarW, max(m.width, 1)) - 4))
+	m.tooltipScroll = max(0, min(m.tooltipScroll+delta, max(0, rows-m.sidebarInnerH())))
+}
+
+func (m model) overlayTooltipSidebar(r *RenderResult) {
+	w := min(sidebarW, r.Width)
+	top := 0
+	if m.minimap {
+		top = min(minimapH, r.Height)
+	}
+	h := r.Height - top
+	if w < 12 || h < 3 {
+		return
+	}
+	innerW, innerH := w-2, h-2
+	originX := r.Width - w
+
+	cell := func(px, py int, ch rune, color int) {
+		if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
+			return
+		}
+		r.Canvas[py][px] = ch
+		r.ColorMap[py][px] = color
+	}
+	hline := func(py int, left, right rune) {
+		cell(originX, py, left, colorTooltipBorder)
+		for i := 0; i < innerW; i++ {
+			cell(originX+1+i, py, '─', colorTooltipBorder)
+		}
+		cell(originX+w-1, py, right, colorTooltipBorder)
+	}
+
+	rows := m.tooltipSidebarRows(innerW - 2)
+	scroll := min(m.tooltipScroll, max(0, len(rows)-innerH))
+
+	hline(top, '┌', '┐')
+	hline(top+h-1, '└', '┘')
+	for i := 0; i < innerH; i++ {
+		py := top + 1 + i
+		cell(originX, py, '│', colorTooltipBorder)
+		row := ""
+		if idx := scroll + i; idx < len(rows) {
+			row = rows[idx]
+		}
+		for j := 0; j < innerW; j++ {
+			cell(originX+1+j, py, ' ', colorTooltipText)
+		}
+		for j, ch := range []rune(row) {
+			if j+1 < innerW {
+				color := colorTooltipText
+				if (ch == '[' || ch == ']') && strings.HasPrefix(row, "Box [") {
+					color = colorTooltipBracket
+				}
+				cell(originX+2+j, py, ch, color)
+			}
+		}
+		cell(originX+w-1, py, '│', colorTooltipBorder)
+	}
+	if len(rows) > innerH {
+		thumb := max(1, innerH*innerH/len(rows))
+		start := scroll * (innerH - thumb) / (len(rows) - innerH)
+		for i := 0; i < thumb; i++ {
+			cell(originX+w-1, top+1+start+i, '█', colorTooltipBorder)
+		}
+	}
+	for i, ch := range sidebarLabel {
+		cell(originX+w-len(sidebarLabel)-1+i, top, ch, colorTooltipBorder)
+	}
 }
 
 func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
@@ -625,6 +826,9 @@ func (m model) startupLayout() startupLayout {
 	case effectFireworksUSA:
 		l.logo, l.logoInk, l.logoBase = julyFourthLogo, julyFourthLogoInk, ansiBlue
 	}
+	if !cv.ColorEnabled() {
+		l.logoInk, l.logoBase = nil, ""
+	}
 	if m.lastFile != "" {
 		name := chartDisplayName(filepath.Base(m.lastFile))
 		if r := []rune(name); len(r) > 24 {
@@ -673,7 +877,7 @@ func (m model) renderStartupMenu() string {
 						if c, ok := l.logoInk[point{X: logoX, Y: relY - 2}]; ok {
 							ink = c
 						}
-						cell = ink + string(line[logoX]) + ansiReset
+						cell = ink + string(line[logoX]) + cv.Ansi(ansiReset)
 					}
 				case relY >= 4+len(l.logo) && relY < 4+len(l.logo)+len(l.menuItems):
 					item := []rune(l.menuItems[relY-4-len(l.logo)])

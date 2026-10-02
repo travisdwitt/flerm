@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"time"
 
+	cv "flerm/internal/canvas"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -96,7 +98,7 @@ func (m model) inStartMenuFlow() bool {
 }
 
 func (m model) effectTick() tea.Cmd {
-	if m.effect == effectNone || !m.inStartMenuFlow() {
+	if m.effect == effectNone || !m.inStartMenuFlow() || !m.config.Particles {
 		return nil
 	}
 	return tea.Tick(effectFrameRate, func(time.Time) tea.Msg { return effectTickMsg{} })
@@ -310,7 +312,7 @@ func (m model) particleOverlay() map[point]string {
 	}
 	overlay := make(map[point]string, len(m.particles))
 	for _, p := range m.particles {
-		overlay[point{X: int(p.x), Y: int(p.y)}] = p.color + string(p.glyph) + ansiReset
+		overlay[point{X: int(p.x), Y: int(p.y)}] = cv.Ansi(p.color) + string(p.glyph) + cv.Ansi(ansiReset)
 	}
 	return overlay
 }
