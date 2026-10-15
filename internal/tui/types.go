@@ -47,6 +47,7 @@ type model struct {
 	confirmAction          ConfirmAction
 	confirmID              int
 	confirmFileIndex       int
+	overwriteOK            bool
 	originalMoveX          int
 	originalMoveY          int
 	originalWidth          int

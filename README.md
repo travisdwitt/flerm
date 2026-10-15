@@ -156,11 +156,12 @@ you're switching off.
 ### File Operations
 
 - `s` - Save flowchart
-- `S` - Export chart (prompts to choose PNG or Visual TXT format)
+- `S` - Export chart (prompts to choose PNG, Visual TXT, or Mermaid format)
 - `o` - Open flowchart in current buffer
 - `O` - Open flowchart in new buffer
   - Press `p` to export as PNG image
   - Press `t` to export as Visual TXT file
+  - Press `m` to export as Mermaid diagram (`.mmd`; free-floating connections are skipped)
 
 **Note:**
 

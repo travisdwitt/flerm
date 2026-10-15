@@ -153,11 +153,25 @@ func (m *model) export(name, ext, label string, write func(string) error) bool {
 		base += ext
 	}
 	path := m.config.GetSavePath(base)
+	if m.needsOverwriteConfirm(path) {
+		return false
+	}
 	if err := write(path); err != nil {
 		m.errorMessage = "Error exporting " + label + ": " + err.Error()
 		return false
 	}
 	m.reportWritten("Exported", path)
+	return true
+}
+
+func (m *model) needsOverwriteConfirm(path string) bool {
+	if m.overwriteOK {
+		return false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	m.confirm(ConfirmOverwriteFile, -1)
 	return true
 }
 

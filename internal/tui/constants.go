@@ -44,6 +44,7 @@ const (
 	FileOpSave FileOperation = iota
 	FileOpSavePNG
 	FileOpSaveVisualTXT
+	FileOpSaveMermaid
 	FileOpOpen
 )
 

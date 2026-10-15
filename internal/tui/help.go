@@ -113,7 +113,7 @@ var helpText = []string{
 	"File Operations:",
 	"----------------",
 	"  s                Save flowchart",
-	"  S                Export as PNG image (experimental and janky)",
+	"  S                Export as PNG, Visual TXT, or Mermaid (PNG is experimental and janky)",
 	"  o                Load a saved flowchart in current buffer",
 	"  O                Load a saved flowchart in new buffer",
 	"  r                On the start menu: resume the last chart you opened",

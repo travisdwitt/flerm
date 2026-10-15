@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -205,9 +204,7 @@ func (m model) submitFileInput() (tea.Model, tea.Cmd) {
 			filename += saveExt
 		}
 		path := m.config.GetSavePath(filename)
-		if _, err := os.Stat(path); err == nil && m.config.Confirmations {
-			m.confirm(ConfirmOverwriteFile, -1)
-			m.filename = path
+		if m.needsOverwriteConfirm(path) {
 			return m, nil
 		}
 		ok = m.saveChart(path)
@@ -226,6 +223,8 @@ func (m model) submitFileInput() (tea.Model, tea.Cmd) {
 		ok = m.export(filename, ".png", "PNG", m.getCanvas().ExportToPNG)
 	case FileOpSaveVisualTXT:
 		ok = m.export(filename, ".txt", "Visual TXT", m.exportVisualTXT)
+	case FileOpSaveMermaid:
+		ok = m.export(filename, ".mmd", "Mermaid", m.exportMermaid)
 	}
 	if ok {
 		m.mode = ModeNormal
@@ -285,10 +284,12 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case ConfirmOverwriteFile:
-			if !m.saveChart(m.filename) {
-				m.mode = ModeFileInput
-				return m, nil
-			}
+			m.overwriteOK = true
+			m.mode = ModeFileInput
+			next, _ := m.submitFileInput()
+			m = next.(model)
+			m.overwriteOK = false
+			return m, nil
 		case ConfirmChooseExportType, ConfirmDeleteBoxOrTooltip:
 			return m, nil
 		}
@@ -299,7 +300,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.deleteBoxByID(m.confirmID)
 			m.mode = ModeNormal
 		}
-	case "p", "P", "t", "T":
+	case "p", "P", "t", "T", "m", "M":
 		if m.confirmAction == ConfirmDeleteBoxOrTooltip {
 			if key == "t" || key == "T" {
 				m.deleteBoxTooltip(m.confirmID)
@@ -309,8 +310,11 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.confirmAction == ConfirmChooseExportType {
 			op := FileOpSavePNG
-			if key == "t" || key == "T" {
+			switch key {
+			case "t", "T":
 				op = FileOpSaveVisualTXT
+			case "m", "M":
+				op = FileOpSaveMermaid
 			}
 			name := m.currentChartName()
 			if name == "" {
@@ -322,7 +326,6 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeNormal
 		if m.confirmAction == ConfirmOverwriteFile {
 			m.mode = ModeFileInput
-			m.fileOp = FileOpSave
 		}
 	}
 	return m, nil

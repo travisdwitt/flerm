@@ -445,7 +445,7 @@ func (m model) statusLine() string {
 		}
 		return "Mode: MULTI-SELECT | hjkl/arrows=draw selection, Enter=select and move, Esc=cancel"
 	case ModeFileInput:
-		opStr := map[FileOperation]string{FileOpSave: "Save", FileOpOpen: "Open", FileOpSavePNG: "Export PNG", FileOpSaveVisualTXT: "Export Visual TXT"}[m.fileOp]
+		opStr := map[FileOperation]string{FileOpSave: "Save", FileOpOpen: "Open", FileOpSavePNG: "Export PNG", FileOpSaveVisualTXT: "Export Visual TXT", FileOpSaveMermaid: "Export Mermaid"}[m.fileOp]
 		if m.errorMessage != "" {
 			return fmt.Sprintf("Mode: FILE | ERROR: %s | %s filename: %s | Enter=retry, Esc=cancel", m.errorMessage, opStr, m.filename)
 		}
@@ -471,7 +471,7 @@ func (m model) statusLine() string {
 		case ConfirmOverwriteFile:
 			message = fmt.Sprintf("File %s already exists. Overwrite? (y/n)", m.filename)
 		case ConfirmChooseExportType:
-			message = "Export as PNG (p) or Visual TXT (t)? Press Esc to cancel"
+			message = "Export as PNG (p), Visual TXT (t), or Mermaid (m)? Press Esc to cancel"
 		case ConfirmDeleteBoxOrTooltip:
 			message = "Delete the box (b) or just its tooltip (t)? Press Esc to cancel"
 		}
