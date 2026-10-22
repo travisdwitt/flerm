@@ -1,6 +1,7 @@
 package tui
 
 import (
+	cv "flerm/internal/canvas"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -146,7 +147,7 @@ func (m *model) handleMultiSelectMouse(msg tea.MouseMsg) {
 	panX, panY := m.getPanOffset()
 	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
 		m.mode = ModeNormal
-		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
+		m.selectionStartX, m.selectionStartY = cv.CoordUnset, cv.CoordUnset
 		m.selectedBoxes, m.selectedTexts = nil, nil
 		return
 	}
@@ -369,19 +370,20 @@ func (m *model) panViewTo(canvasX, canvasY int) {
 func (m *model) beginHighlightPaint(worldX, worldY, color int) {
 	m.paintingHighlight = true
 	m.paintColor = color
-	m.paintedCells = nil
-	m.paintedSeen = map[point]bool{}
+	m.paintedAny = false
+	m.paintedSeen = map[cv.Point]bool{}
 	m.lastPaintX, m.lastPaintY = worldX, worldY
 	m.paintHighlightCell(worldX, worldY)
 }
 
 func (m *model) paintHighlightCell(x, y int) {
-	p := point{X: x, Y: y}
+	p := cv.Point{X: x, Y: y}
 	if x < 0 || y < 0 || m.paintedSeen[p] {
 		return
 	}
 	m.paintedSeen[p] = true
-	m.paintedCells = append(m.paintedCells, m.paintCell(x, y, m.paintColor))
+	m.applyHighlight(x, y, m.paintColor)
+	m.paintedAny = true
 }
 
 func (m *model) paintHighlightTo(worldX, worldY int) {
@@ -408,9 +410,9 @@ func (m *model) paintHighlightTo(worldX, worldY int) {
 }
 
 func (m *model) finishHighlightPaint() {
-	m.recordHighlights(m.paintedCells)
+	m.recordIf(m.paintedAny)
 	m.paintingHighlight = false
-	m.paintedCells = nil
+	m.paintedAny = false
 	m.paintedSeen = nil
 }
 
@@ -451,7 +453,7 @@ func (m *model) openContextMenu(canvasX, canvasY int) {
 
 func colorSubmenu() []MenuItem {
 	items := []MenuItem{{Label: "None", Action: MenuSetColor, Arg: -1}}
-	for i, n := range colorNames {
+	for i, n := range cv.ColorNames {
 		items = append(items, MenuItem{Label: "■ " + n, Action: MenuSetColor, Arg: i})
 	}
 	return items
@@ -459,10 +461,10 @@ func colorSubmenu() []MenuItem {
 
 func borderStyleSubmenu() []MenuItem {
 	return []MenuItem{
-		{Label: "ASCII", Action: MenuSetBorderStyle, Arg: int(BorderStyleASCII)},
-		{Label: "Single", Action: MenuSetBorderStyle, Arg: int(BorderStyleSingle)},
-		{Label: "Double", Action: MenuSetBorderStyle, Arg: int(BorderStyleDouble)},
-		{Label: "Rounded", Action: MenuSetBorderStyle, Arg: int(BorderStyleRounded)},
+		{Label: "ASCII", Action: MenuSetBorderStyle, Arg: int(cv.BorderStyleASCII)},
+		{Label: "Single", Action: MenuSetBorderStyle, Arg: int(cv.BorderStyleSingle)},
+		{Label: "Double", Action: MenuSetBorderStyle, Arg: int(cv.BorderStyleDouble)},
+		{Label: "Rounded", Action: MenuSetBorderStyle, Arg: int(cv.BorderStyleRounded)},
 	}
 }
 
@@ -698,7 +700,8 @@ func (m *model) activateMenuItem(action MenuAction, arg int) {
 
 	switch action {
 	case MenuNewBox:
-		m.addBoxRecorded(m.menuWorldX, m.menuWorldY, "Box")
+		m.addBox(m.menuWorldX, m.menuWorldY, "Box")
+		m.recordAction()
 	case MenuNewText:
 		m.textInputX, m.textInputY = m.menuWorldX, m.menuWorldY
 		m.beginEdit(ModeTextInput, -1, -1, "")
@@ -717,7 +720,7 @@ func (m *model) activateMenuItem(action MenuAction, arg int) {
 			m.ensureCursorInBounds()
 		}
 	case MenuMultiSelect:
-		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
+		m.selectionStartX, m.selectionStartY = cv.CoordUnset, cv.CoordUnset
 		m.selectedBoxes, m.selectedTexts, m.selectedConnections = nil, nil, nil
 		m.cursorX, m.cursorY = m.menuX, m.menuY
 		m.ensureCursorInBounds()
@@ -747,9 +750,8 @@ func (m *model) activateMenuItem(action MenuAction, arg int) {
 		}
 	case MenuSetBorderStyle:
 		if box >= 0 && box < len(canvas.Boxes()) {
-			data := BorderStyleData{BoxID: box, OldStyle: canvas.Boxes()[box].BorderStyle, NewStyle: BorderStyle(arg)}
-			canvas.SetBorderStyle(box, data.NewStyle)
-			m.recordAction(ActionChangeBorderStyle, data, data)
+			canvas.SetBorderStyle(box, cv.BorderStyle(arg))
+			m.recordAction()
 		}
 	case MenuSetColor:
 		m.applyMenuColor(arg)
@@ -758,33 +760,29 @@ func (m *model) activateMenuItem(action MenuAction, arg int) {
 
 func (m *model) applyMenuColor(color int) {
 	canvas := m.getCanvas()
-	var kind, id, old int
+	var old int
 	switch {
 	case m.menuTargetBox >= 0 && m.menuTargetBox < len(canvas.Boxes()):
-		kind, id = ColorKindBox, m.menuTargetBox
-		old = canvas.Boxes()[id].Color
+		old = canvas.Boxes()[m.menuTargetBox].Color
+		canvas.SetBoxColor(m.menuTargetBox, color)
 	case m.menuTargetConn >= 0 && m.menuTargetConn < len(canvas.Connections()):
-		kind, id = ColorKindLine, m.menuTargetConn
-		old = canvas.Connections()[id].Color
+		old = canvas.Connections()[m.menuTargetConn].Color
+		canvas.SetLineColor(m.menuTargetConn, color)
 	case m.menuTargetText >= 0 && m.menuTargetText < len(canvas.Texts()):
-		kind, id = ColorKindText, m.menuTargetText
-		old = canvas.Texts()[id].Color
+		old = canvas.Texts()[m.menuTargetText].Color
+		canvas.SetTextColor(m.menuTargetText, color)
 	default:
 		if color >= 0 {
 			m.selectedColor = color
 		}
 		return
 	}
-	m.applyObjectColor(kind, id, color)
-	if old != color {
-		data := ColorData{Kind: kind, ID: id, OldColor: old, NewColor: color}
-		m.recordAction(ActionSetColor, data, data)
-	}
+	m.recordIf(old != color)
 }
 
-func (m model) overlaySelection(r *RenderResult, panX, panY int) {
+func (m model) overlaySelection(r *cv.RenderResult, panX, panY int) {
 	canvas := m.getCanvas()
-	var cells, boxCells []point
+	var cells, boxCells []cv.Point
 	switch {
 	case m.selBox >= 0 && m.selBox < len(canvas.Boxes()):
 		boxCells = canvas.GetBoxBorderCells(m.selBox)
@@ -810,7 +808,7 @@ func (m model) overlaySelection(r *RenderResult, panX, panY int) {
 	}
 }
 
-func markSelected(r *RenderResult, cell point, panX, panY int, ch rune) {
+func markSelected(r *cv.RenderResult, cell cv.Point, panX, panY int, ch rune) {
 	sx, sy := cell.X-panX, cell.Y-panY
 	if sy < 0 || sy >= len(r.ColorMap) || sx < 0 || sx >= len(r.ColorMap[sy]) {
 		return
@@ -818,61 +816,46 @@ func markSelected(r *RenderResult, cell point, panX, panY int, ch rune) {
 	if ch != 0 {
 		r.Canvas[sy][sx] = ch
 	}
-	r.ColorMap[sy][sx] = colorMouseSelect
+	r.ColorMap[sy][sx] = cv.ColorMouseSelect
 }
 
-func (m model) overlayContextMenu(r *RenderResult) {
+func (m model) overlayContextMenu(r *cv.RenderResult) {
 	for _, level := range m.allMenuLevels() {
 		m.drawMenuLevel(r, level)
 	}
 }
 
-func (m model) drawMenuLevel(r *RenderResult, level menuLevel) {
+func (m model) drawMenuLevel(r *cv.RenderResult, level menuLevel) {
 	x, y, w, h := m.levelBounds(level)
 	inner := w - 2
 
-	setCell := func(px, py int, ch rune, colorIdx int) {
-		if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
-			return
-		}
-		r.Canvas[py][px] = ch
-		r.ColorMap[py][px] = colorIdx
-	}
-	hline := func(py int, left, right rune) {
-		setCell(x, py, left, colorMenuBorder)
-		for i := 0; i < inner; i++ {
-			setCell(x+1+i, py, '─', colorMenuBorder)
-		}
-		setCell(x+w-1, py, right, colorMenuBorder)
-	}
-
-	hline(y, '┌', '┐')
-	hline(y+h-1, '└', '┘')
+	hframe(r, x, y, w, '┌', '┐', cv.ColorMenuBorder)
+	hframe(r, x, y+h-1, w, '└', '┘', cv.ColorMenuBorder)
 	for itemIdx, item := range level.items {
 		py := y + 1 + itemIdx
 		if item.Separator {
-			hline(py, '├', '┤')
+			hframe(r, x, py, w, '├', '┤', cv.ColorMenuBorder)
 			continue
 		}
 		rowColor := -1
 		if itemIdx == level.index {
-			rowColor = colorMenuSelect
+			rowColor = cv.ColorMenuSelect
 		}
-		setCell(x, py, '│', colorMenuBorder)
+		setCell(r, x, py, '│', cv.ColorMenuBorder)
 		label := []rune(" " + item.Label)
 		for i := 0; i < inner; i++ {
 			ch := ' '
 			if i < len(label) {
 				ch = label[i]
 			}
-			setCell(x+1+i, py, ch, rowColor)
+			setCell(r, x+1+i, py, ch, rowColor)
 		}
 		if len(item.Submenu) > 0 {
-			setCell(x+w-2, py, '▸', rowColor)
+			setCell(r, x+w-2, py, '▸', rowColor)
 		}
 		if item.Action == MenuSetColor && item.Arg >= 0 {
-			setCell(x+2, py, '■', item.Arg)
+			setCell(r, x+2, py, '■', item.Arg)
 		}
-		setCell(x+w-1, py, '│', colorMenuBorder)
+		setCell(r, x+w-1, py, '│', cv.ColorMenuBorder)
 	}
 }

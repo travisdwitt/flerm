@@ -36,7 +36,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.newChart()
 		}
 	case "N":
-		m.addNewBuffer(Buffer{canvas: cv.NewCanvas()})
+		m.addNewBuffer(newBuffer(cv.NewCanvas()))
 		m.resetView()
 	case "{", "}":
 		if n := len(m.buffers); n > 1 {
@@ -52,7 +52,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.zPanMode = !m.zPanMode
 	case "b":
 		m.zPanMode = false
-		m.addBoxRecorded(worldX, worldY, "Box")
+		m.addBox(worldX, worldY, "Box")
+		m.recordAction()
 	case "B":
 		m.mode = ModeBoxJump
 		m.boxJumpInput = ""
@@ -91,10 +92,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "A":
 		if idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); idx != -1 {
-			old := canvas.Connections()[idx]
 			canvas.CycleConnectionArrowState(idx)
-			data := CycleArrowData{idx, old, canvas.Connections()[idx]}
-			m.recordAction(ActionCycleArrow, data, data)
+			m.recordAction()
 			m.successMessage = ""
 		}
 	case "a":
@@ -140,11 +139,12 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.duplicateAt(worldX, worldY)
 	case "p":
 		if m.clipboard != nil {
-			boxID := m.addBoxRecorded(worldX, worldY, m.clipboard.GetText())
+			boxID := m.addBox(worldX, worldY, m.clipboard.GetText())
 			canvas.SetBoxSize(boxID, m.clipboard.Width, m.clipboard.Height)
 			canvas.SetBorderStyle(boxID, m.clipboard.BorderStyle)
 			canvas.SetBoxColor(boxID, m.clipboard.Color)
 			canvas.SetBoxTitle(boxID, m.clipboard.Title)
+			m.recordAction()
 		}
 	case "tab":
 		if m.highlightMode {
@@ -155,9 +155,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.menuX, m.menuY = 0, m.height
 			m.mode = ModeContextMenu
 		} else if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
-			old := canvas.CycleBorderStyle(boxID)
-			data := BorderStyleData{BoxID: boxID, OldStyle: old, NewStyle: canvas.Boxes()[boxID].BorderStyle}
-			m.recordAction(ActionChangeBorderStyle, data, data)
+			canvas.CycleBorderStyle(boxID)
+			m.recordAction()
 		} else {
 			m.minimap = !m.minimap
 		}
@@ -178,6 +177,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.zPanMode = false
 		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
 			canvas.CycleBoxZLevel(boxID)
+			m.recordAction()
 		}
 	case " ":
 		if !m.highlightMode {
@@ -185,13 +185,13 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
 			box := canvas.Boxes()[boxID]
 			border := canvas.GetBoxBorderCells(boxID)
-			var bottom []point
+			var bottom []cv.Point
 			for _, cell := range border {
 				if cell.Y == box.Y+box.Height-1 {
 					bottom = append(bottom, cell)
 				}
 			}
-			m.recordHighlights(m.cycleHighlightGroups(m.anyHighlighted(bottom), border, canvas.GetBoxTitleDividerCells(boxID)))
+			m.recordIf(m.cycleHighlightGroups(m.anyHighlighted(bottom), border, canvas.GetBoxTitleDividerCells(boxID)))
 		}
 	case "enter":
 		if !m.highlightMode {
@@ -200,12 +200,12 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch boxID, textID := canvas.GetBoxAt(worldX, worldY), canvas.GetTextAt(worldX, worldY); {
 		case boxID != -1:
 			content := canvas.GetBoxContentTextCells(boxID)
-			m.recordHighlights(m.cycleHighlightGroups(m.anyHighlighted(content), content, canvas.GetBoxTitleTextCells(boxID)))
+			m.recordIf(m.cycleHighlightGroups(m.anyHighlighted(content), content, canvas.GetBoxTitleTextCells(boxID)))
 		case textID != -1:
-			m.recordHighlights(m.paintCells(canvas.GetTextCells(textID), m.selectedColor))
+			m.recordIf(m.paintCells(canvas.GetTextCells(textID), m.selectedColor))
 		default:
 			if idx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); idx != -1 {
-				m.recordHighlights(m.paintCells(canvas.GetConnectionCells(idx), m.selectedColor))
+				m.recordIf(m.paintCells(canvas.GetConnectionCells(idx), m.selectedColor))
 			}
 		}
 	}
@@ -235,11 +235,10 @@ func (m *model) openColorMenu(worldX, worldY int) {
 	m.mode = ModeContextMenu
 }
 
-func (m *model) addBoxRecorded(x, y int, text string) int {
+func (m *model) addBox(x, y int, text string) int {
 	canvas := m.getCanvas()
 	id := len(canvas.Boxes())
 	canvas.AddBox(x, y, text)
-	m.recordAction(ActionAddBox, AddData{X: x, Y: y, Text: text, ID: id}, DeleteBoxData{ID: id})
 	m.successMessage = ""
 	m.ensureCursorInBounds()
 	return id
@@ -248,7 +247,7 @@ func (m *model) addBoxRecorded(x, y int, text string) int {
 func (m *model) deleteAt(x, y int) {
 	canvas := m.getCanvas()
 	if canvas.GetHighlight(x, y) != -1 {
-		m.recordHighlights(m.paintCells([]point{{X: x, Y: y}}, -1))
+		m.recordIf(m.paintCells([]cv.Point{{X: x, Y: y}}, -1))
 		return
 	}
 	ask := m.config.Confirmations
@@ -277,7 +276,7 @@ func (m *model) deleteAt(x, y int) {
 
 func (m *model) clearHighlightsAt(x, y int) {
 	canvas := m.getCanvas()
-	var cells []point
+	var cells []cv.Point
 	switch boxID, textID := canvas.GetBoxAt(x, y), canvas.GetTextAt(x, y); {
 	case boxID != -1:
 		cells = canvas.GetBoxCells(boxID)
@@ -290,11 +289,11 @@ func (m *model) clearHighlightsAt(x, y int) {
 			cells = canvas.GetAdjacentHighlightsOfColor(x, y, color)
 		}
 	}
-	m.recordHighlights(m.paintCells(m.highlighted(cells), -1))
+	m.recordIf(m.paintCells(m.highlighted(cells), -1))
 }
 
-func (m *model) highlighted(cells []point) []point {
-	var out []point
+func (m *model) highlighted(cells []cv.Point) []cv.Point {
+	var out []cv.Point
 	for _, cell := range cells {
 		if m.getCanvas().GetHighlight(cell.X, cell.Y) != -1 {
 			out = append(out, cell)
@@ -303,43 +302,27 @@ func (m *model) highlighted(cells []point) []point {
 	return out
 }
 
-func (m *model) anyHighlighted(cells []point) bool {
+func (m *model) anyHighlighted(cells []cv.Point) bool {
 	return len(m.highlighted(cells)) > 0
 }
 
-func (m *model) paintCell(x, y, color int) HighlightCell {
-	old := m.getCanvas().GetHighlight(x, y)
-	m.applyHighlight(x, y, color)
-	return HighlightCell{X: x, Y: y, Color: color, HadColor: old != -1, OldColor: old}
-}
-
-func (m *model) paintCells(cells []point, color int) []HighlightCell {
-	out := make([]HighlightCell, 0, len(cells))
+func (m *model) paintCells(cells []cv.Point, color int) bool {
 	for _, cell := range cells {
-		out = append(out, m.paintCell(cell.X, cell.Y, color))
+		m.applyHighlight(cell.X, cell.Y, color)
 	}
-	return out
+	return len(cells) > 0
 }
 
-func (m *model) cycleHighlightGroups(primaryLit bool, primary, secondary []point) []HighlightCell {
+func (m *model) cycleHighlightGroups(primaryLit bool, primary, secondary []cv.Point) bool {
 	switch {
 	case primaryLit && m.anyHighlighted(secondary):
-		return append(m.paintCells(primary, -1), m.paintCells(secondary, -1)...)
+		m.paintCells(secondary, -1)
+		return m.paintCells(primary, -1)
 	case primaryLit:
-		return append(m.paintCells(primary, -1), m.paintCells(secondary, m.selectedColor)...)
+		m.paintCells(secondary, m.selectedColor)
+		return m.paintCells(primary, -1)
 	}
 	return m.paintCells(primary, m.selectedColor)
-}
-
-func (m *model) recordHighlights(cells []HighlightCell) {
-	if len(cells) == 0 {
-		return
-	}
-	inverse := make([]HighlightCell, len(cells))
-	for i, c := range cells {
-		inverse[i] = HighlightCell{X: c.X, Y: c.Y, Color: c.OldColor, HadColor: c.HadColor, OldColor: c.Color}
-	}
-	m.recordAction(ActionHighlight, HighlightData{Cells: cells}, HighlightData{Cells: inverse})
 }
 
 func (m *model) beginLine(x, y int) bool {
@@ -366,11 +349,11 @@ func (m *model) extendLine(x, y int) {
 	} else if idx, lx, ly := canvas.FindNearestPointOnConnection(x, y); idx != -1 {
 		toX, toY = lx, ly
 	} else {
-		m.connectionWaypoints = append(m.connectionWaypoints, point{X: x, Y: y})
+		m.connectionWaypoints = append(m.connectionWaypoints, cv.Point{X: x, Y: y})
 		return
 	}
-	if conn, ok := canvas.AddConnectionWithWaypoints(m.connectionFrom, toID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints); ok {
-		m.recordAction(ActionAddConnection, conn, conn)
+	if _, ok := canvas.AddConnectionWithWaypoints(m.connectionFrom, toID, m.connectionFromX, m.connectionFromY, toX, toY, m.connectionWaypoints); ok {
+		m.recordAction()
 	}
 	m.successMessage = ""
 	m.cancelMouseLine()
@@ -388,11 +371,8 @@ func (m *model) deleteBoxByID(boxID int) {
 	if boxID < 0 || boxID >= len(canvas.Boxes()) {
 		return
 	}
-	box := canvas.Boxes()[boxID]
-	m.recordAction(ActionDeleteBox,
-		DeleteBoxData{Box: box, ID: boxID, Connections: canvas.GetConnectionsForBox(boxID), Highlights: canvas.GetHighlightsForBox(boxID)},
-		AddData{X: box.X, Y: box.Y, Text: box.GetText(), ID: box.ID})
 	canvas.DeleteBox(boxID)
+	m.recordAction()
 	m.ensureCursorInBounds()
 }
 
@@ -406,11 +386,8 @@ func (m *model) deleteBoxTooltip(boxID int) {
 	if boxID < 0 || boxID >= len(canvas.Boxes()) {
 		return
 	}
-	old := canvas.Boxes()[boxID].Tooltip
 	canvas.SetBoxTooltip(boxID, "")
-	m.recordAction(ActionEditTooltip,
-		EditData{ID: boxID, NewText: "", OldText: old},
-		EditData{ID: boxID, NewText: old, OldText: ""})
+	m.recordAction()
 }
 
 func (m *model) deleteTextByID(textID int) {
@@ -418,11 +395,8 @@ func (m *model) deleteTextByID(textID int) {
 	if textID < 0 || textID >= len(canvas.Texts()) {
 		return
 	}
-	text := canvas.Texts()[textID]
-	m.recordAction(ActionDeleteText,
-		DeleteTextData{Text: text, ID: textID, Highlights: canvas.GetHighlightsForText(textID)},
-		AddData{X: text.X, Y: text.Y, Text: text.GetText(), ID: text.ID})
 	canvas.DeleteText(textID)
+	m.recordAction()
 	m.ensureCursorInBounds()
 }
 
@@ -431,9 +405,8 @@ func (m *model) deleteConnByIdx(connIdx int) {
 	if connIdx < 0 || connIdx >= len(canvas.Connections()) {
 		return
 	}
-	conn := canvas.Connections()[connIdx]
-	canvas.RemoveSpecificConnection(conn)
-	m.recordAction(ActionDeleteConnection, conn, conn)
+	canvas.RemoveSpecificConnection(canvas.Connections()[connIdx])
+	m.recordAction()
 	m.successMessage = ""
 }
 
@@ -453,16 +426,14 @@ func (m *model) duplicateByID(isText bool, srcID int) {
 	if srcID < 0 {
 		return
 	}
-	data := DuplicateData{IsText: isText, SrcID: srcID, DX: dupOffsetX, DY: dupOffsetY}
+	dup := canvas.DuplicateBox
 	if isText {
-		data.NewID = canvas.DuplicateText(srcID, data.DX, data.DY)
-	} else {
-		data.NewID = canvas.DuplicateBox(srcID, data.DX, data.DY)
+		dup = canvas.DuplicateText
 	}
-	if data.NewID == -1 {
+	if dup(srcID, dupOffsetX, dupOffsetY) == -1 {
 		return
 	}
-	m.recordAction(ActionDuplicate, data, data)
+	m.recordAction()
 	m.successMessage = ""
 	m.ensureCursorInBounds()
 }

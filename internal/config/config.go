@@ -47,12 +47,10 @@ func (c *Config) Save(path string) error {
 func Load() *Config {
 	config := Defaults()
 
-	homeDir, err := os.UserHomeDir()
+	configPath, err := Path()
 	if err != nil {
 		return config
 	}
-
-	configPath := filepath.Join(homeDir, configName)
 	file, err := os.Open(configPath)
 	if err != nil {
 		return config
@@ -81,6 +79,7 @@ func Load() *Config {
 				continue
 			}
 			if strings.HasPrefix(value, "~") {
+				homeDir, _ := os.UserHomeDir()
 				value = filepath.Join(homeDir, strings.TrimPrefix(value, "~"))
 			}
 			if !filepath.IsAbs(value) {

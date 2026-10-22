@@ -191,10 +191,6 @@ func connectionsEqual(a, b Connection) bool {
 		slices.Equal(a.Waypoints, b.Waypoints)
 }
 
-func (c *Canvas) RestoreConnection(connection Connection) {
-	c.connections = append(c.connections, connection)
-}
-
 type connectionPathInfo struct {
 	connIdx int
 	points  []Point
@@ -559,27 +555,6 @@ func (c *Canvas) RestoreConnectionsSnapshot(snap []Connection) {
 	for i, conn := range snap {
 		c.connections[i] = cloneConn(conn)
 	}
-}
-
-func (c *Canvas) RestoreConnections(connections []Connection) {
-	for _, orig := range connections {
-		for i := range c.connections {
-			if c.connections[i].FromID == orig.FromID && c.connections[i].ToID == orig.ToID {
-				c.connections[i] = orig
-				break
-			}
-		}
-	}
-}
-
-func (c *Canvas) GetConnectionsForBox(boxID int) []Connection {
-	var result []Connection
-	for _, conn := range c.connections {
-		if conn.FromID == boxID || conn.ToID == boxID {
-			result = append(result, cloneConn(conn))
-		}
-	}
-	return result
 }
 
 func (c *Canvas) isPointInBoxScreen(x, y int, excludeFromID, excludeToID int, panX, panY int) bool {

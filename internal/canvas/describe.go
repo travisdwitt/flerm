@@ -99,9 +99,23 @@ func (c *Canvas) Describe(w io.Writer, name string) {
 	fmt.Fprintf(w, "%s, %s, %s, %s\n", count(len(c.boxes), "box"), count(len(c.connections), "connection"),
 		count(len(c.texts), "text label"), count(len(c.highlights), "highlighted cell"))
 
-	if len(c.boxes) == 0 && len(c.connections) == 0 && len(c.texts) == 0 {
+	if len(c.boxes) == 0 && len(c.connections) == 0 && len(c.texts) == 0 && len(c.highlights) == 0 {
 		fmt.Fprintln(w, "\n(empty chart)")
 		return
+	}
+
+	counts := make([]int, NumColors)
+	for _, color := range c.highlights {
+		counts[color]++
+	}
+	var parts []string
+	for color, n := range counts {
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", ColorNames[color], n))
+		}
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(w, "\nHighlighted cells by color: %s\n", strings.Join(parts, ", "))
 	}
 
 	for id, box := range c.boxes {

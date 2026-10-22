@@ -50,8 +50,51 @@ func (r *RenderResult) ApplyColors() []string {
 	return result
 }
 
-func (c *Canvas) RenderRaw(width, height int, selectedBox int, previewFromX, previewFromY int, previewWaypoints []Point, previewToX, previewToY int, panX, panY int, cursorX, cursorY int, showCursor bool, editBoxID int, editTextID int, editCursorPos int, editText string, editTextX int, editTextY int, selectionStartX, selectionStartY, selectionEndX, selectionEndY int, showBoxNumbers bool, editSelStart, editSelEnd int) *RenderResult {
-	width, height = max(width, 1), max(height, 1)
+type RenderOpts struct {
+	Width, Height                                                  int
+	SelectedBox                                                    int
+	PreviewFromX, PreviewFromY, PreviewToX, PreviewToY             int
+	PreviewWaypoints                                               []Point
+	PanX, PanY                                                     int
+	CursorX, CursorY                                               int
+	ShowCursor                                                     bool
+	EditBoxID, EditTextID                                          int
+	EditCursorPos                                                  int
+	EditText                                                       string
+	EditTextX, EditTextY                                           int
+	SelectionStartX, SelectionStartY, SelectionEndX, SelectionEndY int
+	ShowBoxNumbers                                                 bool
+	EditSelStart, EditSelEnd                                       int
+}
+
+func NewRenderOpts(width, height int) RenderOpts {
+	return RenderOpts{
+		Width: width, Height: height,
+		SelectedBox:  -1,
+		PreviewFromX: CoordUnset, PreviewFromY: CoordUnset, PreviewToX: CoordUnset, PreviewToY: CoordUnset,
+		CursorX: -1, CursorY: -1,
+		EditBoxID: -1, EditTextID: -1,
+		EditTextX: CoordUnset, EditTextY: CoordUnset,
+		SelectionStartX: CoordUnset, SelectionStartY: CoordUnset, SelectionEndX: CoordUnset, SelectionEndY: CoordUnset,
+		EditSelStart: -1, EditSelEnd: -1,
+	}
+}
+
+func (c *Canvas) RenderRaw(o RenderOpts) *RenderResult {
+	var (
+		width, height                                      = max(o.Width, 1), max(o.Height, 1)
+		selectedBox                                        = o.SelectedBox
+		previewFromX, previewFromY, previewToX, previewToY = o.PreviewFromX, o.PreviewFromY, o.PreviewToX, o.PreviewToY
+		previewWaypoints                                   = o.PreviewWaypoints
+		panX, panY                                         = o.PanX, o.PanY
+		cursorX, cursorY, showCursor                       = o.CursorX, o.CursorY, o.ShowCursor
+		editBoxID, editTextID                              = o.EditBoxID, o.EditTextID
+		editCursorPos, editText                            = o.EditCursorPos, o.EditText
+		editTextX, editTextY                               = o.EditTextX, o.EditTextY
+		selectionStartX, selectionStartY                   = o.SelectionStartX, o.SelectionStartY
+		selectionEndX, selectionEndY                       = o.SelectionEndX, o.SelectionEndY
+		showBoxNumbers, editSelStart, editSelEnd           = o.ShowBoxNumbers, o.EditSelStart, o.EditSelEnd
+	)
 	canvas := make([][]rune, height)
 	colorMap := make([][]int, height)
 	for i := range canvas {

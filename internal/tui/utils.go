@@ -1,6 +1,7 @@
 package tui
 
 import (
+	cv "flerm/internal/canvas"
 	"os/exec"
 	"runtime"
 
@@ -11,7 +12,7 @@ func (m *model) getCurrentBuffer() *Buffer {
 	return &m.buffers[m.currentBufferIndex]
 }
 
-func (m *model) getCanvas() *Canvas {
+func (m *model) getCanvas() *cv.Canvas {
 	return m.getCurrentBuffer().canvas
 }
 
@@ -37,12 +38,6 @@ func (m *model) unsavedChanges() bool {
 func (m *model) addNewBuffer(buf Buffer) {
 	m.buffers = append(m.buffers, buf)
 	m.currentBufferIndex = len(m.buffers) - 1
-}
-
-func (m *model) recordAction(actionType ActionType, data, inverse any) {
-	buf := m.getCurrentBuffer()
-	buf.undoStack = append(buf.undoStack, Action{Type: actionType, Data: data, Inverse: inverse})
-	buf.redoStack = buf.redoStack[:0]
 }
 
 func (m *model) confirm(action ConfirmAction, id int) {

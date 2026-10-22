@@ -33,7 +33,9 @@ func (c *Canvas) ExportToPNG(filename string) error {
 	cols := maxX - minX + pngPadding + 1
 	rows := maxY - minY + pngPadding + 1
 
-	r := c.RenderRaw(cols, rows, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, minX, minY, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
+	opts := NewRenderOpts(cols, rows)
+	opts.PanX, opts.PanY = minX, minY
+	r := c.RenderRaw(opts)
 
 	dc := gg.NewContext(int(float64(cols)*pngCharW), int(float64(rows)*pngCharH))
 	dc.SetColor(pngBG)

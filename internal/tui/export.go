@@ -27,7 +27,9 @@ func (m *model) exportVisualTXT(filename string) error {
 	width := maxX - minX + padding + 1
 	height := maxY - minY + padding + 1
 
-	r := canvas.RenderRaw(width, height, -1, CoordUnset, CoordUnset, nil, CoordUnset, CoordUnset, minX, minY, -1, -1, false, -1, -1, 0, "", CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, CoordUnset, false, -1, -1)
+	opts := cv.NewRenderOpts(width, height)
+	opts.PanX, opts.PanY = minX, minY
+	r := canvas.RenderRaw(opts)
 	for _, row := range r.Canvas {
 		fmt.Fprintln(file, strings.TrimRight(string(row), " "))
 	}

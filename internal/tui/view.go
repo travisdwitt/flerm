@@ -150,8 +150,8 @@ func (m model) View() string {
 	renderHeight := max(m.height-1-m.bufferBarOffset(), 1)
 	panX, panY := m.getPanOffset()
 
-	previewFromX, previewFromY, previewToX, previewToY := CoordUnset, CoordUnset, CoordUnset, CoordUnset
-	var previewWaypoints []point
+	previewFromX, previewFromY, previewToX, previewToY := cv.CoordUnset, cv.CoordUnset, cv.CoordUnset, cv.CoordUnset
+	var previewWaypoints []cv.Point
 	if m.connectionFrom != -1 || m.connectionFromLine != -1 {
 		previewFromX, previewFromY = m.connectionFromX, m.connectionFromY
 		previewWaypoints = m.connectionWaypoints
@@ -164,9 +164,9 @@ func (m model) View() string {
 
 	editBoxID, editTextID, editTextX, editTextY := m.editTarget()
 
-	selectionStartX, selectionStartY := CoordUnset, CoordUnset
-	selectionEndX, selectionEndY := CoordUnset, CoordUnset
-	if m.mode == ModeMultiSelect && m.selectionStartX != CoordUnset && m.selectionStartY != CoordUnset {
+	selectionStartX, selectionStartY := cv.CoordUnset, cv.CoordUnset
+	selectionEndX, selectionEndY := cv.CoordUnset, cv.CoordUnset
+	if m.mode == ModeMultiSelect && m.selectionStartX != cv.CoordUnset && m.selectionStartY != cv.CoordUnset {
 		selectionStartX, selectionStartY = m.selectionStartX, m.selectionStartY
 		selectionEndX, selectionEndY = m.cursorX+panX, m.cursorY+panY
 	}
@@ -176,7 +176,17 @@ func (m model) View() string {
 		editSelStart, editSelEnd = m.editSelectionStart, m.editSelectionEnd
 	}
 
-	r := m.getCanvas().RenderRaw(renderWidth, renderHeight, selectedBox, previewFromX, previewFromY, previewWaypoints, previewToX, previewToY, panX, panY, cursorX, cursorY, showCursor, editBoxID, editTextID, m.editCursorPos, m.editText, editTextX, editTextY, selectionStartX, selectionStartY, selectionEndX, selectionEndY, m.mode == ModeBoxJump || m.allTooltips, editSelStart, editSelEnd)
+	r := m.getCanvas().RenderRaw(cv.RenderOpts{
+		Width: renderWidth, Height: renderHeight, SelectedBox: selectedBox,
+		PreviewFromX: previewFromX, PreviewFromY: previewFromY, PreviewToX: previewToX, PreviewToY: previewToY,
+		PreviewWaypoints: previewWaypoints, PanX: panX, PanY: panY,
+		CursorX: cursorX, CursorY: cursorY, ShowCursor: showCursor,
+		EditBoxID: editBoxID, EditTextID: editTextID, EditCursorPos: m.editCursorPos, EditText: m.editText,
+		EditTextX: editTextX, EditTextY: editTextY,
+		SelectionStartX: selectionStartX, SelectionStartY: selectionStartY, SelectionEndX: selectionEndX, SelectionEndY: selectionEndY,
+		ShowBoxNumbers: m.mode == ModeBoxJump || m.allTooltips,
+		EditSelStart:   editSelStart, EditSelEnd: editSelEnd,
+	})
 
 	m.overlaySelection(r, panX, panY)
 	if m.mode == ModeTooltipEdit {
@@ -247,7 +257,23 @@ func minimapArrow(dx, dy int) rune {
 	return '↘'
 }
 
-func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
+func setCell(r *cv.RenderResult, px, py int, ch rune, color int) {
+	if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
+		return
+	}
+	r.Canvas[py][px] = ch
+	r.ColorMap[py][px] = color
+}
+
+func hframe(r *cv.RenderResult, x, y, w int, left, right rune, color int) {
+	setCell(r, x, y, left, color)
+	for i := 1; i < w-1; i++ {
+		setCell(r, x+i, y, '─', color)
+	}
+	setCell(r, x+w-1, y, right, color)
+}
+
+func (m model) overlayMinimap(r *cv.RenderResult, panX, panY int) {
 	w, h := min(minimapW, r.Width), min(minimapH, r.Height)
 	if w < 5 || h < 5 {
 		return
@@ -255,34 +281,19 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 	innerW, innerH := w-2, h-2
 	originX, originY := r.Width-w, 0
 
-	cell := func(px, py int, ch rune, color int) {
-		if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
-			return
-		}
-		r.Canvas[py][px] = ch
-		r.ColorMap[py][px] = color
-	}
-	hline := func(py int, left, right rune) {
-		cell(originX, py, left, colorMenuBorder)
-		for i := 0; i < innerW; i++ {
-			cell(originX+1+i, py, '─', colorMenuBorder)
-		}
-		cell(originX+w-1, py, right, colorMenuBorder)
-	}
-
-	hline(originY, '┌', '┐')
-	hline(originY+h-1, '└', '┘')
+	hframe(r, originX, originY, w, '┌', '┐', cv.ColorMenuBorder)
+	hframe(r, originX, originY+h-1, w, '└', '┘', cv.ColorMenuBorder)
 	for i := 0; i < innerH; i++ {
 		py := originY + 1 + i
-		cell(originX, py, '│', colorMenuBorder)
+		setCell(r, originX, py, '│', cv.ColorMenuBorder)
 		for j := 0; j < innerW; j++ {
-			cell(originX+1+j, py, ' ', -1)
+			setCell(r, originX+1+j, py, ' ', -1)
 		}
-		cell(originX+w-1, py, '│', colorMenuBorder)
+		setCell(r, originX+w-1, py, '│', cv.ColorMenuBorder)
 	}
 
 	for i, ch := range minimapLabel {
-		cell(originX+w-len(minimapLabel)+i, originY+h, ch, 7)
+		setCell(r, originX+w-len(minimapLabel)+i, originY+h, ch, 7)
 	}
 
 	canvas := m.getCanvas()
@@ -297,7 +308,7 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 		ch := minimapArrow((minX+maxX)/2-(vx0+vx1)/2, (minY+maxY)/2-(vy0+vy1)/2)
 		py := originY + 1 + innerH/2
 		for i := -1; i <= 1; i++ {
-			cell(originX+1+innerW/2+i, py, ch, colorMouseSelect)
+			setCell(r, originX+1+innerW/2+i, py, ch, cv.ColorMouseSelect)
 		}
 		return
 	}
@@ -312,9 +323,9 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 	mapX := func(wx int) int { return offX + min(max((wx-bx0)/scale, 0), useW-1) }
 	mapY := func(wy int) int { return offY + min(max((wy-by0)/scale, 0), useH-1) }
 
-	plot := func(cells []point, ch rune) {
+	plot := func(cells []cv.Point, ch rune) {
 		for _, c := range cells {
-			cell(originX+1+mapX(c.X), originY+1+mapY(c.Y), ch, -1)
+			setCell(r, originX+1+mapX(c.X), originY+1+mapY(c.Y), ch, -1)
 		}
 	}
 	for i := range canvas.Connections() {
@@ -328,7 +339,7 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 		x1, y1 := mapX(box.X+box.Width-1), mapY(box.Y+box.Height-1)
 		for y := y0; y <= y1; y++ {
 			for x := x0; x <= x1; x++ {
-				cell(originX+1+x, originY+1+y, minimapFrame(x-x0, y-y0, x1-x0+1, y1-y0+1), -1)
+				setCell(r, originX+1+x, originY+1+y, minimapFrame(x-x0, y-y0, x1-x0+1, y1-y0+1), -1)
 			}
 		}
 	}
@@ -338,7 +349,7 @@ func (m model) overlayMinimap(r *RenderResult, panX, panY int) {
 	for y := y0; y <= y1; y++ {
 		for x := x0; x <= x1; x++ {
 			if ch := minimapFrame(x-x0, y-y0, x1-x0+1, y1-y0+1); ch != ' ' {
-				cell(originX+1+x, originY+1+y, ch, colorMouseSelect)
+				setCell(r, originX+1+x, originY+1+y, ch, cv.ColorMouseSelect)
 			}
 		}
 	}
@@ -362,10 +373,10 @@ func editCaret(text string, pos, selStart, selEnd int) string {
 }
 
 func colorLabel(color int) string {
-	if color < 0 || color >= numColors {
+	if color < 0 || color >= cv.NumColors {
 		return ""
 	}
-	name := " " + colorNames[color]
+	name := " " + cv.ColorNames[color]
 	swatch := cv.ColorFG(color)
 	if swatch == "" {
 		return name
@@ -440,7 +451,7 @@ func (m model) statusLine() string {
 		}
 		return "Mode: MOVE | " + keys
 	case ModeMultiSelect:
-		if m.selectionStartX == CoordUnset || m.selectionStartY == CoordUnset {
+		if m.selectionStartX == cv.CoordUnset || m.selectionStartY == cv.CoordUnset {
 			return "Mode: MULTI-SELECT | drag to select, or Enter to start a selection at the cursor, Esc=cancel"
 		}
 		return "Mode: MULTI-SELECT | hjkl/arrows=draw selection, Enter=select and move, Esc=cancel"
@@ -496,7 +507,7 @@ func (m model) statusLine() string {
 		status += " | " + obj
 	}
 	if m.highlightMode {
-		status += fmt.Sprintf(" | Color:%s (%d/%d)", colorLabel(m.selectedColor), m.selectedColor+1, numColors)
+		status += fmt.Sprintf(" | Color:%s (%d/%d)", colorLabel(m.selectedColor), m.selectedColor+1, cv.NumColors)
 	}
 	if m.connectionFrom != -1 {
 		status += fmt.Sprintf(" | Connection from box %d (select target)", m.connectionFrom)
@@ -587,7 +598,7 @@ func (m *model) scrollTooltipSidebar(delta int) {
 	m.tooltipScroll = max(0, min(m.tooltipScroll+delta, max(0, rows-m.sidebarInnerH())))
 }
 
-func (m model) overlayTooltipSidebar(r *RenderResult) {
+func (m model) overlayTooltipSidebar(r *cv.RenderResult) {
 	w := min(sidebarW, r.Width)
 	top := 0
 	if m.minimap {
@@ -600,60 +611,45 @@ func (m model) overlayTooltipSidebar(r *RenderResult) {
 	innerW, innerH := w-2, h-2
 	originX := r.Width - w
 
-	cell := func(px, py int, ch rune, color int) {
-		if py < 0 || py >= len(r.Canvas) || px < 0 || px >= len(r.Canvas[py]) {
-			return
-		}
-		r.Canvas[py][px] = ch
-		r.ColorMap[py][px] = color
-	}
-	hline := func(py int, left, right rune) {
-		cell(originX, py, left, colorTooltipBorder)
-		for i := 0; i < innerW; i++ {
-			cell(originX+1+i, py, '─', colorTooltipBorder)
-		}
-		cell(originX+w-1, py, right, colorTooltipBorder)
-	}
-
 	rows := m.tooltipSidebarRows(innerW - 2)
 	scroll := min(m.tooltipScroll, max(0, len(rows)-innerH))
 
-	hline(top, '┌', '┐')
-	hline(top+h-1, '└', '┘')
+	hframe(r, originX, top, w, '┌', '┐', cv.ColorTooltipBorder)
+	hframe(r, originX, top+h-1, w, '└', '┘', cv.ColorTooltipBorder)
 	for i := 0; i < innerH; i++ {
 		py := top + 1 + i
-		cell(originX, py, '│', colorTooltipBorder)
+		setCell(r, originX, py, '│', cv.ColorTooltipBorder)
 		row := ""
 		if idx := scroll + i; idx < len(rows) {
 			row = rows[idx]
 		}
 		for j := 0; j < innerW; j++ {
-			cell(originX+1+j, py, ' ', colorTooltipText)
+			setCell(r, originX+1+j, py, ' ', cv.ColorTooltipText)
 		}
 		for j, ch := range []rune(row) {
 			if j+1 < innerW {
-				color := colorTooltipText
+				color := cv.ColorTooltipText
 				if (ch == '[' || ch == ']') && strings.HasPrefix(row, "Box [") {
-					color = colorTooltipBracket
+					color = cv.ColorTooltipBracket
 				}
-				cell(originX+2+j, py, ch, color)
+				setCell(r, originX+2+j, py, ch, color)
 			}
 		}
-		cell(originX+w-1, py, '│', colorTooltipBorder)
+		setCell(r, originX+w-1, py, '│', cv.ColorTooltipBorder)
 	}
 	if len(rows) > innerH {
 		thumb := max(1, innerH*innerH/len(rows))
 		start := scroll * (innerH - thumb) / (len(rows) - innerH)
 		for i := 0; i < thumb; i++ {
-			cell(originX+w-1, top+1+start+i, '█', colorTooltipBorder)
+			setCell(r, originX+w-1, top+1+start+i, '█', cv.ColorTooltipBorder)
 		}
 	}
 	for i, ch := range sidebarLabel {
-		cell(originX+w-len(sidebarLabel)-1+i, top, ch, colorTooltipBorder)
+		setCell(r, originX+w-len(sidebarLabel)-1+i, top, ch, cv.ColorTooltipBorder)
 	}
 }
 
-func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
+func (m model) overlayTooltipOnRenderResult(r *cv.RenderResult) {
 	charHighlights := map[int]int{}
 	if m.tooltipBoxID >= 0 {
 		charHighlights = m.getCanvas().GetBoxContentHighlights(m.tooltipBoxID)
@@ -755,9 +751,9 @@ func (m model) overlayTooltipOnRenderResult(r *RenderResult) {
 			color, highlighted := charHighlights[c.origCharIdx]
 			switch {
 			case m.tooltipStyled && (i == 0 || i == len(lines)-1 || j == 0 || j == len(line)-1):
-				r.ColorMap[y][x] = colorTooltipBorder
+				r.ColorMap[y][x] = cv.ColorTooltipBorder
 			case m.tooltipStyled:
-				r.ColorMap[y][x] = colorTooltipText
+				r.ColorMap[y][x] = cv.ColorTooltipText
 			case highlighted && c.origCharIdx >= 0:
 				r.ColorMap[y][x] = color
 			}
@@ -787,7 +783,7 @@ func frameCell(relX, relY, w, h int) (string, bool) {
 
 type startupLayout struct {
 	logo      []string
-	logoInk   map[point]string
+	logoInk   map[cv.Point]string
 	logoBase  string
 	menuItems []string
 	logoW     int
@@ -874,7 +870,7 @@ func (m model) renderStartupMenu() string {
 					cell = " "
 					if logoX >= 0 && logoX < len(line) {
 						ink := l.logoBase
-						if c, ok := l.logoInk[point{X: logoX, Y: relY - 2}]; ok {
+						if c, ok := l.logoInk[cv.Point{X: logoX, Y: relY - 2}]; ok {
 							ink = c
 						}
 						cell = ink + string(line[logoX]) + cv.Ansi(ansiReset)
@@ -893,7 +889,7 @@ func (m model) renderStartupMenu() string {
 				}
 			}
 			if inside && (!inBox || bleeds) {
-				if glyph, ok := particles[point{X: x, Y: y}]; ok {
+				if glyph, ok := particles[cv.Point{X: x, Y: y}]; ok {
 					cell = glyph
 				}
 			}

@@ -1,6 +1,9 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	cv "flerm/internal/canvas"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 var arrowDeltas = map[string][2]int{
 	"h": {-1, 0}, "left": {-1, 0}, "H": {-2, 0}, "shift+left": {-2, 0},
@@ -36,12 +39,12 @@ func (m *model) moveCursor(dx, dy int) {
 		return
 	}
 	x, y := m.worldCursor()
-	cells := []point{{X: x, Y: y}}
+	cells := []cv.Point{{X: x, Y: y}}
 	if mx, my := x-oldX, y-oldY; (abs(dx) > 1 || abs(dy) > 1) && (mx == 0) != (my == 0) {
 		sx, sy := sign(mx), sign(my)
 		for cx, cy := oldX+sx, oldY+sy; cx != x || cy != y; cx, cy = cx+sx, cy+sy {
-			cells = append(cells, point{X: cx, Y: cy})
+			cells = append(cells, cv.Point{X: cx, Y: cy})
 		}
 	}
-	m.recordHighlights(m.paintCells(cells, m.selectedColor))
+	m.recordIf(m.paintCells(cells, m.selectedColor))
 }

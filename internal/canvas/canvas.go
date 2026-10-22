@@ -1,6 +1,10 @@
 package canvas
 
-import "slices"
+import (
+	"maps"
+	"math"
+	"slices"
+)
 
 type Canvas struct {
 	boxes       []Box
@@ -76,36 +80,34 @@ func (c *Canvas) GetFullBounds() (int, int, int, int) {
 }
 
 func (c *Canvas) AddBox(x, y int, text string) {
-	c.AddBoxWithID(x, y, text, len(c.boxes))
+	box := Box{X: x, Y: y, ID: len(c.boxes), Color: -1}
+	box.SetText(text)
+	c.boxes = append(c.boxes, box)
 }
 
 func (c *Canvas) AddText(x, y int, text string) {
-	c.AddTextWithID(x, y, text, len(c.texts))
+	t := Text{X: x, Y: y, ID: len(c.texts), Color: -1}
+	t.SetText(text)
+	c.texts = append(c.texts, t)
 }
 
-func (c *Canvas) AddTextWithID(x, y int, text string, id int) {
-	textObj := Text{X: x, Y: y, ID: id, Color: -1}
-	textObj.SetText(text)
-	c.texts = append(c.texts, textObj)
-	for i := id + 1; i < len(c.texts); i++ {
-		c.texts[i].ID = i
+func (c *Canvas) Clone() *Canvas {
+	n := &Canvas{
+		boxes:       slices.Clone(c.boxes),
+		connections: slices.Clone(c.connections),
+		texts:       slices.Clone(c.texts),
+		highlights:  maps.Clone(c.highlights),
 	}
-}
-
-func (c *Canvas) AddBoxWithID(x, y int, text string, id int) {
-	box := Box{X: x, Y: y, ID: id, Color: -1}
-	box.SetText(text)
-	if id >= len(c.boxes) {
-		for len(c.boxes) <= id {
-			c.boxes = append(c.boxes, Box{})
-		}
-		c.boxes[id] = box
-		return
+	for i := range n.boxes {
+		n.boxes[i].Lines = slices.Clone(n.boxes[i].Lines)
 	}
-	c.boxes = slices.Insert(c.boxes, id, box)
-	for i := id + 1; i < len(c.boxes); i++ {
-		c.boxes[i].ID = i
+	for i := range n.connections {
+		n.connections[i].Waypoints = slices.Clone(n.connections[i].Waypoints)
 	}
+	for i := range n.texts {
+		n.texts[i].Lines = slices.Clone(n.texts[i].Lines)
+	}
+	return n
 }
 
 func (c *Canvas) GetBoxAt(x, y int) int {
@@ -314,12 +316,6 @@ func (c *Canvas) MoveText(id, deltaX, deltaY int) {
 	}
 }
 
-func (c *Canvas) SetTextPosition(id, x, y int) {
-	if t := c.textPtr(id); t != nil {
-		t.X, t.Y = x, y
-	}
-}
-
 func (c *Canvas) CycleBoxZLevel(id int) {
 	if b := c.boxPtr(id); b != nil {
 		b.ZLevel = (b.ZLevel + 1) % numZLevels
@@ -406,3 +402,41 @@ func (c *Canvas) DuplicateText(id, dx, dy int) int {
 	c.duplicateHighlights(cells, dx, dy)
 	return t.ID
 }
+
+type Point struct {
+	X, Y int
+}
+
+func (c *Canvas) Boxes() []Box { return c.boxes }
+
+func (c *Canvas) Texts() []Text { return c.texts }
+
+func (c *Canvas) Connections() []Connection { return c.connections }
+
+type BorderStyle int
+
+const (
+	BorderStyleASCII BorderStyle = iota
+	BorderStyleSingle
+	BorderStyleDouble
+	BorderStyleRounded
+)
+
+const (
+	boxInsetX             = 2
+	minBoxWidth           = 8
+	minBoxHeight          = 3
+	numZLevels            = 4
+	NumColors             = 16
+	colorEditSelect       = 100
+	ColorMouseSelect      = 101
+	ColorMenuSelect       = 102
+	ColorMenuBorder       = 103
+	ColorTooltipText      = 104
+	ColorTooltipBorder    = 105
+	ColorTooltipBracket   = 106
+	ColorTooltipMark      = 11
+	ColorBoxNumberBracket = 10
+)
+
+const CoordUnset = math.MinInt32

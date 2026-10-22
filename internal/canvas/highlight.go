@@ -20,33 +20,36 @@ func (c *Canvas) ClearHighlight(x, y int) {
 	delete(c.highlights, Point{x, y})
 }
 
-func (c *Canvas) GetBoxCells(boxID int) []Point {
-	box, ok := c.box(boxID)
-	if !ok {
-		return nil
+func (c *Canvas) boxCells(id int, f func(Box) []Point) []Point {
+	if box, ok := c.box(id); ok {
+		return f(box)
 	}
-	cells := make([]Point, 0, box.Width*box.Height)
-	for y := box.Y; y < box.Y+box.Height; y++ {
-		for x := box.X; x < box.X+box.Width; x++ {
-			cells = append(cells, Point{x, y})
-		}
-	}
-	return cells
+	return nil
 }
 
-func (c *Canvas) GetBoxBorderCells(boxID int) []Point {
-	box, ok := c.box(boxID)
-	if !ok {
-		return nil
-	}
-	cells := make([]Point, 0, 2*(box.Width+box.Height))
-	for x := box.X; x < box.X+box.Width; x++ {
-		cells = append(cells, Point{x, box.Y}, Point{x, box.Y + box.Height - 1})
-	}
-	for y := box.Y + 1; y < box.Y+box.Height-1; y++ {
-		cells = append(cells, Point{box.X, y}, Point{box.X + box.Width - 1, y})
-	}
-	return cells
+func (c *Canvas) GetBoxCells(id int) []Point {
+	return c.boxCells(id, func(b Box) []Point {
+		cells := make([]Point, 0, b.Width*b.Height)
+		for y := b.Y; y < b.Y+b.Height; y++ {
+			for x := b.X; x < b.X+b.Width; x++ {
+				cells = append(cells, Point{x, y})
+			}
+		}
+		return cells
+	})
+}
+
+func (c *Canvas) GetBoxBorderCells(id int) []Point {
+	return c.boxCells(id, func(b Box) []Point {
+		cells := make([]Point, 0, 2*(b.Width+b.Height))
+		for x := b.X; x < b.X+b.Width; x++ {
+			cells = append(cells, Point{x, b.Y}, Point{x, b.Y + b.Height - 1})
+		}
+		for y := b.Y + 1; y < b.Y+b.Height-1; y++ {
+			cells = append(cells, Point{b.X, y}, Point{b.X + b.Width - 1, y})
+		}
+		return cells
+	})
 }
 
 func titleDividerY(box Box) (int, bool) {
@@ -56,39 +59,37 @@ func titleDividerY(box Box) (int, bool) {
 	return box.Y + 1 + len(strings.Split(box.Title, "\n")), true
 }
 
-func (c *Canvas) GetBoxTitleDividerCells(boxID int) []Point {
-	box, ok := c.box(boxID)
+func dividerCells(b Box) []Point {
+	dividerY, ok := titleDividerY(b)
 	if !ok {
 		return nil
 	}
-	dividerY, ok := titleDividerY(box)
-	if !ok {
-		return nil
-	}
-	cells := make([]Point, 0, box.Width)
-	for x := box.X + 1; x < box.X+box.Width-1; x++ {
+	cells := make([]Point, 0, b.Width)
+	for x := b.X + 1; x < b.X+b.Width-1; x++ {
 		cells = append(cells, Point{x, dividerY})
 	}
 	return cells
 }
 
-func (c *Canvas) GetBoxTitleBarCells(boxID int) []Point {
-	box, ok := c.box(boxID)
-	if !ok {
-		return nil
-	}
-	dividerY, ok := titleDividerY(box)
-	if !ok {
-		return nil
-	}
-	cells := make([]Point, 0)
-	for x := box.X; x < box.X+box.Width; x++ {
-		cells = append(cells, Point{x, box.Y})
-	}
-	for y := box.Y + 1; y <= dividerY; y++ {
-		cells = append(cells, Point{box.X, y}, Point{box.X + box.Width - 1, y})
-	}
-	return append(cells, c.GetBoxTitleDividerCells(boxID)...)
+func (c *Canvas) GetBoxTitleDividerCells(id int) []Point {
+	return c.boxCells(id, dividerCells)
+}
+
+func (c *Canvas) GetBoxTitleBarCells(id int) []Point {
+	return c.boxCells(id, func(b Box) []Point {
+		dividerY, ok := titleDividerY(b)
+		if !ok {
+			return nil
+		}
+		cells := make([]Point, 0)
+		for x := b.X; x < b.X+b.Width; x++ {
+			cells = append(cells, Point{x, b.Y})
+		}
+		for y := b.Y + 1; y <= dividerY; y++ {
+			cells = append(cells, Point{b.X, y}, Point{b.X + b.Width - 1, y})
+		}
+		return append(cells, dividerCells(b)...)
+	})
 }
 
 func lineCells(lines []string, x, y, maxLen int) []Point {
@@ -105,23 +106,19 @@ func lineCells(lines []string, x, y, maxLen int) []Point {
 	return cells
 }
 
-func (c *Canvas) GetBoxTitleTextCells(boxID int) []Point {
-	box, ok := c.box(boxID)
-	if !ok {
-		return nil
-	}
-	if box.Title == "" {
-		return nil
-	}
-	return lineCells(strings.Split(box.Title, "\n"), box.X+boxInsetX, box.Y+1, box.Width-2*boxInsetX)
+func (c *Canvas) GetBoxTitleTextCells(id int) []Point {
+	return c.boxCells(id, func(b Box) []Point {
+		if b.Title == "" {
+			return nil
+		}
+		return lineCells(strings.Split(b.Title, "\n"), b.X+boxInsetX, b.Y+1, b.Width-2*boxInsetX)
+	})
 }
 
-func (c *Canvas) GetBoxContentTextCells(boxID int) []Point {
-	box, ok := c.box(boxID)
-	if !ok {
-		return nil
-	}
-	return lineCells(box.Lines, box.X+boxInsetX, box.Y+contentStartLine(box), box.Width-2*boxInsetX)
+func (c *Canvas) GetBoxContentTextCells(id int) []Point {
+	return c.boxCells(id, func(b Box) []Point {
+		return lineCells(b.Lines, b.X+boxInsetX, b.Y+contentStartLine(b), b.Width-2*boxInsetX)
+	})
 }
 
 func (c *Canvas) GetTextCells(textID int) []Point {
@@ -130,24 +127,6 @@ func (c *Canvas) GetTextCells(textID int) []Point {
 		return nil
 	}
 	return lineCells(t.Lines, t.X, t.Y, -1)
-}
-
-func (c *Canvas) highlightsForCells(cells []Point) []HighlightCell {
-	highlights := make([]HighlightCell, 0)
-	for _, cell := range cells {
-		if colorIndex, exists := c.highlights[cell]; exists {
-			highlights = append(highlights, HighlightCell{X: cell.X, Y: cell.Y, Color: colorIndex, HadColor: true, OldColor: colorIndex})
-		}
-	}
-	return highlights
-}
-
-func (c *Canvas) GetHighlightsForBox(boxID int) []HighlightCell {
-	return c.highlightsForCells(c.GetBoxCells(boxID))
-}
-
-func (c *Canvas) GetHighlightsForText(textID int) []HighlightCell {
-	return c.highlightsForCells(c.GetTextCells(textID))
 }
 
 func (c *Canvas) GetBoxContentHighlights(boxID int) map[int]int {

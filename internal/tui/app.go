@@ -61,8 +61,8 @@ func initialModel() model {
 		connectionFrom:     -1,
 		connectionFromLine: -1,
 		config:             cfg,
-		selectionStartX:    CoordUnset,
-		selectionStartY:    CoordUnset,
+		selectionStartX:    cv.CoordUnset,
+		selectionStartY:    cv.CoordUnset,
 		selBox:             -1,
 		selText:            -1,
 		selConn:            -1,
@@ -88,7 +88,7 @@ func (m *model) resetView() {
 }
 
 func (m *model) newChart() {
-	*m.getCurrentBuffer() = Buffer{canvas: cv.NewCanvas()}
+	*m.getCurrentBuffer() = newBuffer(cv.NewCanvas())
 	m.resetView()
 }
 
@@ -118,7 +118,8 @@ func (m *model) openChart(path string) error {
 		return err
 	}
 	m.rememberChart(path)
-	buf := Buffer{canvas: canvas, filename: path, panX: panX, panY: panY}
+	buf := newBuffer(canvas)
+	buf.filename, buf.panX, buf.panY = path, panX, panY
 	switch {
 	case m.fromStartup:
 		m.buffers[0] = buf

@@ -88,7 +88,7 @@ func main() {
 	os.Args = append(os.Args[:1], rest...)
 
 	noResume := flag.Bool("no-resume", false, "Don't offer the r:esume function in the main Flerm menu.")
-	describe := flag.String("describe", "", "Print a chart's details in plain text so screen readers can describe it (experimental).")
+	describe := flag.String("describe", "", "Print a chart's details in plain text so screen readers can describe it.")
 	setup := flag.Bool("setup", false, "Create ~/.flermrc config with all the defaults pre-set.")
 	flag.Parse()
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	cv "flerm/internal/canvas"
 	"strings"
 	"unicode/utf8"
 )
@@ -58,13 +59,13 @@ func rowColToLinear(row, col int, text string) int {
 func (m *model) editTarget() (editBoxID, editTextID, editTextX, editTextY int) {
 	switch m.mode {
 	case ModeEditing:
-		return m.selectedBox, m.selectedText, CoordUnset, CoordUnset
+		return m.selectedBox, m.selectedText, cv.CoordUnset, cv.CoordUnset
 	case ModeTextInput:
 		return -1, -1, m.textInputX, m.textInputY
 	case ModeTitleEdit:
-		return m.selectedBox, -2, CoordUnset, CoordUnset
+		return m.selectedBox, -2, cv.CoordUnset, cv.CoordUnset
 	}
-	return -1, -1, CoordUnset, CoordUnset
+	return -1, -1, cv.CoordUnset, cv.CoordUnset
 }
 
 func (m *model) editPosAt(screenX, screenY int) (int, bool) {
@@ -104,35 +105,21 @@ func (m *model) syncEditTarget() {
 func (m *model) finishEdit() {
 	canvas := m.getCanvas()
 	changed := m.editText != m.originalEditText
+	validBox := m.selectedBox >= 0 && m.selectedBox < len(canvas.Boxes())
 	switch m.mode {
 	case ModeEditing:
-		if changed {
-			typ, id := ActionEditBox, m.selectedBox
-			if id == -1 {
-				typ, id = ActionEditText, m.selectedText
-			}
-			m.recordAction(typ,
-				EditData{ID: id, NewText: m.editText, OldText: m.originalEditText},
-				EditData{ID: id, NewText: m.originalEditText, OldText: m.editText})
-		}
+		m.recordIf(changed)
 	case ModeTextInput:
 		if m.editText != "" {
 			canvas.AddText(m.textInputX, m.textInputY, m.editText)
+			m.recordAction()
 		}
 	case ModeTitleEdit:
 		canvas.SetBoxTitle(m.selectedBox, m.editText)
-		if changed && m.selectedBox >= 0 && m.selectedBox < len(canvas.Boxes()) {
-			m.recordAction(ActionEditTitle,
-				EditData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText},
-				EditData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText})
-		}
+		m.recordIf(changed && validBox)
 	case ModeTooltipEdit:
 		canvas.SetBoxTooltip(m.selectedBox, m.editText)
-		if changed && m.selectedBox >= 0 && m.selectedBox < len(canvas.Boxes()) {
-			m.recordAction(ActionEditTooltip,
-				EditData{ID: m.selectedBox, NewText: m.editText, OldText: m.originalEditText},
-				EditData{ID: m.selectedBox, NewText: m.originalEditText, OldText: m.editText})
-		}
+		m.recordIf(changed && validBox)
 	}
 	m.mode = ModeNormal
 	m.editText, m.originalEditText = "", ""

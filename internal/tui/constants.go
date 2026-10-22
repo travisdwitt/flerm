@@ -61,26 +61,3 @@ const (
 	ConfirmChooseExportType
 	ConfirmDeleteBoxOrTooltip
 )
-
-type ActionType int
-
-const (
-	ActionAddBox ActionType = iota
-	ActionDeleteBox
-	ActionEditBox
-	ActionEditText
-	ActionDeleteText
-	ActionResizeBox
-	ActionMoveBox
-	ActionMoveText
-	ActionAddConnection
-	ActionDeleteConnection
-	ActionCycleArrow
-	ActionHighlight
-	ActionChangeBorderStyle
-	ActionEditTitle
-	ActionEditTooltip
-	ActionSetColor
-	ActionDuplicate
-	ActionGroupMove
-)

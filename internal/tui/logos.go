@@ -227,7 +227,7 @@ var christmasLogo = []string{
 	"  @  |__| |__||_____|__| |__|__|__|",
 }
 
-var christmasLogoInk = map[point]string{
+var christmasLogoInk = map[cv.Point]string{
 	{X: 3, Y: 0}: ansiRed, {X: 4, Y: 0}: ansiRed, {X: 5, Y: 0}: ansiRed, {X: 6, Y: 0}: ansiRed,
 	{X: 2, Y: 1}: ansiRed,
 	{X: 2, Y: 2}: ansiRed,
@@ -246,7 +246,7 @@ var halloweenLogo = []string{
 	"  |;,| |,;| \\__#####_/|:;| |.;|;.|,;|",
 }
 
-var halloweenLogoInk = map[point]string{
+var halloweenLogoInk = map[cv.Point]string{
 	{X: 13, Y: 0}: ansiWhite, {X: 14, Y: 0}: ansiWhite, {X: 15, Y: 0}: ansiWhite, {X: 16, Y: 0}: ansiWhite,
 	{X: 17, Y: 0}: ansiWhite, {X: 18, Y: 0}: ansiWhite, {X: 19, Y: 0}: ansiWhite, {X: 20, Y: 0}: ansiWhite,
 	{X: 11, Y: 1}: ansiWhite, {X: 12, Y: 1}: ansiWhite, {X: 21, Y: 1}: ansiWhite,
@@ -270,7 +270,7 @@ var newYearLogo = []string{
 	" |__| |__||_____|__| |__|__|__| ",
 }
 
-var newYearLogoInk = map[point]string{
+var newYearLogoInk = map[cv.Point]string{
 	{X: 14, Y: 0}: ansiWhite, {X: 15, Y: 0}: ansiWhite, {X: 16, Y: 0}: ansiWhite, {X: 17, Y: 0}: ansiWhite,
 	{X: 18, Y: 0}: ansiWhite, {X: 19, Y: 0}: ansiWhite, {X: 20, Y: 0}: ansiWhite, {X: 21, Y: 0}: ansiWhite,
 	{X: 22, Y: 0}: ansiWhite, {X: 23, Y: 0}: ansiWhite, {X: 24, Y: 0}: ansiWhite, {X: 25, Y: 0}: ansiWhite,
@@ -284,7 +284,7 @@ var julyFourthLogo = []string{
 	" |__| |___||_____|__| |==|==|==| ",
 }
 
-var julyFourthLogoInk = map[point]string{
+var julyFourthLogoInk = map[cv.Point]string{
 	{X: 8, Y: 0}: ansiYellow, {X: 9, Y: 0}: ansiYellow, {X: 10, Y: 0}: ansiYellow,
 	{X: 11, Y: 0}: ansiYellow,
 
@@ -306,13 +306,13 @@ var julyFourthLogoInk = map[point]string{
 	{X: 30, Y: 3}: ansiRed,
 }
 
-func (m model) particleOverlay() map[point]string {
+func (m model) particleOverlay() map[cv.Point]string {
 	if m.effect == effectNone {
 		return nil
 	}
-	overlay := make(map[point]string, len(m.particles))
+	overlay := make(map[cv.Point]string, len(m.particles))
 	for _, p := range m.particles {
-		overlay[point{X: int(p.x), Y: int(p.y)}] = cv.Ansi(p.color) + string(p.glyph) + cv.Ansi(ansiReset)
+		overlay[cv.Point{X: int(p.x), Y: int(p.y)}] = cv.Ansi(p.color) + string(p.glyph) + cv.Ansi(ansiReset)
 	}
 	return overlay
 }

@@ -72,7 +72,7 @@ var helpText = []string{
 	"  h/←/j/↓/k/↑/l/→  Resize box",
 	"  Shift+h/j/k/l    Resize box 2x faster",
 	"  Enter            Confirm edit and return to normal mode",
-	"  Esc   	        Canceland return to normal mode",
+	"  Esc              Cancel and return to normal mode",
 	"",
 	"Move Mode:",
 	"----------",

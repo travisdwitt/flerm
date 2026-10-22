@@ -12,7 +12,7 @@ import (
 func (m model) handleStartupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "n":
-		m.buffers[0] = Buffer{canvas: cv.NewCanvas()}
+		m.buffers[0] = newBuffer(cv.NewCanvas())
 		m.currentBufferIndex = 0
 		m.mode = ModeNormal
 		m.resetView()
@@ -68,17 +68,13 @@ func (m model) handleResizeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch {
 	case key == "esc" || key == "escape":
+		m.revert()
 		m.mode = ModeNormal
 		m.selectedBox = -1
 	case key == "enter":
 		if m.selectedBox >= 0 && m.selectedBox < len(m.getCanvas().Boxes()) {
 			box := m.getCanvas().Boxes()[m.selectedBox]
-			dw, dh := box.Width-m.originalWidth, box.Height-m.originalHeight
-			if dw != 0 || dh != 0 {
-				m.recordAction(ActionResizeBox,
-					ResizeBoxData{ID: m.selectedBox, DeltaWidth: dw, DeltaHeight: dh},
-					OriginalBoxState{ID: m.selectedBox, X: box.X, Y: box.Y, Width: m.originalWidth, Height: m.originalHeight})
-			}
+			m.recordIf(box.Width != m.originalWidth || box.Height != m.originalHeight)
 		}
 		m.mode = ModeNormal
 		m.selectedBox = -1
@@ -99,11 +95,11 @@ func (m model) handleMultiSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc", "escape":
 		m.mode = ModeNormal
-		m.selectionStartX, m.selectionStartY = CoordUnset, CoordUnset
+		m.selectionStartX, m.selectionStartY = cv.CoordUnset, cv.CoordUnset
 		m.selectedBoxes, m.selectedTexts = nil, nil
 	case "enter":
 		worldX, worldY := m.worldCursor()
-		if m.selectionStartX == CoordUnset || m.selectionStartY == CoordUnset {
+		if m.selectionStartX == cv.CoordUnset || m.selectionStartY == cv.CoordUnset {
 			m.selectionStartX, m.selectionStartY = worldX, worldY
 		} else {
 			m.finalizeMultiSelect(worldX, worldY)
@@ -116,6 +112,7 @@ func (m model) handleMoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch {
 	case key == "esc" || key == "escape":
+		m.revert()
 		m.mode = ModeNormal
 		m.selectedBox, m.selectedText = -1, -1
 		m.clearGroupSelection()
