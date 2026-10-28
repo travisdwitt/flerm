@@ -106,7 +106,15 @@ func main() {
 		return
 	}
 
-	if err := tui.Run(*noResume, dateOverride); err != nil {
+	var file string
+	if name := flag.Arg(0); name != "" {
+		if file = findChart(name); file == "" {
+			log.Fatalf("chart not found: %s", name)
+		}
+		file, _ = filepath.Abs(file)
+	}
+
+	if err := tui.Run(*noResume, dateOverride, file); err != nil {
 		log.Fatal(err)
 	}
 }

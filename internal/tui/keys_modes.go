@@ -201,6 +201,9 @@ func (m model) submitFileInput() (tea.Model, tea.Cmd) {
 			filename += saveExt
 		}
 		path := m.config.GetSavePath(filename)
+		if cur := m.getCurrentBuffer().filename; cur != "" && filename == filepath.Base(cur) {
+			path = cur
+		}
 		if m.needsOverwriteConfirm(path) {
 			return m, nil
 		}

@@ -22,6 +22,7 @@ flerm
 
 ```bash
 flerm                   -- start flerm
+flerm <file>            -- open a chart by path, or by name from the current/save directory
 flerm --help            -- show a reminder of the next 3 things
 flerm --no-resume       -- don't offer the r:esume function in the main flerm menu.
 flerm --describe <name> -- print a chart's details in plain text so screen readers can describe it (experimental/might be wonky).

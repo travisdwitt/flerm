@@ -14,7 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func Run(noResume bool, dateOverride string) error {
+func Run(noResume bool, dateOverride, file string) error {
 	m := initialModel()
 	if noResume {
 		m.config.Resume = false
@@ -24,6 +24,12 @@ func Run(noResume bool, dateOverride string) error {
 		m.effect = effectForOverride(dateOverride)
 	} else {
 		m.effect = effectForDate(time.Now())
+	}
+	if file != "" {
+		if err := m.openChart(file); err != nil {
+			return err
+		}
+		m.mode = ModeNormal
 	}
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if m.config.Mouse {
