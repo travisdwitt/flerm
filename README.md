@@ -23,9 +23,10 @@ flerm
 ```bash
 flerm                   -- start flerm
 flerm <file>            -- open a chart by path, or by name from the current/save directory
-flerm --help            -- show a reminder of the next 3 things
+flerm --help            -- show usage and flags
 flerm --no-resume       -- don't offer the r:esume function in the main flerm menu.
 flerm --describe <name> -- print a chart's details in plain text so screen readers can describe it (experimental/might be wonky).
+flerm --describe <name> --format json -- the same, as JSON.
 flerm --setup           -- create ~/.flermrc config with all the defaults pre-set.
 ```
 
@@ -33,9 +34,8 @@ flerm --setup           -- create ~/.flermrc config with all the defaults pre-se
 
 You can create a `.flermrc` configuration file in your home directory to customize Flerm's behavior.
 
-Run `flerm --setup` and it writes one for you, listing every setting at its default value, so
-there's nothing to guess at — edit the values you care about. It won't touch an existing
-`~/.flermrc`; move or delete that first if you want a clean one.
+Run `flerm --setup` and it writes one for you, listing every setting at its default value so
+it's easier to cusotmize later. It won't touch an existing `~/.flermrc`; move or delete that first if you want a clean one.
 
 ### Example Configuration File
 
@@ -52,18 +52,14 @@ startmenu=false
 confirmations=true
 
 # Offer "r: Resume <chart>" on the start menu for the last chart you opened
-# (set it to false, or pass --no-resume, to hide it)
 resume=true
 
-# Stop the animated particles on the holiday start screens (the logo stays)
+# Turn off animated particles on some screens
 particles=false
 
-# Don't capture the mouse, so the terminal keeps its own click-drag text selection
+# Disabel the mouse
 mouse=false
 ```
-
-`disableparticles=true` and `disablemouse=true` work too, if you prefer naming the thing
-you're switching off.
 
 <br>
 <img width="932" height="685" alt="RABDARGAB plan" src="https://github.com/user-attachments/assets/5346afbf-7dbe-4fb6-9b4e-c806c3bba826" />
@@ -166,7 +162,6 @@ you're switching off.
 
 **Note:**
 
-- .png exports are _way_ better than they were in the last build, but still might me a little odd at times
 - All file operations respect the `savedirectory` setting in `~/.flermrc` if configured.
 
 ### Buffer Operations
@@ -218,10 +213,6 @@ In the editor:
 - **`v`** opens a sidebar listing every tooltip labelled by box
 - **`NO_COLOR=1`** (or `TERM=dumb`) turns off all color. A terminal without 256-color support
   gets 16-color codes rather than unsupported ones.
-- **`particles=false`** stops the holiday animations, which flash and can't otherwise be
-  turned off except by changing the date.
-- **`mouse=false`** leaves mouse reporting off, so the terminal's own click-drag text
-  selection keeps working — which is how you copy a chart out to read it elsewhere.
 
 ## File Format
 
@@ -246,6 +237,8 @@ TEXTS:0
   - FromID/ToID can be -1 for line-to-line connections
 - **TEXTS**: Format is `X,Y,Text`
 - **BOXCOLORS / LINECOLORS / TEXTCOLORS**: Optional trailing sections listing `index,color` for any object that has a color set (color is a 0-15 palette index). Objects without a color are simply left out.
+
+Escaping: `\n` is a line break in titles, text and tooltips, and `\,` is a comma inside a box title. Box text is the last field, so it may contain plain commas. Box width and height are recomputed from the text on load, and connection endpoints must sit on the border of the box they name. Arrow flags are a bitmask: 1 = arrow at the `From` end, 2 = arrow at the `To` end. `PAN:x,y` is the saved viewport offset.
 
 **Note:** The format is backward-compatible in both directions. Older files without ZLevel, BorderStyle, Title, or color sections load fine with defaults, and older versions of Flerm just ignore the color sections. Some files made with an earlier build might need to be tweaked to look nicer.
 

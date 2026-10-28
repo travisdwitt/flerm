@@ -404,7 +404,8 @@ func (c *Canvas) DuplicateText(id, dx, dy int) int {
 }
 
 type Point struct {
-	X, Y int
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 func (c *Canvas) Boxes() []Box { return c.boxes }

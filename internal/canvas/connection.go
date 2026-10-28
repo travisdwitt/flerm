@@ -138,7 +138,17 @@ func (c *Canvas) AddConnection(fromID, toID int) {
 	}
 	fcx, fcy := center(fromBox)
 	tcx, tcy := center(toBox)
-	fromX, fromY, toX, toY := c.calculateConnectionPointsPreservingOrientation(fromID, toID, abs(fcx-tcx) > abs(fcy-tcy))
+	c.AddConnectionAxis(fromID, toID, abs(fcx-tcx) > abs(fcy-tcy))
+}
+
+func (c *Canvas) AddConnectionAxis(fromID, toID int, horizontal bool) {
+	if _, ok := c.box(fromID); !ok {
+		return
+	}
+	if _, ok := c.box(toID); !ok {
+		return
+	}
+	fromX, fromY, toX, toY := c.calculateConnectionPointsPreservingOrientation(fromID, toID, horizontal)
 	c.connections = append(c.connections, Connection{
 		FromID: fromID, ToID: toID,
 		FromX: fromX, FromY: fromY, ToX: toX, ToY: toY,

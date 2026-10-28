@@ -2,8 +2,11 @@ package canvas
 
 import (
 	"bufio"
+	"bytes"
+	"cmp"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -13,11 +16,7 @@ func escapeNewlines(s string) string { return strings.ReplaceAll(s, "\n", "\\n")
 func unescapeNewlines(s string) string { return strings.ReplaceAll(s, "\\n", "\n") }
 
 func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	file := &bytes.Buffer{}
 
 	fmt.Fprintln(file, "FLOWCHART")
 
@@ -68,8 +67,15 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 	}
 
 	fmt.Fprintf(file, "HIGHLIGHTS:%d\n", len(c.highlights))
-	for cell, colorIndex := range c.highlights {
-		fmt.Fprintf(file, "%d,%d,%d\n", cell.X, cell.Y, colorIndex)
+	cells := make([]Point, 0, len(c.highlights))
+	for cell := range c.highlights {
+		cells = append(cells, cell)
+	}
+	slices.SortFunc(cells, func(a, b Point) int {
+		return cmp.Or(cmp.Compare(a.Y, b.Y), cmp.Compare(a.X, b.X))
+	})
+	for _, cell := range cells {
+		fmt.Fprintf(file, "%d,%d,%d\n", cell.X, cell.Y, c.highlights[cell])
 	}
 
 	writeColors := func(header string, colorOf func(i int) int, n int) {
@@ -89,6 +95,15 @@ func (c *Canvas) SaveToFileWithPan(filename string, panX, panY int) error {
 	writeColors("TEXTCOLORS", func(i int) int { return c.texts[i].Color }, len(c.texts))
 
 	fmt.Fprintf(file, "PAN:%d,%d\n", panX, panY)
+
+	tmp := filename + ".tmp"
+	if err := os.WriteFile(tmp, file.Bytes(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filename); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
 
