@@ -821,6 +821,8 @@ func (m model) startupLayout() startupLayout {
 		l.logo, l.logoInk = newYearLogo, newYearLogoInk
 	case effectFireworksUSA:
 		l.logo, l.logoInk, l.logoBase = julyFourthLogo, julyFourthLogoInk, ansiBlue
+	case effectThanksgiving:
+		l.logo, l.logoInk, l.logoBase = thanksgivingLogo, thanksgivingLogoInk, ansiTan
 	}
 	if !cv.ColorEnabled() {
 		l.logoInk, l.logoBase = nil, ""

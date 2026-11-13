@@ -20,6 +20,7 @@ const (
 	effectBlood
 	effectConfetti
 	effectFireworksUSA
+	effectThanksgiving
 )
 
 const (
@@ -34,6 +35,8 @@ const (
 	ansiGray   = "\033[37m"
 	ansiBlue   = "\033[94m"
 	ansiYellow = "\033[93m"
+	ansiOrange = "\033[38;5;208m"
+	ansiTan    = "\033[38;5;180m"
 	logoGreen  = "\033[32m"
 	ansiReset  = "\033[0m"
 )
@@ -41,6 +44,7 @@ const (
 var (
 	confettiColors = []string{"\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[95m", "\033[96m"}
 	usaColors      = []string{ansiBright, ansiWhite, ansiBlue}
+	leafColors     = []string{ansiOrange, ansiRed, ansiYellow, ansiTan}
 )
 
 type effectTickMsg struct{}
@@ -54,8 +58,10 @@ type particle struct {
 	rocket bool
 }
 
-func effectForMonthDay(month time.Month, day int) effectKind {
+func effectForMonthDay(year int, month time.Month, day int) effectKind {
 	switch {
+	case month == time.November && day == 22+(11-int(time.Date(year, time.November, 1, 0, 0, 0, 0, time.UTC).Weekday()))%7:
+		return effectThanksgiving
 	case month == time.December && day == 25:
 		return effectSnow
 	case month == time.January && day == 1:
@@ -71,7 +77,7 @@ func effectForMonthDay(month time.Month, day int) effectKind {
 }
 
 func effectForDate(t time.Time) effectKind {
-	return effectForMonthDay(t.Month(), t.Day())
+	return effectForMonthDay(t.Year(), t.Month(), t.Day())
 }
 
 func effectForOverride(mmdd string) effectKind {
@@ -86,7 +92,7 @@ func effectForOverride(mmdd string) effectKind {
 	if err != nil || day < 1 || day > 31 {
 		return effectNone
 	}
-	return effectForMonthDay(time.Month(month), day)
+	return effectForMonthDay(time.Now().Year(), time.Month(month), day)
 }
 
 func (m model) inStartMenuFlow() bool {
@@ -167,6 +173,16 @@ func (m *model) spawn() {
 		}
 	case effectBlood:
 		m.spawnBlood()
+	case effectThanksgiving:
+		if rand.Float64() < 0.3 {
+			m.particles = append(m.particles, particle{
+				x: rand.Float64() * float64(m.width), y: -1,
+				vx: rand.Float64()*0.5 - 0.25, vy: 0.15 + rand.Float64()*0.25,
+				glyph: []rune("&%@*")[rand.Intn(4)],
+				color: leafColors[rand.Intn(len(leafColors))],
+				life:  m.height * 10,
+			})
+		}
 	case effectFireworks, effectFireworksUSA:
 		if m.effectFrame%14 == 0 {
 			colors := m.fireworkColors()
@@ -304,6 +320,20 @@ var julyFourthLogoInk = map[cv.Point]string{
 	{X: 10, Y: 3}: ansiRed, {X: 23, Y: 3}: ansiRed, {X: 24, Y: 3}: ansiRed,
 	{X: 26, Y: 3}: ansiRed, {X: 27, Y: 3}: ansiRed, {X: 29, Y: 3}: ansiRed,
 	{X: 30, Y: 3}: ansiRed,
+}
+
+var thanksgivingLogo = []string{
+	"  \\\\|||//  __                       ",
+	"  .(o o). |  |.-----.----.--------. ",
+	"  (  v; ) |  ||  -__|   _|        | ",
+	" _/`---'\\_|__||_____|__| |__|__|__| ",
+}
+
+var thanksgivingLogoInk = map[cv.Point]string{
+	{X: 2, Y: 0}: ansiRed, {X: 3, Y: 0}: ansiRed, {X: 4, Y: 0}: ansiOrange, {X: 5, Y: 0}: ansiOrange, {X: 6, Y: 0}: ansiOrange, {X: 7, Y: 0}: ansiRed, {X: 8, Y: 0}: ansiRed,
+	{X: 2, Y: 1}: ansiOrange, {X: 3, Y: 1}: ansiOrange, {X: 4, Y: 1}: ansiWhite, {X: 6, Y: 1}: ansiWhite, {X: 7, Y: 1}: ansiOrange, {X: 8, Y: 1}: ansiOrange,
+	{X: 2, Y: 2}: ansiOrange, {X: 5, Y: 2}: ansiYellow, {X: 6, Y: 2}: ansiRed, {X: 8, Y: 2}: ansiOrange,
+	{X: 1, Y: 3}: ansiOrange, {X: 2, Y: 3}: ansiOrange, {X: 3, Y: 3}: ansiOrange, {X: 4, Y: 3}: ansiYellow, {X: 5, Y: 3}: ansiYellow, {X: 6, Y: 3}: ansiYellow, {X: 7, Y: 3}: ansiOrange, {X: 8, Y: 3}: ansiOrange, {X: 9, Y: 3}: ansiOrange,
 }
 
 func (m model) particleOverlay() map[cv.Point]string {
