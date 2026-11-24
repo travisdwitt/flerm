@@ -103,6 +103,12 @@ type model struct {
 	draggingText bool
 	dragTextID   int
 
+	leftDown                bool
+	drawingBox, drawStarted bool
+	drawID, drawX, drawY    int
+	lastClickAt             int64
+	lastClickBox            int
+
 	draggingFileScroll bool
 
 	panningView        bool

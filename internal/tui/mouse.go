@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	cv "flerm/internal/canvas"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -191,6 +193,39 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 	panX, panY := m.getPanOffset()
 	worldX, worldY := canvasX+panX, canvasY+panY
 
+	switch {
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+		m.leftDown = true
+	case msg.Action == tea.MouseActionRelease:
+		m.leftDown = false
+	}
+
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight && m.leftDown {
+		if m.draggingBox {
+			m.finishBoxDrag()
+		}
+		if m.draggingText {
+			m.finishTextDrag()
+		}
+		m.endDraw()
+		m.panningView, m.panMoved = true, true
+		m.panLastX, m.panLastY = canvasX, canvasY
+		return nil
+	}
+
+	if m.drawingBox {
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			m.drawTo(worldX, worldY)
+			return nil
+		case tea.MouseActionRelease:
+			m.endDraw()
+			return nil
+		default:
+			m.endDraw()
+		}
+	}
+
 	if m.draggingBox {
 		switch msg.Action {
 		case tea.MouseActionMotion:
@@ -275,6 +310,13 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 		m.ensureCursorInBounds()
 		canvas := m.getCanvas()
 		if boxID := canvas.GetBoxAt(worldX, worldY); boxID != -1 {
+			now := time.Now().UnixMilli()
+			if boxID == m.lastClickBox && now-m.lastClickAt < 400 {
+				m.lastClickAt = 0
+				m.beginEdit(ModeEditing, boxID, -1, canvas.GetBoxText(boxID))
+				return nil
+			}
+			m.lastClickAt, m.lastClickBox = now, boxID
 			m.beginBoxDrag(boxID, worldX, worldY)
 			return nil
 		}
@@ -282,13 +324,45 @@ func (m *model) handleNormalMouse(msg tea.MouseMsg) tea.Cmd {
 			m.beginTextDrag(textID, worldX, worldY)
 			return nil
 		}
-		m.panningView = true
-		m.panLastX, m.panLastY = canvasX, canvasY
-		m.panMoved = false
+		if connIdx, _, _ := canvas.FindNearestPointOnConnection(worldX, worldY); connIdx != -1 {
+			m.selectAtMouse(worldX, worldY)
+			return nil
+		}
+		now := time.Now().UnixMilli()
+		if m.lastClickBox == -1 && now-m.lastClickAt < 400 && worldX == m.drawX && worldY == m.drawY {
+			m.lastClickAt = 0
+			m.textInputX, m.textInputY = worldX, worldY
+			m.beginEdit(ModeTextInput, -1, -1, "")
+			return nil
+		}
+		m.lastClickAt, m.lastClickBox = now, -1
+		m.selBox, m.selText, m.selConn = -1, -1, -1
+		m.drawingBox, m.drawStarted = true, false
+		m.drawX, m.drawY = worldX, worldY
 	case tea.MouseButtonRight:
 		m.openContextMenu(canvasX, canvasY)
 	}
 	return nil
+}
+
+func (m *model) drawTo(worldX, worldY int) {
+	if !m.drawStarted {
+		if worldX == m.drawX && worldY == m.drawY {
+			return
+		}
+		m.drawID = m.addBox(m.drawX, m.drawY, "")
+		m.drawStarted = true
+		m.selBox, m.selText, m.selConn = m.drawID, -1, -1
+	}
+	canvas := m.getCanvas()
+	canvas.SetBoxPositionOnly(m.drawID, min(worldX, m.drawX), min(worldY, m.drawY))
+	canvas.SetBoxSize(m.drawID, abs(worldX-m.drawX)+1, abs(worldY-m.drawY)+1)
+}
+
+func (m *model) endDraw() {
+	started := m.drawStarted
+	m.drawingBox, m.drawStarted = false, false
+	m.recordIf(started)
 }
 
 func (m *model) beginBoxDrag(boxID, worldX, worldY int) {
